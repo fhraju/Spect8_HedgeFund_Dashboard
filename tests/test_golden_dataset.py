@@ -74,7 +74,7 @@ def test_manifest_schema_and_identity_contract() -> None:
     validator("manifest.schema.json").validate(MANIFEST)
     ids = [case["id"] for case in CASES]
     paths = [case["path"] for case in CASES]
-    assert len(CASES) == 54
+    assert len(CASES) == 55
     assert len(ids) == len(set(ids))
     assert len(paths) == len(set(paths))
     assert all(case["path"] == f"cases/{case['id']}" for case in CASES)
@@ -168,6 +168,8 @@ def test_required_coverage_categories_are_manifested() -> None:
         "filtered_sell_only",
         "confirmed_buy",
         "confirmed_sell",
+        "confirmed_both",
+        "simultaneous_direction",
         "technical_signal_without_filter",
         "sma10_failure",
         "sma20_failure",
@@ -199,6 +201,12 @@ def test_manifest_classification_tags_match_results(case: dict[str, Any]) -> Non
         assert classification["confirmed_buy"]
     if "confirmed_sell" in tags:
         assert classification["confirmed_sell"]
+    if "confirmed_both" in tags:
+        assert classification["confirmed_buy"]
+        assert classification["confirmed_sell"]
+        assert classification["dashboard_state"] == "CONFIRMED_BOTH"
+        assert result["candidates"]["buy"] is not None
+        assert result["candidates"]["sell"] is not None
     if "technical_signal_without_filter" in tags:
         direction = "buy" if "buy" in tags else "sell"
         assert classification[f"technical_{direction}_signal"]
@@ -263,6 +271,34 @@ def test_equality_boundaries_are_inclusive() -> None:
         else:
             assert indicators["recent_high_21"] == indicators["daily_sell_level"]
         assert result["classification"][f"confirmed_{direction}"]
+
+
+def test_simultaneous_direction_preserves_both_candidates() -> None:
+    simultaneous = [
+        case
+        for case in CASES
+        if "simultaneous_direction" in case["coverage"]
+    ]
+    assert len(simultaneous) == 1
+    result = expected(simultaneous[0])
+    classification = result["classification"]
+    assert classification["buy_filter_matched"] is True
+    assert classification["sell_filter_matched"] is True
+    assert classification["technical_buy_signal"] is True
+    assert classification["technical_sell_signal"] is True
+    assert classification["confirmed_buy"] is True
+    assert classification["confirmed_sell"] is True
+    assert classification["dashboard_state"] == "CONFIRMED_BOTH"
+    buy = result["candidates"]["buy"]
+    sell = result["candidates"]["sell"]
+    assert buy["direction"] == "BUY"
+    assert sell["direction"] == "SELL"
+    assert buy["entry_reference"] == sell["entry_reference"]
+    assert buy["provider_adjusted_stop"] < buy["entry_reference"]
+    assert sell["provider_adjusted_stop"] > sell["entry_reference"]
+    assert buy["target_3r"] > buy["entry_reference"]
+    assert sell["target_3r"] < sell["entry_reference"]
+    assert buy["target_risk_usd"] == sell["target_risk_usd"] == 100.0
 
 
 def test_developing_bars_are_excluded_from_every_calculation() -> None:
@@ -361,7 +397,7 @@ def test_every_confirmed_candidate_uses_exactly_usd_100_and_rounds_down() -> Non
                 assert step_units == pytest.approx(round(step_units))
                 if candidate["display_size"] < candidate["raw_size"]:
                     rounded_count += 1
-    assert confirmed_count == 20
+    assert confirmed_count == 22
     assert rounded_count > 0
 
 
@@ -410,6 +446,7 @@ def test_frozen_checksums_are_complete_and_correct() -> None:
 
     required = {
         "Spect8_Micro_Daily_v1_0_FROZEN.md",
+        "Spect8_Micro_Daily_v1_0_1_FROZEN.md",
         "golden/manifest.json",
     }
     for case in CASES:

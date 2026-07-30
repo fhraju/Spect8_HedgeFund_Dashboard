@@ -10,6 +10,7 @@ from typing import Any
 class Timeframe(StrEnum):
     H1 = "H1"
     H4 = "H4"
+    D1 = "D1"
 
 
 class Direction(StrEnum):
@@ -41,6 +42,7 @@ class Bar:
     close: Decimal
     provider: str
     is_complete: bool
+    volume: Decimal | None = None
     synthetic: bool = True
 
 
@@ -80,12 +82,20 @@ class SignalResult:
     confirmed_sell: bool
 
     @property
+    def confirmed_directions(self) -> tuple[Direction, ...]:
+        return tuple(
+            direction
+            for direction, confirmed in (
+                (Direction.BUY, self.confirmed_buy),
+                (Direction.SELL, self.confirmed_sell),
+            )
+            if confirmed
+        )
+
+    @property
     def confirmed_direction(self) -> Direction | None:
-        if self.confirmed_buy:
-            return Direction.BUY
-        if self.confirmed_sell:
-            return Direction.SELL
-        return None
+        directions = self.confirmed_directions
+        return directions[0] if len(directions) == 1 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +123,7 @@ class InstrumentStatus:
     filter_result: FilterResult
     signal_result: SignalResult
     levels_result: LevelsResult | None
+    levels_results: tuple[LevelsResult, ...]
     signal_bar_close_time: datetime
     last_update: datetime
     idempotency_key: str

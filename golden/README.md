@@ -1,8 +1,9 @@
 # Spect8 Micro Daily golden dataset
 
 This directory is the synthetic golden-test foundation for
-`SPECT8_MICRO_DAILY_V1_0`. It is deliberately separate from any production
-strategy engine, API, frontend, database, or market-data integration.
+`SPECT8_MICRO_DAILY_V1_0` plus the frozen v1.0.1 simultaneous-direction
+clarification. It is deliberately separate from any production strategy
+engine, API, frontend, database, or market-data integration.
 
 ## Layout
 

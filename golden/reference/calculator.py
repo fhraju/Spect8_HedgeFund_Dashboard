@@ -408,7 +408,9 @@ def evaluate_case(
 
     buy_candidate = candidate("BUY")
     sell_candidate = candidate("SELL")
-    if confirmed_buy:
+    if confirmed_buy and confirmed_sell:
+        dashboard_state = "CONFIRMED_BOTH"
+    elif confirmed_buy:
         dashboard_state = "CONFIRMED_BUY"
     elif confirmed_sell:
         dashboard_state = "CONFIRMED_SELL"

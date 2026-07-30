@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -16,7 +17,7 @@ class SQLiteProjectionRepository:
 
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.executescript(
                 """
                 PRAGMA journal_mode = WAL;
@@ -57,6 +58,40 @@ class SQLiteProjectionRepository:
                 );
                 """
             )
+            self._migrate_status_payloads(connection)
+            connection.commit()
+
+    @staticmethod
+    def _migrate_status_payloads(connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            """
+            SELECT strategy_id, provider, instrument_id, timeframe, status_json
+            FROM instrument_status
+            """
+        ).fetchall()
+        for row in rows:
+            status = json.loads(row["status_json"])
+            if "levels_results" in status:
+                continue
+            level = status.get("levels_result")
+            status["levels_results"] = [level] if level is not None else []
+            connection.execute(
+                """
+                UPDATE instrument_status
+                SET status_json = ?
+                WHERE strategy_id = ?
+                  AND provider = ?
+                  AND instrument_id = ?
+                  AND timeframe = ?
+                """,
+                (
+                    json.dumps(status, sort_keys=True),
+                    row["strategy_id"],
+                    row["provider"],
+                    row["instrument_id"],
+                    row["timeframe"],
+                ),
+            )
 
     def persist_projection(
         self,
@@ -64,7 +99,7 @@ class SQLiteProjectionRepository:
         events: tuple[DomainEvent, ...],
     ) -> bool:
         status_value = primitive(status)
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
                 """
@@ -129,7 +164,7 @@ class SQLiteProjectionRepository:
             return True
 
     def statuses(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT status_json
@@ -140,7 +175,7 @@ class SQLiteProjectionRepository:
         return [json.loads(row["status_json"]) for row in rows]
 
     def events(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT id, idempotency_key, sequence, event_type, occurred_at,
@@ -167,7 +202,7 @@ class SQLiteProjectionRepository:
         ]
 
     def processed_count(self) -> int:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             return int(
                 connection.execute(
                     "SELECT COUNT(*) FROM processed_bars"
@@ -175,7 +210,7 @@ class SQLiteProjectionRepository:
             )
 
     def event_count(self) -> int:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             return int(
                 connection.execute(
                     "SELECT COUNT(*) FROM event_history"

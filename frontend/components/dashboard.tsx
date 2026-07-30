@@ -6,7 +6,15 @@ import type {
 
 import { ReplayButton } from "./replay-button";
 
-function direction(status: InstrumentStatus): "BUY" | "SELL" | null {
+function direction(
+  status: InstrumentStatus,
+): "BUY" | "SELL" | "BOTH" | null {
+  if (
+    status.signal_result.confirmed_buy &&
+    status.signal_result.confirmed_sell
+  ) {
+    return "BOTH";
+  }
   if (status.signal_result.confirmed_buy) return "BUY";
   if (status.signal_result.confirmed_sell) return "SELL";
   return null;
@@ -41,6 +49,7 @@ function time(value: string): string {
 
 function eventMark(event: EventRecord): string {
   if (event.event_type === "SIGNAL_CONFIRMED") {
+    if (event.payload.direction === "BOTH") return "↕";
     return event.payload.direction === "SELL" ? "↓" : "↑";
   }
   if (event.event_type.includes("FILTER")) return "○";
@@ -50,6 +59,7 @@ function eventMark(event: EventRecord): string {
 
 function eventTone(event: EventRecord): string {
   if (event.event_type === "SIGNAL_CONFIRMED") {
+    if (event.payload.direction === "BOTH") return "both";
     return event.payload.direction === "SELL" ? "down" : "up";
   }
   if (event.event_type.includes("FILTER")) return "wait";
@@ -105,7 +115,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             <div className="api-status">
               <i />
               <span>Synthetic Feed Connected</span>
-              <b>PHASE 1</b>
+              <b>PHASE 2A</b>
             </div>
             <ReplayButton />
           </div>
@@ -130,7 +140,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             <article className="kpi">
               <span className="kpi-icon green">⌾</span>
               <span><b>{confirmed.length}</b><small>Confirmed Signals</small></span>
-              <em>One BUY · one SELL</em>
+              <em>Independent BUY / SELL</em>
             </article>
             <article className="kpi">
               <span className="kpi-icon cyan">◇</span>
@@ -195,14 +205,29 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {statuses.map((status) => {
-                      const signalDirection = direction(status);
-                      const levels = status.levels_result;
-                      return (
-                        <tr key={status.idempotency_key}>
+                    {statuses.flatMap((status) => {
+                      const displayedLevels =
+                        status.levels_results.length > 0
+                          ? status.levels_results
+                          : [null];
+                      return displayedLevels.map((levels) => {
+                        const signalDirection =
+                          levels?.direction ?? direction(status);
+                        const isBoth =
+                          status.dashboard_state === "CONFIRMED_BOTH";
+                        return (
+                        <tr
+                          className={isBoth ? "confirmed-both-row" : undefined}
+                          key={`${status.idempotency_key}-${
+                            levels?.direction ?? "NONE"
+                          }`}
+                        >
                           <td>
                             <strong>{status.instrument_id}</strong>
-                            <span>Synthetic · {time(status.last_update)} UTC</span>
+                            <span>
+                              Synthetic · {time(status.last_update)} UTC
+                              {isBoth ? " · Confirmed Both" : ""}
+                            </span>
                           </td>
                           <td><span className="tf-tag">{status.timeframe}</span></td>
                           <td>
@@ -221,10 +246,14 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
                                   ? "↑"
                                   : signalDirection === "SELL"
                                     ? "↓"
+                                    : signalDirection === "BOTH"
+                                      ? "↕"
                                     : "—"}
                               </i>
                               {signalDirection
-                                ? `${signalDirection} Confirmed`
+                                ? `${
+                                    levels?.direction ?? signalDirection
+                                  } Confirmed${isBoth ? " · Both" : ""}`
                                 : "No Signal"}
                             </span>
                           </td>
@@ -241,7 +270,8 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
                             </span>
                           </td>
                         </tr>
-                      );
+                        );
+                      });
                     })}
                   </tbody>
                 </table>

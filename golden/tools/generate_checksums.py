@@ -23,6 +23,7 @@ def main() -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     paths = [
         ROOT / "Spect8_Micro_Daily_v1_0_FROZEN.md",
+        ROOT / "Spect8_Micro_Daily_v1_0_1_FROZEN.md",
         manifest_path,
     ]
     for case in manifest["cases"]:

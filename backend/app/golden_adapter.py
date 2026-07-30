@@ -36,6 +36,7 @@ class AdaptedGoldenCase:
     filter_result: FilterResult
     signal_result: SignalResult
     levels_result: LevelsResult | None
+    levels_results: tuple[LevelsResult, ...]
     status: InstrumentStatus
 
 
@@ -90,7 +91,8 @@ class FrozenExpectedResultAdapter:
             confirmed_buy=classification["confirmed_buy"],
             confirmed_sell=classification["confirmed_sell"],
         )
-        levels_result = self._levels(expected["candidates"], signal_result)
+        levels_results = self._levels(expected["candidates"])
+        levels_result = levels_results[0] if len(levels_results) == 1 else None
         status = InstrumentStatus(
             strategy_id=expected["strategy_id"],
             provider=instrument["provider"],
@@ -103,6 +105,7 @@ class FrozenExpectedResultAdapter:
             filter_result=filter_result,
             signal_result=signal_result,
             levels_result=levels_result,
+            levels_results=levels_results,
             signal_bar_close_time=_datetime(
                 expected["bars"]["signal_bar_close_time"]
             ),
@@ -114,31 +117,40 @@ class FrozenExpectedResultAdapter:
             filter_result=filter_result,
             signal_result=signal_result,
             levels_result=levels_result,
+            levels_results=levels_results,
             status=status,
         )
 
     @staticmethod
     def _levels(
-        candidates: dict[str, Any], signal_result: SignalResult
-    ) -> LevelsResult | None:
-        direction = signal_result.confirmed_direction
-        if direction is None:
-            return None
-        candidate = candidates[direction.value.lower()]
-        return LevelsResult(
-            direction=direction,
-            entry_reference=Decimal(str(candidate["entry_reference"])),
-            raw_stop=Decimal(str(candidate["raw_strategy_stop"])),
-            display_stop=Decimal(str(candidate["provider_adjusted_stop"])),
-            target=Decimal(str(candidate["target_3r"])),
-            target_risk_usd=Decimal(str(candidate["target_risk_usd"])),
-            contract_size=(
-                Decimal(str(candidate["display_size"]))
-                if candidate["display_size"] is not None
-                else None
-            ),
-            contract_status=candidate["contract_status"],
-        )
+        candidates: dict[str, Any],
+    ) -> tuple[LevelsResult, ...]:
+        results: list[LevelsResult] = []
+        for direction in (Direction.BUY, Direction.SELL):
+            candidate = candidates[direction.value.lower()]
+            if candidate is None:
+                continue
+            results.append(
+                LevelsResult(
+                    direction=direction,
+                    entry_reference=Decimal(str(candidate["entry_reference"])),
+                    raw_stop=Decimal(str(candidate["raw_strategy_stop"])),
+                    display_stop=Decimal(
+                        str(candidate["provider_adjusted_stop"])
+                    ),
+                    target=Decimal(str(candidate["target_3r"])),
+                    target_risk_usd=Decimal(
+                        str(candidate["target_risk_usd"])
+                    ),
+                    contract_size=(
+                        Decimal(str(candidate["display_size"]))
+                        if candidate["display_size"] is not None
+                        else None
+                    ),
+                    contract_status=candidate["contract_status"],
+                )
+            )
+        return tuple(results)
 
     @staticmethod
     def _load_selected_bar(

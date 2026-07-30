@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def expected(case_id: str) -> dict:
 def test_domain_models_are_immutable(tmp_path: Path) -> None:
     application = create_app(settings(tmp_path / "immutable.sqlite3"))
     with TestClient(application):
-        adapted = application.state.service._adapter.load(SELECTED_CASES[0])
+        adapted = application.state.service.evaluate_case(SELECTED_CASES[0])
         bar: Bar = adapted.bar_event.bar
         with pytest.raises(FrozenInstanceError):
             bar.close = bar.open  # type: ignore[misc]
@@ -48,6 +49,8 @@ def test_domain_models_are_immutable(tmp_path: Path) -> None:
             adapted.signal_result.confirmed_buy = False  # type: ignore[misc]
         with pytest.raises(FrozenInstanceError):
             adapted.levels_result.target = adapted.levels_result.entry_reference  # type: ignore[misc, union-attr]
+        with pytest.raises(FrozenInstanceError):
+            adapted.levels_results[0].target = adapted.levels_results[0].entry_reference  # type: ignore[misc]
         with pytest.raises(FrozenInstanceError):
             adapted.status.dashboard_state = "WATCHING"  # type: ignore[misc]
 
@@ -119,6 +122,46 @@ def test_status_and_event_history_survive_application_restart(
         assert restarted.state.repository.statuses() == original_statuses
         assert restarted.state.repository.processed_count() == 2
         assert restarted.state.repository.event_count() == 14
+
+
+def test_repository_releases_sqlite_file_handles(tmp_path: Path) -> None:
+    database_path = tmp_path / "released.sqlite3"
+    application = create_app(settings(database_path))
+    with TestClient(application):
+        assert application.state.repository.event_count() == 14
+    moved_path = tmp_path / "released-moved.sqlite3"
+    database_path.replace(moved_path)
+    assert moved_path.is_file()
+
+
+def test_restart_migrates_legacy_single_level_status_payloads(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-status.sqlite3"
+    first = create_app(settings(database_path))
+    with TestClient(first):
+        assert first.state.repository.processed_count() == 2
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT rowid, status_json FROM instrument_status"
+        ).fetchall()
+        for rowid, raw_status in rows:
+            legacy = json.loads(raw_status)
+            legacy.pop("levels_results")
+            connection.execute(
+                "UPDATE instrument_status SET status_json = ? WHERE rowid = ?",
+                (json.dumps(legacy, sort_keys=True), rowid),
+            )
+
+    restarted = create_app(settings(database_path))
+    with TestClient(restarted):
+        statuses = restarted.state.repository.statuses()
+        assert restarted.state.repository.event_count() == 14
+    assert all(
+        status["levels_results"] == [status["levels_result"]]
+        for status in statuses
+    )
 
 
 @pytest.mark.parametrize(
@@ -200,6 +243,70 @@ def test_api_statuses_match_selected_frozen_expected_results(
             "contract_size": candidate["display_size"],
             "contract_status": candidate["contract_status"],
         }
+        assert status["levels_results"] == [status["levels_result"]]
+
+
+def test_confirmed_both_projects_two_independent_results_and_one_trace(
+    tmp_path: Path,
+) -> None:
+    simultaneous_settings = Settings(
+        repository_root=ROOT,
+        database_path=tmp_path / "confirmed-both.sqlite3",
+        internal_api_key=API_KEY,
+        selected_cases=("confirmed_both_h1_01",),
+        auto_seed_synthetic=True,
+    )
+    application = create_app(simultaneous_settings)
+    with TestClient(application) as client:
+        status = client.get("/statuses", headers=HEADERS).json()["data"][0]
+        events = client.get("/events", headers=HEADERS).json()["data"]
+        replay = client.post("/synthetic/replay", headers=HEADERS).json()[
+            "data"
+        ][0]
+
+    assert status["dashboard_state"] == "CONFIRMED_BOTH"
+    assert status["signal_result"]["confirmed_buy"] is True
+    assert status["signal_result"]["confirmed_sell"] is True
+    assert status["levels_result"] is None
+    assert [result["direction"] for result in status["levels_results"]] == [
+        "BUY",
+        "SELL",
+    ]
+    assert status["levels_results"][0]["entry_reference"] == 500.0
+    assert status["levels_results"][0]["display_stop"] == 498.2
+    assert status["levels_results"][0]["target"] == 505.4
+    assert status["levels_results"][1]["entry_reference"] == 500.0
+    assert status["levels_results"][1]["display_stop"] == 501.8
+    assert status["levels_results"][1]["target"] == 494.6
+    assert all(
+        result["target_risk_usd"] == 100.0
+        for result in status["levels_results"]
+    )
+    assert [event["event_type"] for event in events] == [
+        "BAR_CLOSED",
+        "FILTER_EVALUATED",
+        "FILTER_MATCHED",
+        "SIGNAL_EVALUATED",
+        "SIGNAL_CONFIRMED",
+        "LEVELS_CALCULATED",
+        "STATUS_PROJECTED",
+    ]
+    signal_event = next(
+        event for event in events if event["event_type"] == "SIGNAL_CONFIRMED"
+    )
+    assert signal_event["payload"] == {
+        "direction": "BOTH",
+        "directions": ["BUY", "SELL"],
+    }
+    levels_event = next(
+        event for event in events if event["event_type"] == "LEVELS_CALCULATED"
+    )
+    assert [
+        result["direction"]
+        for result in levels_event["payload"]["levels_results"]
+    ] == ["BUY", "SELL"]
+    assert replay["replayed"] is True
+    assert replay["events_created"] == 0
 
 
 def test_production_backend_never_imports_reference_or_calculator() -> None:

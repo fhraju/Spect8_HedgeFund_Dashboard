@@ -248,6 +248,35 @@ def equality_case(
     return signal, equality_daily(base, direction)
 
 
+def simultaneous_confirmed(
+    timeframe: str,
+    base: Decimal,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    signal = flat_signal(timeframe, base)
+    for bar in signal:
+        set_ohlc(
+            bar,
+            open_price=base,
+            high=base + Decimal("1"),
+            low=base - Decimal("1"),
+            close=base,
+        )
+    start = datetime(2026, 1, 20, tzinfo=timezone.utc)
+    daily = [
+        candle(
+            "D1",
+            start + timedelta(days=index),
+            base,
+            base + Decimal("1"),
+            base - Decimal("1"),
+            base,
+            volume=12000 + index,
+        )
+        for index in range(10)
+    ]
+    return signal, daily
+
+
 def technical_without_filter(
     timeframe: str,
     direction: str,
@@ -575,6 +604,23 @@ def build_cases() -> list[dict[str, Any]]:
                     group,
                 )
 
+    signal, daily = simultaneous_confirmed("H1", Decimal("500"))
+    add(
+        "confirmed_both_h1_01",
+        "H1",
+        "H1 BUY and SELL are simultaneously confirmed and retained independently.",
+        [
+            "confirmed_buy",
+            "confirmed_sell",
+            "confirmed_both",
+            "simultaneous_direction",
+            "h1",
+            "risk_usd_100",
+        ],
+        signal,
+        daily,
+    )
+
     negative_cases = [
         ("technical_buy_without_filter_h1", "H1", "BUY"),
         ("technical_sell_without_filter_h1", "H1", "SELL"),
@@ -701,8 +747,8 @@ def main() -> int:
 
     manifest = {
         "strategy_id": STRATEGY_ID,
-        "authority": "../Spect8_Micro_Daily_v1_0_FROZEN.md",
-        "dataset_version": "1.0.0",
+        "authority": "../Spect8_Micro_Daily_v1_0_1_FROZEN.md",
+        "dataset_version": "1.0.1",
         "description": (
             "Deterministic synthetic golden cases for the separate client Market "
             "Scanner. These are test fixtures, not production strategy code."

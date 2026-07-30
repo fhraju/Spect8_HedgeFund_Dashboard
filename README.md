@@ -3,9 +3,14 @@
 Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` specification.
 
-Phase 1 is an end-to-end walking skeleton using only two committed synthetic
-golden fixtures. It contains no live market-data API, production strategy
-formulas, trading, charting, backtesting, WebSockets, or multi-user support.
+Phase 2A is an end-to-end walking skeleton with an independent production
+calculation engine. The runtime calculates the two committed synthetic examples
+from OHLC candles and instrument metadata; golden expected results remain a
+test-only oracle. It contains no live market-data API, trading, charting,
+backtesting, WebSockets, or multi-user support.
+
+The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
+SELL confirmations and preserves both directional calculations independently.
 
 ## Applications
 
@@ -75,4 +80,6 @@ npm.cmd run build
 ```
 
 See [Phase 1 architecture](docs/PHASE1_WALKING_SKELETON.md) for the event,
-persistence, authentication, and golden-adapter boundaries.
+persistence, and authentication foundation, and
+[Phase 2A engine](docs/PHASE2A_PRODUCTION_ENGINE.md) for the production
+calculation and oracle boundaries.

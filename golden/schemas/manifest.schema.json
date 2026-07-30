@@ -16,10 +16,10 @@
       "const": "SPECT8_MICRO_DAILY_V1_0"
     },
     "authority": {
-      "const": "../Spect8_Micro_Daily_v1_0_FROZEN.md"
+      "const": "../Spect8_Micro_Daily_v1_0_1_FROZEN.md"
     },
     "dataset_version": {
-      "const": "1.0.0"
+      "const": "1.0.1"
     },
     "description": {
       "type": "string",

@@ -7,9 +7,10 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from .config import Settings
-from .golden_adapter import FrozenExpectedResultAdapter
+from .engine.strategy import Spect8StrategyEvaluator
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
+from .synthetic_inputs import SyntheticCaseInputLoader
 
 SYNTHETIC_NOTICE = (
     "SYNTHETIC GOLDEN FIXTURE DATA — no live market-data provider is connected."
@@ -19,8 +20,9 @@ SYNTHETIC_NOTICE = (
 def create_app(settings: Settings | None = None) -> FastAPI:
     configured = settings or Settings.from_environment()
     repository = SQLiteProjectionRepository(configured.database_path)
-    adapter = FrozenExpectedResultAdapter(configured.repository_root)
-    service = WalkingSkeletonService(adapter, repository)
+    case_loader = SyntheticCaseInputLoader(configured.repository_root)
+    evaluator = Spect8StrategyEvaluator()
+    service = WalkingSkeletonService(evaluator, case_loader, repository)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -30,8 +32,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 1",
-        version="0.1.0",
+        title="Spect8 HedgeFund Dashboard — Phase 2A",
+        version="0.2.0",
         description=SYNTHETIC_NOTICE,
         lifespan=lifespan,
     )
@@ -52,7 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def envelope(data: Any) -> dict[str, Any]:
         return {
             "synthetic": True,
-            "source": "COMMITTED_GOLDEN_EXPECTED_RESULT_ADAPTER",
+            "source": "PRODUCTION_ENGINE_WITH_SYNTHETIC_CANDLE_INPUTS",
             "notice": SYNTHETIC_NOTICE,
             "data": data,
         }
@@ -62,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return envelope(
             {
                 "status": "ok",
-                "mode": "PHASE_1_WALKING_SKELETON",
+                "mode": "PHASE_2A_PRODUCTION_ENGINE",
                 "market_data": "SYNTHETIC_ONLY",
                 "database": "sqlite",
             }

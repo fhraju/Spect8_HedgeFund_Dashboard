@@ -233,6 +233,7 @@
             "FILTERED_BOTH",
             "CONFIRMED_BUY",
             "CONFIRMED_SELL",
+            "CONFIRMED_BOTH",
             "DATA_UNAVAILABLE"
           ]
         }

@@ -728,6 +728,18 @@ td:first-child span,
   background: #ff5c6c14;
 }
 
+.signal-state.both {
+  color: #a78bfa;
+}
+
+.confirmed-both-row {
+  background: rgba(139, 92, 246, 0.045);
+}
+
+.confirmed-both-row + .confirmed-both-row {
+  border-top-color: rgba(139, 92, 246, 0.18);
+}
+
 .risk-value {
   color: var(--green);
 }
@@ -867,6 +879,10 @@ td:first-child span,
 
 .activity-list i.down {
   color: var(--red);
+}
+
+.activity-list i.both {
+  color: #a78bfa;
 }
 
 .activity-list i.wait {

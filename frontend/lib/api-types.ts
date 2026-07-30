@@ -38,6 +38,7 @@ export type InstrumentStatus = {
   filter_result: FilterResult;
   signal_result: SignalResult;
   levels_result: LevelsResult | null;
+  levels_results: LevelsResult[];
   signal_bar_close_time: string;
   last_update: string;
   idempotency_key: string;
@@ -58,7 +59,7 @@ export type EventRecord = {
 
 export type SyntheticEnvelope<T> = {
   synthetic: true;
-  source: "COMMITTED_GOLDEN_EXPECTED_RESULT_ADAPTER";
+  source: "PRODUCTION_ENGINE_WITH_SYNTHETIC_CANDLE_INPUTS";
   notice: string;
   data: T;
 };

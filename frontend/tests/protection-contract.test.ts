@@ -72,4 +72,17 @@ describe("server-only protection and strategy boundary", () => {
       expect(code).not.toContain("pivot_low");
     }
   });
+
+  it("preserves and renders simultaneous BUY and SELL results", () => {
+    expect(source("lib/api-types.ts")).toContain(
+      "levels_results: LevelsResult[]",
+    );
+    expect(source("components/dashboard.tsx")).toContain("CONFIRMED_BOTH");
+    expect(source("components/dashboard.tsx")).toContain(
+      "status.levels_results",
+    );
+    expect(source("components/dashboard.tsx")).toContain(
+      "Independent BUY / SELL",
+    );
+  });
 });
