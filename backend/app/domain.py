@@ -43,6 +43,14 @@ class Bar:
     provider: str
     is_complete: bool
     volume: Decimal | None = None
+    session_timezone: str = "UTC"
+    raw_provider_symbol: str | None = None
+    raw_open_time: str | None = None
+    raw_close_time: str | None = None
+    raw_open: str | None = None
+    raw_high: str | None = None
+    raw_low: str | None = None
+    raw_close: str | None = None
     synthetic: bool = True
 
 

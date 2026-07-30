@@ -497,6 +497,7 @@ def test_production_runtime_has_no_oracle_dependency_or_access() -> None:
         ROOT / "backend" / "app" / "service.py",
         ROOT / "backend" / "app" / "synthetic_inputs.py",
         *(ROOT / "backend" / "app" / "engine").glob("*.py"),
+        *(ROOT / "backend" / "app" / "market_data").glob("*.py"),
     ]
     forbidden = (
         "golden.reference",

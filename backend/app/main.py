@@ -7,39 +7,63 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from .config import Settings
+from .domain import primitive
 from .engine.strategy import Spect8StrategyEvaluator
+from .market_data.clock import FixedClock
+from .market_data.closed_bar import ClosedBarDetector
+from .market_data.coordinator import MarketDataCoordinator
+from .market_data.normalizer import CandleNormalizer
+from .market_data.registry import CanonicalInstrumentRegistry
+from .market_data.replay_provider import ReplayMarketDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
-from .synthetic_inputs import SyntheticCaseInputLoader
 
 SYNTHETIC_NOTICE = (
-    "SYNTHETIC GOLDEN FIXTURE DATA — no live market-data provider is connected."
+    "SYNTHETIC REPLAY MARKET DATA — no live provider is connected."
 )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     configured = settings or Settings.from_environment()
     repository = SQLiteProjectionRepository(configured.database_path)
-    case_loader = SyntheticCaseInputLoader(configured.repository_root)
+    provider = ReplayMarketDataProvider(
+        configured.repository_root / "golden",
+        configured.selected_cases,
+    )
+    clock = FixedClock(provider.initial_clock_time())
+    registry = CanonicalInstrumentRegistry(provider.discover_instruments())
     evaluator = Spect8StrategyEvaluator()
-    service = WalkingSkeletonService(evaluator, case_loader, repository)
+    service = WalkingSkeletonService(evaluator, None, repository)
+    coordinator = MarketDataCoordinator(
+        provider=provider,
+        registry=registry,
+        normalizer=CandleNormalizer(),
+        detector=ClosedBarDetector(),
+        service=service,
+        repository=repository,
+        clock=clock,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         repository.initialize()
         if configured.auto_seed_synthetic:
-            service.process_cases(configured.selected_cases)
+            coordinator.poll_once()
         yield
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 2A",
-        version="0.2.0",
+        title="Spect8 HedgeFund Dashboard — Phase 2B",
+        version="0.3.0",
         description=SYNTHETIC_NOTICE,
         lifespan=lifespan,
     )
     app.state.settings = configured
     app.state.repository = repository
     app.state.service = service
+    app.state.provider = provider
+    app.state.registry = registry
+    app.state.clock = clock
+    app.state.coordinator = coordinator
 
     def require_internal_key(
         x_spect8_internal_key: Annotated[str | None, Header()] = None,
@@ -54,40 +78,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def envelope(data: Any) -> dict[str, Any]:
         return {
             "synthetic": True,
-            "source": "PRODUCTION_ENGINE_WITH_SYNTHETIC_CANDLE_INPUTS",
+            "source": "REPLAY_MARKET_DATA_PROVIDER",
             "notice": SYNTHETIC_NOTICE,
             "data": data,
         }
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        provider_health = coordinator.current_health()
+        if provider_health is None:
+            current = primitive(provider.health(clock.now()))
+            provider_health = {
+                "provider": current["provider_id"],
+                "state": current["state"],
+                "previous_state": None,
+                "checked_at": current["checked_at"],
+                "latest_completed_close": current[
+                    "latest_completed_close"
+                ],
+                "freshness_seconds": current["freshness_seconds"],
+                "detail": current["detail"],
+                "synthetic": True,
+            }
         return envelope(
             {
                 "status": "ok",
-                "mode": "PHASE_2A_PRODUCTION_ENGINE",
-                "market_data": "SYNTHETIC_ONLY",
+                "mode": "PHASE_2B_REPLAY_MARKET_DATA",
+                "market_data": "REPLAY_ONLY",
                 "database": "sqlite",
+                "provider": primitive(provider.identity),
+                "provider_health": provider_health,
             }
         )
 
     @app.get("/instruments", dependencies=[protected])
-    def instruments(request: Request) -> dict[str, Any]:
-        statuses = request.app.state.repository.statuses()
-        unique: dict[str, dict[str, Any]] = {}
-        for status in statuses:
-            unique[status["instrument_id"]] = {
-                "instrument_id": status["instrument_id"],
-                "provider": status["provider"],
-                "timeframes": sorted(
-                    {
-                        existing["timeframe"]
-                        for existing in statuses
-                        if existing["instrument_id"] == status["instrument_id"]
-                    }
-                ),
-                "synthetic": True,
-            }
-        return envelope(list(unique.values()))
+    def instruments() -> dict[str, Any]:
+        return envelope(
+            [
+                {
+                    "instrument_id": instrument.instrument_id,
+                    "provider": instrument.provider_id,
+                    "provider_symbol": instrument.provider_symbol,
+                    "asset_class": instrument.asset_class,
+                    "quote_currency": instrument.quote_currency,
+                    "profit_currency": instrument.profit_currency,
+                    "timeframes": [
+                        timeframe.value
+                        for timeframe in instrument.available_timeframes
+                    ],
+                    "session_timezone": instrument.session_timezone,
+                    "point_size": float(instrument.point_size),
+                    "tick_size": (
+                        float(instrument.tick_size)
+                        if instrument.tick_size is not None
+                        else None
+                    ),
+                    "price_precision": instrument.price_precision,
+                    "synthetic": True,
+                }
+                for instrument in registry.all()
+            ]
+        )
 
     @app.get("/statuses", dependencies=[protected])
     def statuses(request: Request) -> dict[str, Any]:
@@ -118,10 +169,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return envelope(request.app.state.repository.events())
 
     @app.post("/synthetic/replay", dependencies=[protected])
-    def replay(request: Request) -> dict[str, Any]:
-        outcomes = request.app.state.service.process_cases(
-            request.app.state.settings.selected_cases
-        )
+    def replay() -> dict[str, Any]:
+        poll = coordinator.poll_once()
         return envelope(
             [
                 {
@@ -129,8 +178,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "idempotency_key": outcome.idempotency_key,
                     "replayed": outcome.replayed,
                     "events_created": outcome.events_created,
+                    "health_state": outcome.health_state.value,
+                    "issues": list(outcome.issues),
                 }
-                for outcome in outcomes
+                for outcome in poll.outcomes
             ]
         )
 

@@ -3,11 +3,12 @@
 Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` specification.
 
-Phase 2A is an end-to-end walking skeleton with an independent production
-calculation engine. The runtime calculates the two committed synthetic examples
-from OHLC candles and instrument metadata; golden expected results remain a
-test-only oracle. It contains no live market-data API, trading, charting,
-backtesting, WebSockets, or multi-user support.
+Phase 2B is an end-to-end walking skeleton with an independent production
+calculation engine and a provider-neutral market-data foundation. The runtime
+replays the two committed synthetic examples through validated, completed
+H1/H4/D1 candles. Golden expected results remain a test-only oracle. It contains
+no live market-data API, scheduler, trading, charting, backtesting, WebSockets,
+or multi-user support.
 
 The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
 SELL confirmations and preserves both directional calculations independently.
@@ -15,7 +16,7 @@ SELL confirmations and preserves both directional calculations independently.
 ## Applications
 
 - `backend/` — FastAPI, deterministic in-process event dispatch, and SQLite
-  projections.
+  bar/event/status projections.
 - `frontend/` — Next.js, TypeScript, Tailwind CSS, single-client login, and the
   protected dashboard.
 - `golden/` — immutable synthetic test authority and independent reference
@@ -82,4 +83,6 @@ npm.cmd run build
 See [Phase 1 architecture](docs/PHASE1_WALKING_SKELETON.md) for the event,
 persistence, and authentication foundation, and
 [Phase 2A engine](docs/PHASE2A_PRODUCTION_ENGINE.md) for the production
-calculation and oracle boundaries.
+calculation and oracle boundaries. See
+[Phase 2B market data](docs/PHASE2B_MARKET_DATA_FOUNDATION.md) for replay,
+normalization, closed-bar, health, and persistence behavior.

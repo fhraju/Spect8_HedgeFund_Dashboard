@@ -59,7 +59,7 @@ export type EventRecord = {
 
 export type SyntheticEnvelope<T> = {
   synthetic: true;
-  source: "PRODUCTION_ENGINE_WITH_SYNTHETIC_CANDLE_INPUTS";
+  source: "REPLAY_MARKET_DATA_PROVIDER";
   notice: string;
   data: T;
 };

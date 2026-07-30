@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from .dispatcher import DeterministicEventDispatcher
 from .domain import (
@@ -17,7 +17,10 @@ from .domain import (
 from .engine.models import CandidateResult, StrategyEvaluation, StrategyRequest
 from .engine.strategy import StrategyEvaluator
 from .repository import SQLiteProjectionRepository
-from .synthetic_inputs import SyntheticCaseInputLoader
+
+
+class CaseInputLoader(Protocol):
+    def load(self, case_id: str) -> StrategyRequest: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +46,7 @@ class WalkingSkeletonService:
     def __init__(
         self,
         evaluator: StrategyEvaluator,
-        case_loader: SyntheticCaseInputLoader,
+        case_loader: CaseInputLoader | None,
         repository: SQLiteProjectionRepository,
     ) -> None:
         self._evaluator = evaluator
@@ -51,11 +54,14 @@ class WalkingSkeletonService:
         self._repository = repository
 
     def process_case(self, case_id: str) -> ProcessingOutcome:
-        evaluated = self.evaluate_case(case_id)
+        return self.process_request(self._load_case(case_id))
+
+    def process_request(self, request: StrategyRequest) -> ProcessingOutcome:
+        evaluated = self.evaluate_request(request)
         events = self._event_trace(evaluated)
         created = self._repository.persist_projection(evaluated.status, events)
         return ProcessingOutcome(
-            source_case_id=case_id,
+            source_case_id=request.case_id,
             idempotency_key=evaluated.bar_event.idempotency_key,
             replayed=not created,
             events_created=len(events) if created else 0,
@@ -65,7 +71,12 @@ class WalkingSkeletonService:
         return [self.process_case(case_id) for case_id in case_ids]
 
     def evaluate_case(self, case_id: str) -> EvaluatedProjection:
-        return self.evaluate_request(self._case_loader.load(case_id))
+        return self.evaluate_request(self._load_case(case_id))
+
+    def _load_case(self, case_id: str) -> StrategyRequest:
+        if self._case_loader is None:
+            raise RuntimeError("no direct case loader is configured")
+        return self._case_loader.load(case_id)
 
     def evaluate_request(self, request: StrategyRequest) -> EvaluatedProjection:
         evaluation = self._evaluator.evaluate(request)

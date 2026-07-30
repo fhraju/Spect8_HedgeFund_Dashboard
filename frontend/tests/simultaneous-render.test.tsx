@@ -12,9 +12,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-const source = "PRODUCTION_ENGINE_WITH_SYNTHETIC_CANDLE_INPUTS" as const;
+const source = "REPLAY_MARKET_DATA_PROVIDER" as const;
 const notice =
-  "SYNTHETIC GOLDEN FIXTURE DATA — no live market-data provider is connected.";
+  "SYNTHETIC REPLAY MARKET DATA — no live provider is connected.";
 
 function envelope<T>(data: T): SyntheticEnvelope<T> {
   return { synthetic: true, source, notice, data };

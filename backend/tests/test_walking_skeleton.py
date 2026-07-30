@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from backend.app.config import Settings
 from backend.app.domain import Bar, EventType
 from backend.app.main import create_app
+from backend.app.synthetic_inputs import SyntheticCaseInputLoader
 
 ROOT = Path(__file__).resolve().parents[2]
 API_KEY = "test-internal-key"
@@ -39,7 +40,8 @@ def expected(case_id: str) -> dict:
 def test_domain_models_are_immutable(tmp_path: Path) -> None:
     application = create_app(settings(tmp_path / "immutable.sqlite3"))
     with TestClient(application):
-        adapted = application.state.service.evaluate_case(SELECTED_CASES[0])
+        request = SyntheticCaseInputLoader(ROOT).load(SELECTED_CASES[0])
+        adapted = application.state.service.evaluate_request(request)
         bar: Bar = adapted.bar_event.bar
         with pytest.raises(FrozenInstanceError):
             bar.close = bar.open  # type: ignore[misc]
