@@ -1,0 +1,66 @@
+{
+  "bars": {
+    "daily_completed_count": 10,
+    "daily_endpoint_close_time": "2026-01-30T00:00:00Z",
+    "excluded_incomplete_count": 0,
+    "signal_bar_close_time": "2026-02-03T11:00:00Z",
+    "signal_completed_count": 35
+  },
+  "candidates": {
+    "buy": null,
+    "sell": null
+  },
+  "case_id": "sell_structural_pivot_failure_h1",
+  "classification": {
+    "buy_filter_matched": false,
+    "buy_sma_rejection": false,
+    "buy_structural_pivot": true,
+    "confirmed_buy": false,
+    "confirmed_sell": false,
+    "dashboard_state": "FILTERED_SELL",
+    "sell_filter_matched": true,
+    "sell_sma_rejection": true,
+    "sell_structural_pivot": false,
+    "technical_buy_signal": false,
+    "technical_sell_signal": false
+  },
+  "data_status": "READY",
+  "evaluation_time": "2026-02-03T11:00:01Z",
+  "evidence": [
+    "Only provider-complete candles closing before the evaluation boundary were used.",
+    "H1 and D1 calculations were evaluated independently of any other signal timeframe.",
+    "The Daily Filter is non-consuming; reverse-filter and risk-multiplier logic are absent."
+  ],
+  "indicators": {
+    "activation_buffer": 0.8,
+    "atr_d1_wilder_5": 16.0,
+    "daily_buy_level": 867.8,
+    "daily_raw_high": 883.0,
+    "daily_raw_low": 867.0,
+    "daily_sell_level": 882.2,
+    "point_adjustment": 0.1,
+    "recent_high_21": 883.0,
+    "recent_low_21": 872.0,
+    "sma10": 874.9,
+    "sma20": 874.95,
+    "stop_atr_distance": 5.6
+  },
+  "instrument_id": "SYNTH_XAUUSD",
+  "issues": [],
+  "pivots": {
+    "buy": {
+      "open_time": "2026-02-03T09:00:00Z",
+      "passed": true,
+      "pivot_value": 872.0,
+      "structural_window_extreme": 872.0
+    },
+    "sell": {
+      "open_time": "2026-02-03T06:00:00Z",
+      "passed": false,
+      "pivot_value": 882.5,
+      "structural_window_extreme": 883.0
+    }
+  },
+  "strategy_id": "SPECT8_MICRO_DAILY_V1_0",
+  "timeframe": "H1"
+}

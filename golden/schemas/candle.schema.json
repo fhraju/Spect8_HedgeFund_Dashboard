@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spect8.local/schemas/candle.schema.json",
+  "title": "Candle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canonical_instrument_id",
+    "timeframe",
+    "open_time",
+    "close_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "provider",
+    "is_complete"
+  ],
+  "properties": {
+    "canonical_instrument_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeframe": {
+      "enum": ["H1", "H4", "D1"]
+    },
+    "open_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "close_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "open": {
+      "type": "number"
+    },
+    "high": {
+      "type": "number"
+    },
+    "low": {
+      "type": "number"
+    },
+    "close": {
+      "type": "number"
+    },
+    "volume": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "is_complete": {
+      "type": "boolean"
+    }
+  }
+}

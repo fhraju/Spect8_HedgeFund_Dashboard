@@ -1,0 +1,78 @@
+{
+  "bars": {
+    "daily_completed_count": 10,
+    "daily_endpoint_close_time": "2026-01-30T00:00:00Z",
+    "excluded_incomplete_count": 0,
+    "signal_bar_close_time": "2026-02-03T11:00:00Z",
+    "signal_completed_count": 35
+  },
+  "candidates": {
+    "buy": {
+      "contract_status": "VALID",
+      "direction": "BUY",
+      "display_size": 0.66,
+      "entry_reference": 400.0,
+      "monetary_loss_per_one_contract": 150.0,
+      "provider_adjusted_stop": 398.5,
+      "raw_size": 0.6666666667,
+      "raw_strategy_stop": 398.5,
+      "risk_distance": 1.5,
+      "target_3r": 404.5,
+      "target_risk_usd": 100.0
+    },
+    "sell": null
+  },
+  "case_id": "confirmed_buy_h1_04",
+  "classification": {
+    "buy_filter_matched": true,
+    "buy_sma_rejection": true,
+    "buy_structural_pivot": true,
+    "confirmed_buy": true,
+    "confirmed_sell": false,
+    "dashboard_state": "CONFIRMED_BUY",
+    "sell_filter_matched": false,
+    "sell_sma_rejection": true,
+    "sell_structural_pivot": true,
+    "technical_buy_signal": true,
+    "technical_sell_signal": true
+  },
+  "data_status": "READY",
+  "evaluation_time": "2026-02-03T11:00:01Z",
+  "evidence": [
+    "Only provider-complete candles closing before the evaluation boundary were used.",
+    "H1 and D1 calculations were evaluated independently of any other signal timeframe.",
+    "The Daily Filter is non-consuming; reverse-filter and risk-multiplier logic are absent."
+  ],
+  "indicators": {
+    "activation_buffer": 0.2,
+    "atr_d1_wilder_5": 4.0,
+    "daily_buy_level": 400.0,
+    "daily_raw_high": 403.8,
+    "daily_raw_low": 399.8,
+    "daily_sell_level": 403.6,
+    "point_adjustment": 0.1,
+    "recent_high_21": 401.0,
+    "recent_low_21": 400.0,
+    "sma10": 400.0,
+    "sma20": 400.0,
+    "stop_atr_distance": 1.4
+  },
+  "instrument_id": "SYNTH_XAUUSD",
+  "issues": [],
+  "pivots": {
+    "buy": {
+      "open_time": "2026-02-03T10:00:00Z",
+      "passed": true,
+      "pivot_value": 400.0,
+      "structural_window_extreme": 400.0
+    },
+    "sell": {
+      "open_time": "2026-02-03T10:00:00Z",
+      "passed": true,
+      "pivot_value": 401.0,
+      "structural_window_extreme": 401.0
+    }
+  },
+  "strategy_id": "SPECT8_MICRO_DAILY_V1_0",
+  "timeframe": "H1"
+}

@@ -1,0 +1,2 @@
+-r backend/requirements-dev.txt
+jsonschema[format]>=4.23,<5

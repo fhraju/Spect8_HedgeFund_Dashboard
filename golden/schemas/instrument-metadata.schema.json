@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spect8.local/schemas/instrument-metadata.schema.json",
+  "title": "InstrumentMetadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "strategy_id",
+    "instrument_id",
+    "display_name",
+    "provider",
+    "session_timezone",
+    "candle_boundary_convention",
+    "price_precision",
+    "point_size",
+    "tick_size",
+    "tick_value_usd",
+    "conversion_rate_to_usd",
+    "contract_min",
+    "contract_max",
+    "contract_step",
+    "minimum_stop_distance_points"
+  ],
+  "properties": {
+    "strategy_id": {
+      "const": "SPECT8_MICRO_DAILY_V1_0"
+    },
+    "instrument_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_timezone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candle_boundary_convention": {
+      "type": "string",
+      "minLength": 1
+    },
+    "price_precision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 12
+    },
+    "point_size": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "tick_size": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "tick_value_usd": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "conversion_rate_to_usd": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "contract_min": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "contract_max": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "contract_step": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0
+    },
+    "minimum_stop_distance_points": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

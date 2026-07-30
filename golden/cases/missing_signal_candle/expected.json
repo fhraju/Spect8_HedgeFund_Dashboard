@@ -1,0 +1,40 @@
+{
+  "bars": {
+    "daily_completed_count": 0,
+    "daily_endpoint_close_time": null,
+    "excluded_incomplete_count": 0,
+    "signal_bar_close_time": null,
+    "signal_completed_count": 0
+  },
+  "candidates": {
+    "buy": null,
+    "sell": null
+  },
+  "case_id": "missing_signal_candle",
+  "classification": {
+    "buy_filter_matched": null,
+    "buy_sma_rejection": null,
+    "buy_structural_pivot": null,
+    "confirmed_buy": null,
+    "confirmed_sell": null,
+    "dashboard_state": "DATA_UNAVAILABLE",
+    "sell_filter_matched": null,
+    "sell_sma_rejection": null,
+    "sell_structural_pivot": null,
+    "technical_buy_signal": null,
+    "technical_sell_signal": null
+  },
+  "data_status": "UNAVAILABLE",
+  "evaluation_time": "2026-02-03T11:00:01Z",
+  "evidence": [
+    "Unsafe candle input was quarantined; no strategy result was calculated."
+  ],
+  "indicators": null,
+  "instrument_id": "SYNTH_XAUUSD",
+  "issues": [
+    "MISSING_SIGNAL_CANDLE"
+  ],
+  "pivots": null,
+  "strategy_id": "SPECT8_MICRO_DAILY_V1_0",
+  "timeframe": "H1"
+}

@@ -1,0 +1,17 @@
+{
+  "candle_boundary_convention": "D1 closes at 00:00 UTC; H1/H4 aligned to UTC midnight",
+  "contract_max": 100.0,
+  "contract_min": 0.01,
+  "contract_step": 0.01,
+  "conversion_rate_to_usd": 1.0,
+  "display_name": "Synthetic XAU/USD",
+  "instrument_id": "SYNTH_XAUUSD",
+  "minimum_stop_distance_points": 0.0,
+  "point_size": 0.01,
+  "price_precision": 2,
+  "provider": "SYNTHETIC_UTC_V1",
+  "session_timezone": "UTC",
+  "strategy_id": "SPECT8_MICRO_DAILY_V1_0",
+  "tick_size": 0.01,
+  "tick_value_usd": 1.0
+}

@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spect8.local/schemas/expected-result.schema.json",
+  "title": "ExpectedResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "strategy_id",
+    "instrument_id",
+    "timeframe",
+    "evaluation_time",
+    "data_status",
+    "issues",
+    "bars",
+    "classification",
+    "indicators",
+    "pivots",
+    "candidates",
+    "evidence"
+  ],
+  "$defs": {
+    "nullableNumber": {
+      "type": ["number", "null"]
+    },
+    "nullableBoolean": {
+      "type": ["boolean", "null"]
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "entry_reference",
+        "raw_strategy_stop",
+        "provider_adjusted_stop",
+        "risk_distance",
+        "target_3r",
+        "target_risk_usd",
+        "monetary_loss_per_one_contract",
+        "raw_size",
+        "display_size",
+        "contract_status"
+      ],
+      "properties": {
+        "direction": {
+          "enum": ["BUY", "SELL"]
+        },
+        "entry_reference": {
+          "type": "number"
+        },
+        "raw_strategy_stop": {
+          "type": "number"
+        },
+        "provider_adjusted_stop": {
+          "type": "number"
+        },
+        "risk_distance": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "target_3r": {
+          "type": "number"
+        },
+        "target_risk_usd": {
+          "const": 100.0
+        },
+        "monetary_loss_per_one_contract": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "raw_size": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "display_size": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "contract_status": {
+          "enum": [
+            "VALID",
+            "BELOW_PROVIDER_MINIMUM",
+            "METADATA_UNAVAILABLE"
+          ]
+        }
+      }
+    },
+    "pivot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "open_time",
+        "pivot_value",
+        "structural_window_extreme",
+        "passed"
+      ],
+      "properties": {
+        "open_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pivot_value": {
+          "type": "number"
+        },
+        "structural_window_extreme": {
+          "type": "number"
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "strategy_id": {
+      "const": "SPECT8_MICRO_DAILY_V1_0"
+    },
+    "instrument_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeframe": {
+      "enum": ["H1", "H4"]
+    },
+    "evaluation_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_status": {
+      "enum": ["READY", "UNAVAILABLE"]
+    },
+    "issues": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "DUPLICATE_CANDLE",
+          "OUT_OF_ORDER_CANDLE",
+          "MISSING_SIGNAL_CANDLE",
+          "MISSING_DAILY_CANDLE",
+          "INSUFFICIENT_SIGNAL_HISTORY",
+          "INSUFFICIENT_DAILY_HISTORY"
+        ]
+      }
+    },
+    "bars": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signal_completed_count",
+        "daily_completed_count",
+        "excluded_incomplete_count",
+        "signal_bar_close_time",
+        "daily_endpoint_close_time"
+      ],
+      "properties": {
+        "signal_completed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "daily_completed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded_incomplete_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "signal_bar_close_time": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "daily_endpoint_close_time": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buy_filter_matched",
+        "sell_filter_matched",
+        "buy_sma_rejection",
+        "sell_sma_rejection",
+        "buy_structural_pivot",
+        "sell_structural_pivot",
+        "technical_buy_signal",
+        "technical_sell_signal",
+        "confirmed_buy",
+        "confirmed_sell",
+        "dashboard_state"
+      ],
+      "properties": {
+        "buy_filter_matched": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "sell_filter_matched": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "buy_sma_rejection": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "sell_sma_rejection": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "buy_structural_pivot": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "sell_structural_pivot": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "technical_buy_signal": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "technical_sell_signal": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "confirmed_buy": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "confirmed_sell": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "dashboard_state": {
+          "enum": [
+            "WATCHING",
+            "FILTERED_BUY",
+            "FILTERED_SELL",
+            "FILTERED_BOTH",
+            "CONFIRMED_BUY",
+            "CONFIRMED_SELL",
+            "DATA_UNAVAILABLE"
+          ]
+        }
+      }
+    },
+    "indicators": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sma10",
+            "sma20",
+            "atr_d1_wilder_5",
+            "activation_buffer",
+            "stop_atr_distance",
+            "point_adjustment",
+            "daily_raw_low",
+            "daily_raw_high",
+            "daily_buy_level",
+            "daily_sell_level",
+            "recent_low_21",
+            "recent_high_21"
+          ],
+          "properties": {
+            "sma10": {"type": "number"},
+            "sma20": {"type": "number"},
+            "atr_d1_wilder_5": {"type": "number"},
+            "activation_buffer": {"type": "number"},
+            "stop_atr_distance": {"type": "number"},
+            "point_adjustment": {"type": "number"},
+            "daily_raw_low": {"type": "number"},
+            "daily_raw_high": {"type": "number"},
+            "daily_buy_level": {"type": "number"},
+            "daily_sell_level": {"type": "number"},
+            "recent_low_21": {"type": "number"},
+            "recent_high_21": {"type": "number"}
+          }
+        }
+      ]
+    },
+    "pivots": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["buy", "sell"],
+          "properties": {
+            "buy": {"$ref": "#/$defs/pivot"},
+            "sell": {"$ref": "#/$defs/pivot"}
+          }
+        }
+      ]
+    },
+    "candidates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["buy", "sell"],
+      "properties": {
+        "buy": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/candidate"}
+          ]
+        },
+        "sell": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/candidate"}
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
