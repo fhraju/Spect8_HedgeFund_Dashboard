@@ -345,6 +345,8 @@ class TwelveDataProvider:
         )
         candles = self._parse_payload(payload, timeframe, as_of)
         self._cache[cache_key] = candles
+        while len(self._cache) > 12:
+            self._cache.pop(next(iter(self._cache)))
         if candles:
             latest = self._parse_utc(candles[-1].raw_close_time)
             if (

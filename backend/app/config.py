@@ -25,6 +25,8 @@ class Settings:
         Timeframe.D1,
     )
     twelve_data_api_key: str | None = field(default=None, repr=False)
+    market_data_runtime_enabled: bool = False
+    market_data_poll_seconds: int = 300
 
     def validate(self) -> None:
         provider = self.market_data_provider.lower()
@@ -45,6 +47,10 @@ class Settings:
                 raise ValueError(
                     "TWELVE_DATA_API_KEY is required for twelve_data provider."
                 )
+        if not 60 <= self.market_data_poll_seconds <= 900:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_POLL_SECONDS must be between 60 and 900."
+            )
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -84,6 +90,13 @@ class Settings:
             instrument=os.environ.get("SPECT8_INSTRUMENT", "EUR/USD"),
             timeframes=timeframes,
             twelve_data_api_key=os.environ.get("TWELVE_DATA_API_KEY"),
+            market_data_runtime_enabled=os.environ.get(
+                "SPECT8_MARKET_DATA_RUNTIME_ENABLED", "true"
+            ).lower()
+            == "true",
+            market_data_poll_seconds=int(
+                os.environ.get("SPECT8_MARKET_DATA_POLL_SECONDS", "300")
+            ),
         )
         configured.validate()
         return configured

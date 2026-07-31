@@ -22,6 +22,7 @@ from .domain import (
     InstrumentStatus,
     LevelsResult,
     SignalResult,
+    StrategyMarketValues,
     Timeframe,
 )
 
@@ -106,6 +107,31 @@ class FrozenExpectedResultAdapter:
             signal_result=signal_result,
             levels_result=levels_result,
             levels_results=levels_results,
+            reason_codes=tuple(expected.get("reason_codes", ())),
+            market_values=StrategyMarketValues(
+                signal_open=bar.open,
+                signal_high=bar.high,
+                signal_low=bar.low,
+                signal_close=bar.close,
+                sma10=Decimal(str(indicators["sma10"])),
+                sma20=Decimal(str(indicators["sma20"])),
+                atr_d1_wilder_5=Decimal(
+                    str(indicators["atr_d1_wilder_5"])
+                ),
+                daily_raw_low=Decimal(str(indicators["daily_raw_low"])),
+                daily_raw_high=Decimal(str(indicators["daily_raw_high"])),
+                daily_buy_level=Decimal(
+                    str(indicators["daily_buy_level"])
+                ),
+                daily_sell_level=Decimal(
+                    str(indicators["daily_sell_level"])
+                ),
+                recent_low_21=Decimal(str(indicators["recent_low_21"])),
+                recent_high_21=Decimal(str(indicators["recent_high_21"])),
+                daily_context_close_time=_datetime(
+                    expected["bars"]["daily_endpoint_close_time"]
+                ),
+            ),
             signal_bar_close_time=_datetime(
                 expected["bars"]["signal_bar_close_time"]
             ),

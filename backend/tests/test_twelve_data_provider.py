@@ -474,7 +474,7 @@ def test_application_can_select_twelve_data_without_startup_network(
 
     assert application.state.provider.identity.provider_id == "TWELVE_DATA"
     assert health["synthetic"] is False
-    assert health["data"]["mode"] == "PHASE_2C_TWELVE_DATA"
+    assert health["data"]["mode"] == "PHASE_3A_TWELVE_DATA_RUNTIME"
     assert health["data"]["provider_health"]["state"] == "DATA_UNAVAILABLE"
 
 

@@ -12,6 +12,7 @@ from .domain import (
     InstrumentStatus,
     LevelsResult,
     SignalResult,
+    StrategyMarketValues,
     primitive,
 )
 from .engine.models import CandidateResult, StrategyEvaluation, StrategyRequest
@@ -126,6 +127,25 @@ class WalkingSkeletonService:
             signal_result=signal_result,
             levels_result=levels_result,
             levels_results=levels_results,
+            reason_codes=evaluation.reason_codes,
+            market_values=StrategyMarketValues(
+                signal_open=evaluation.signal_bar.open,
+                signal_high=evaluation.signal_bar.high,
+                signal_low=evaluation.signal_bar.low,
+                signal_close=evaluation.signal_bar.close,
+                sma10=evaluation.indicators.sma10,
+                sma20=evaluation.indicators.sma20,
+                atr_d1_wilder_5=evaluation.indicators.atr_d1_wilder_5,
+                daily_raw_low=evaluation.indicators.daily_raw_low,
+                daily_raw_high=evaluation.indicators.daily_raw_high,
+                daily_buy_level=evaluation.indicators.daily_buy_level,
+                daily_sell_level=evaluation.indicators.daily_sell_level,
+                recent_low_21=evaluation.indicators.recent_low_21,
+                recent_high_21=evaluation.indicators.recent_high_21,
+                daily_context_close_time=(
+                    evaluation.bars.daily_endpoint_close_time
+                ),
+            ),
             signal_bar_close_time=evaluation.signal_bar.close_time,
             last_update=request.evaluation_time,
             idempotency_key=bar_event.idempotency_key,

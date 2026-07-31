@@ -119,6 +119,24 @@ class LevelsResult:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyMarketValues:
+    signal_open: Decimal
+    signal_high: Decimal
+    signal_low: Decimal
+    signal_close: Decimal
+    sma10: Decimal
+    sma20: Decimal
+    atr_d1_wilder_5: Decimal
+    daily_raw_low: Decimal
+    daily_raw_high: Decimal
+    daily_buy_level: Decimal
+    daily_sell_level: Decimal
+    recent_low_21: Decimal
+    recent_high_21: Decimal
+    daily_context_close_time: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentStatus:
     strategy_id: str
     provider: str
@@ -132,6 +150,8 @@ class InstrumentStatus:
     signal_result: SignalResult
     levels_result: LevelsResult | None
     levels_results: tuple[LevelsResult, ...]
+    reason_codes: tuple[str, ...]
+    market_values: StrategyMarketValues
     signal_bar_close_time: datetime
     last_update: datetime
     idempotency_key: str

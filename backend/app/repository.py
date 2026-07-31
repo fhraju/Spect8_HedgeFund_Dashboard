@@ -92,6 +92,14 @@ class SQLiteProjectionRepository:
                     detail TEXT NOT NULL,
                     synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1))
                 );
+
+                CREATE TABLE IF NOT EXISTS provider_sync (
+                    provider TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    last_attempt_at TEXT NOT NULL,
+                    last_success_at TEXT,
+                    detail TEXT NOT NULL
+                );
                 """
             )
             self._migrate_synthetic_constraints(connection)
@@ -411,6 +419,41 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
 
+    def record_provider_sync(
+        self,
+        provider_id: str,
+        *,
+        state: str,
+        attempted_at: str,
+        succeeded: bool,
+        detail: str,
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO provider_sync (
+                    provider, state, last_attempt_at, last_success_at, detail
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    state = excluded.state,
+                    last_attempt_at = excluded.last_attempt_at,
+                    last_success_at = CASE
+                        WHEN excluded.last_success_at IS NOT NULL
+                        THEN excluded.last_success_at
+                        ELSE provider_sync.last_success_at
+                    END,
+                    detail = excluded.detail
+                """,
+                (
+                    provider_id,
+                    state,
+                    attempted_at,
+                    attempted_at if succeeded else None,
+                    detail,
+                ),
+            )
+            connection.commit()
+
     def statuses(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
@@ -432,6 +475,37 @@ class SQLiteProjectionRepository:
                 FROM event_history
                 ORDER BY id ASC
                 """
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "idempotency_key": row["idempotency_key"],
+                "sequence": row["sequence"],
+                "event_type": row["event_type"],
+                "occurred_at": row["occurred_at"],
+                "instrument_id": row["instrument_id"],
+                "timeframe": row["timeframe"],
+                "source_case_id": row["source_case_id"],
+                "payload": json.loads(row["payload_json"]),
+                "synthetic": bool(row["synthetic"]),
+            }
+            for row in rows
+        ]
+
+    def recent_events(self, limit: int = 12) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 100:
+            raise ValueError("event limit must be between 1 and 100")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, idempotency_key, sequence, event_type, occurred_at,
+                       instrument_id, timeframe, source_case_id, payload_json,
+                       synthetic
+                FROM event_history
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
             ).fetchall()
         return [
             {
@@ -530,6 +604,37 @@ class SQLiteProjectionRepository:
             "freshness_seconds": row["freshness_seconds"],
             "detail": row["detail"],
             "synthetic": bool(row["synthetic"]),
+        }
+
+    def provider_sync(self, provider_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT provider, state, last_attempt_at, last_success_at, detail
+                FROM provider_sync
+                WHERE provider = ?
+                """,
+                (provider_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def latest_candle_timestamps(
+        self, provider_id: str, instrument_id: str
+    ) -> dict[str, str]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT timeframe, MAX(close_time_utc) AS close_time_utc
+                FROM canonical_bars
+                WHERE provider = ? AND instrument_id = ?
+                GROUP BY timeframe
+                """,
+                (provider_id, instrument_id),
+            ).fetchall()
+        return {
+            row["timeframe"]: row["close_time_utc"]
+            for row in rows
+            if row["close_time_utc"] is not None
         }
 
     def _connect(self) -> sqlite3.Connection:

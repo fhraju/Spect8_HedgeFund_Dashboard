@@ -24,7 +24,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <p className="section-kicker">Protected client workspace</p>
         <h1>Market Scanner</h1>
         <p className="login-copy">
-          Sign in to the read-only Phase 1 dashboard.
+          Sign in to the read-only EUR/USD dashboard.
         </p>
         {params.error ? (
           <p className="auth-message error" role="alert">
@@ -46,7 +46,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <button type="submit">Enter dashboard</button>
         </form>
         <p className="synthetic-login-note">
-          Phase 1 · Synthetic golden fixture data only
+          Phase 3A · EUR/USD strategy monitoring · no trading
         </p>
       </section>
     </main>

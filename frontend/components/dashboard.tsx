@@ -4,103 +4,176 @@ import type {
   InstrumentStatus,
 } from "@/lib/api-types";
 
-import { ReplayButton } from "./replay-button";
+import { RefreshButton } from "./refresh-button";
 
-function direction(
-  status: InstrumentStatus,
-): "BUY" | "SELL" | "BOTH" | null {
-  if (
-    status.signal_result.confirmed_buy &&
-    status.signal_result.confirmed_sell
-  ) {
-    return "BOTH";
-  }
+function signalDirection(status: InstrumentStatus): string {
+  if (status.dashboard_state === "CONFIRMED_BOTH") return "BUY + SELL";
   if (status.signal_result.confirmed_buy) return "BUY";
   if (status.signal_result.confirmed_sell) return "SELL";
-  return null;
+  return "NO SIGNAL";
 }
 
-function filterLabel(status: InstrumentStatus): string {
-  const { buy_matched, sell_matched } = status.filter_result;
-  if (buy_matched && sell_matched) return "Both";
-  if (buy_matched) return "BUY Filter";
-  if (sell_matched) return "SELL Filter";
-  return "Watching";
+function filterDirection(status: InstrumentStatus): string {
+  if (
+    status.filter_result.buy_matched &&
+    status.filter_result.sell_matched
+  ) {
+    return "BUY + SELL";
+  }
+  if (status.filter_result.buy_matched) return "BUY";
+  if (status.filter_result.sell_matched) return "SELL";
+  return "WATCHING";
 }
 
-function number(value: number | undefined): string {
-  return value === undefined
-    ? "—"
-    : new Intl.NumberFormat("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 5,
-      }).format(value);
+function price(value: number | null | undefined, precision = 5): string {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  }).format(value);
 }
 
-function time(value: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
+function utc(value: string | null | undefined): string {
+  if (!value) return "Not available";
+  return `${new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     timeZone: "UTC",
     hour12: false,
-  }).format(new Date(value));
+  }).format(new Date(value))} UTC`;
 }
 
 function eventMark(event: EventRecord): string {
-  if (event.event_type === "SIGNAL_CONFIRMED") {
-    if (event.payload.direction === "BOTH") return "↕";
-    return event.payload.direction === "SELL" ? "↓" : "↑";
-  }
+  if (event.event_type === "SIGNAL_CONFIRMED") return "↑";
   if (event.event_type.includes("FILTER")) return "○";
   if (event.event_type === "LEVELS_CALCULATED") return "◇";
   return "·";
 }
 
-function eventTone(event: EventRecord): string {
-  if (event.event_type === "SIGNAL_CONFIRMED") {
-    if (event.payload.direction === "BOTH") return "both";
-    return event.payload.direction === "SELL" ? "down" : "up";
-  }
-  if (event.event_type.includes("FILTER")) return "wait";
-  return "none";
+function stateCopy(state: string): string {
+  const messages: Record<string, string> = {
+    EMPTY: "Waiting for the first completed H1 and H4 evaluations.",
+    PARTIAL: "One timeframe is ready; the other remains pending.",
+    STALE: "The latest completed provider candle is outside the freshness window.",
+    DATA_UNAVAILABLE: "Twelve Data is currently unavailable. Persisted results remain read-only.",
+    INSUFFICIENT_HISTORY: "The provider has not supplied enough completed history for evaluation.",
+    QUARANTINED: "Invalid market data was quarantined before strategy evaluation.",
+  };
+  return messages[state] ?? "Both strategy timeframes are current.";
+}
+
+function EvaluationCard({
+  status,
+  precision,
+}: {
+  status: InstrumentStatus;
+  precision: number;
+}) {
+  const values = status.market_values;
+  return (
+    <article className="evaluation-card panel">
+      <div className="panel-heading evaluation-heading">
+        <div>
+          <span className="section-kicker">Independent evaluation</span>
+          <h2>{status.timeframe} strategy</h2>
+        </div>
+        <span className={`state-chip ${status.dashboard_state.toLowerCase()}`}>
+          {status.dashboard_state.replaceAll("_", " ")}
+        </span>
+      </div>
+
+      <div className="decision-grid">
+        <div>
+          <small>Daily filter</small>
+          <strong>{filterDirection(status)}</strong>
+        </div>
+        <div>
+          <small>Confirmed signal</small>
+          <strong>{signalDirection(status)}</strong>
+        </div>
+        <div>
+          <small>Signal candle</small>
+          <strong>{utc(status.signal_bar_close_time)}</strong>
+        </div>
+      </div>
+
+      {values ? (
+        <>
+          <dl className="market-values">
+            <div><dt>Open</dt><dd>{price(values.signal_open, precision)}</dd></div>
+            <div><dt>High</dt><dd>{price(values.signal_high, precision)}</dd></div>
+            <div><dt>Low</dt><dd>{price(values.signal_low, precision)}</dd></div>
+            <div><dt>Close</dt><dd>{price(values.signal_close, precision)}</dd></div>
+            <div><dt>MA 10</dt><dd>{price(values.sma10, precision)}</dd></div>
+            <div><dt>MA 20</dt><dd>{price(values.sma20, precision)}</dd></div>
+            <div><dt>Daily volatility</dt><dd>{price(values.atr_d1_wilder_5, precision)}</dd></div>
+            <div><dt>D1 context</dt><dd>{utc(values.daily_context_close_time)}</dd></div>
+          </dl>
+          <div className="level-strip">
+            <span>BUY threshold <b>{price(values.daily_buy_level, precision)}</b></span>
+            <span>SELL threshold <b>{price(values.daily_sell_level, precision)}</b></span>
+          </div>
+        </>
+      ) : (
+        <p className="empty-copy">Market values are not available for this persisted evaluation.</p>
+      )}
+
+      {status.levels_results.length > 0 && (
+        <div className="candidate-list">
+          {status.levels_results.map((level) => (
+            <div key={level.direction}>
+              <strong>{level.direction} candidate</strong>
+              <span>Entry {price(level.entry_reference, precision)}</span>
+              <span>Stop {price(level.display_stop, precision)}</span>
+              <span>Target {price(level.target, precision)}</span>
+              <small>{level.contract_status} · display only</small>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="reason-list" aria-label={`${status.timeframe} reason codes`}>
+        {status.reason_codes.map((reason) => (
+          <span key={reason}>{reason.replaceAll("_", " ")}</span>
+        ))}
+      </div>
+    </article>
+  );
 }
 
 export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const statuses = snapshot.statuses.data;
-  const filtered = statuses.filter(
+  const { data } = snapshot;
+  const precision = data.instrument.price_precision;
+  const confirmed = data.evaluations.filter(
     (status) =>
-      status.filter_result.buy_matched || status.filter_result.sell_matched,
-  );
-  const confirmed = statuses.filter((status) => direction(status) !== null);
-  const recentEvents = [...snapshot.events.data].reverse().slice(0, 8);
+      status.signal_result.confirmed_buy ||
+      status.signal_result.confirmed_sell,
+  ).length;
+  const healthState = data.provider_health?.state ?? data.data_state;
+  const isHealthy = ["HEALTHY", "RECOVERED"].includes(data.data_state);
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-lockup">
           <span className="brand-symbol">S8</span>
-          <div>
-            <strong>Spect8</strong>
-            <span>Strategy Intelligence</span>
-          </div>
+          <div><strong>Spect8</strong><span>Strategy Intelligence</span></div>
         </div>
         <nav className="primary-nav" aria-label="Primary navigation">
-          <span><i>⌂</i>Overview</span>
           <span className="active"><i>⌕</i>Market Scanner</span>
-          <span><i>↗</i>Signals <em>{confirmed.length}</em></span>
+          <span><i>↗</i>Signals <em>{confirmed}</em></span>
           <span><i>≋</i>Event Tape</span>
         </nav>
         <div className="sidebar-bottom">
           <form action="/api/auth/logout" method="post">
-            <button className="logout-button" type="submit">
-              <i>↪</i> Logout
-            </button>
+            <button className="logout-button" type="submit"><i>↪</i> Logout</button>
           </form>
           <div className="connection-card">
-            <div><i /> Synthetic Feed Ready</div>
-            <small>Golden fixtures only</small>
-            <small>Read-only · no trading</small>
+            <div><i className={isHealthy ? "" : "warning-dot"} /> {healthState}</div>
+            <small>{data.instrument.provider} · EUR/USD only</small>
+            <small>Read-only · execution disabled</small>
           </div>
         </div>
       </aside>
@@ -109,224 +182,114 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
         <header className="topbar">
           <div>
             <p className="eyebrow">Manager workspace · Read only</p>
-            <h1>Market Scanner</h1>
+            <h1>{data.instrument.display_name}</h1>
           </div>
           <div className="top-actions">
             <div className="api-status">
-              <i />
-              <span>Synthetic Feed Connected</span>
-              <b>PHASE 2A</b>
+              <i className={isHealthy ? "" : "warning-dot"} />
+              <span>{data.instrument.provider_symbol}</span>
+              <b>PHASE 3A</b>
             </div>
-            <ReplayButton />
+            <RefreshButton />
           </div>
         </header>
 
-        <div className="synthetic-banner" role="status">
-          SYNTHETIC GOLDEN FIXTURE DATA · NO LIVE MARKET-DATA PROVIDER CONNECTED
+        <div
+          className={isHealthy ? "live-banner" : "state-banner"}
+          role="status"
+        >
+          <strong>{data.data_state}</strong>
+          <span>{stateCopy(data.data_state)}</span>
         </div>
 
         <div className="content">
-          <section className="kpi-grid" aria-label="Scanner summary">
+          <section className="kpi-grid" aria-label="Market-data summary">
             <article className="kpi active">
               <span className="kpi-icon blue">◎</span>
-              <span><b>{statuses.length}</b><small>Instances Monitored</small></span>
-              <em>One H1 · one H4</em>
+              <span><b>{data.evaluations.length}/2</b><small>Evaluations Ready</small></span>
+              <em>Independent H1 / H4</em>
             </article>
             <article className="kpi">
-              <span className="kpi-icon amber">▽</span>
-              <span><b>{filtered.length}</b><small>Filtered Candidates</small></span>
-              <em>Non-consuming Filter</em>
+              <span className="kpi-icon cyan">◷</span>
+              <span><b>{healthState}</b><small>Provider Health</small></span>
+              <em>{data.provider_health?.detail ?? "Awaiting provider health"}</em>
             </article>
             <article className="kpi">
-              <span className="kpi-icon green">⌾</span>
-              <span><b>{confirmed.length}</b><small>Confirmed Signals</small></span>
-              <em>Independent BUY / SELL</em>
+              <span className="kpi-icon amber">D1</span>
+              <span><b>{data.latest_candles.D1 ? "READY" : "PENDING"}</b><small>Daily Context</small></span>
+              <em>{utc(data.latest_candles.D1)}</em>
             </article>
             <article className="kpi">
-              <span className="kpi-icon cyan">◇</span>
-              <span><b>OK</b><small>System Health</small></span>
-              <em>FastAPI · SQLite</em>
+              <span className="kpi-icon green">0</span>
+              <span><b>{data.execution.orders}</b><small>Orders / Fills</small></span>
+              <em>Execution disabled</em>
             </article>
           </section>
 
-          <section className="dashboard-grid">
-            <article className="pipeline panel">
+          <section className="freshness-panel panel">
+            <div>
+              <span className="section-kicker">Persisted provider timeline</span>
+              <h2>Data freshness</h2>
+            </div>
+            <dl>
+              <div><dt>Last successful sync</dt><dd>{utc(data.provider_sync?.last_success_at)}</dd></div>
+              <div><dt>Latest H1</dt><dd>{utc(data.latest_candles.H1)}</dd></div>
+              <div><dt>Latest H4</dt><dd>{utc(data.latest_candles.H4)}</dd></div>
+              <div><dt>Latest D1</dt><dd>{utc(data.latest_candles.D1)}</dd></div>
+            </dl>
+          </section>
+
+          {data.evaluations.length > 0 ? (
+            <section className="evaluation-grid" aria-label="Independent BUY / SELL evaluations">
+              {data.evaluations.map((status) => (
+                <EvaluationCard
+                  key={status.idempotency_key}
+                  status={status}
+                  precision={precision}
+                />
+              ))}
+            </section>
+          ) : (
+            <section className="empty-panel panel">
+              <strong>No persisted strategy evaluation yet</strong>
+              <p>{stateCopy(data.data_state)}</p>
+            </section>
+          )}
+
+          <section className="lower-grid">
+            <article className="activity-panel panel">
               <div className="panel-heading">
-                <div>
-                  <span className="section-kicker">Event projection</span>
-                  <h2>Signal Pipeline</h2>
-                </div>
-                <i className="live-dot" title="Synthetic fixture feed" />
+                <div><span className="section-kicker">Persisted event projection</span><h2>Recent Activity</h2></div>
               </div>
-              <div className="pipeline-flow">
-                <div className="pipeline-stage active universe">
-                  <span>MARKET</span><b>{statuses.length}</b><small>Bars closed</small>
-                </div>
-                <div className="connector"><i /></div>
-                <div className="pipeline-stage filter">
-                  <span>FILTER</span><b>{filtered.length}</b><small>Candidates matched</small>
-                </div>
-                <div className="connector"><i /></div>
-                <div className="pipeline-stage signal">
-                  <span>SIGNAL</span><b>{confirmed.length}</b><small>Setups confirmed</small>
-                </div>
-              </div>
-              <div className="pipeline-note">
-                <span>BarClosed</span><b>→</b><span>Filter</span><b>→</b><span>Signal</span>
-              </div>
-              <p>
-                Each stage is persisted by the deterministic event dispatcher
-                and projected into this protected manager view.
-              </p>
-            </article>
-
-            <article className="matrix-panel panel">
-              <div className="panel-heading matrix-heading">
-                <div>
-                  <span className="section-kicker">Synthetic opportunity set</span>
-                  <h2>Opportunity Matrix</h2>
-                </div>
-                <div className="segmented" aria-label="Available timeframes">
-                  <span className="active">All</span><span>H1</span><span>H4</span>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Instrument</th>
-                      <th>TF</th>
-                      <th>Filter state</th>
-                      <th>Signal</th>
-                      <th>Entry</th>
-                      <th>Stop</th>
-                      <th>Target</th>
-                      <th>Risk / Contract</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {statuses.flatMap((status) => {
-                      const displayedLevels =
-                        status.levels_results.length > 0
-                          ? status.levels_results
-                          : [null];
-                      return displayedLevels.map((levels) => {
-                        const signalDirection =
-                          levels?.direction ?? direction(status);
-                        const isBoth =
-                          status.dashboard_state === "CONFIRMED_BOTH";
-                        return (
-                        <tr
-                          className={isBoth ? "confirmed-both-row" : undefined}
-                          key={`${status.idempotency_key}-${
-                            levels?.direction ?? "NONE"
-                          }`}
-                        >
-                          <td>
-                            <strong>{status.instrument_id}</strong>
-                            <span>
-                              Synthetic · {time(status.last_update)} UTC
-                              {isBoth ? " · Confirmed Both" : ""}
-                            </span>
-                          </td>
-                          <td><span className="tf-tag">{status.timeframe}</span></td>
-                          <td>
-                            <span className="status-pill qualified">
-                              {filterLabel(status)}
-                            </span>
-                          </td>
-                          <td>
-                            <span
-                              className={`signal-state ${
-                                signalDirection?.toLowerCase() ?? ""
-                              }`}
-                            >
-                              <i>
-                                {signalDirection === "BUY"
-                                  ? "↑"
-                                  : signalDirection === "SELL"
-                                    ? "↓"
-                                    : signalDirection === "BOTH"
-                                      ? "↕"
-                                    : "—"}
-                              </i>
-                              {signalDirection
-                                ? `${
-                                    levels?.direction ?? signalDirection
-                                  } Confirmed${isBoth ? " · Both" : ""}`
-                                : "No Signal"}
-                            </span>
-                          </td>
-                          <td className="number">{number(levels?.entry_reference)}</td>
-                          <td className="number muted">{number(levels?.display_stop)}</td>
-                          <td className="number">{number(levels?.target)}</td>
-                          <td>
-                            <strong className="risk-value">
-                              ${number(levels?.target_risk_usd)}
-                            </strong>
-                            <span className="contract-state">
-                              {levels?.contract_status ?? "N/A"} ·{" "}
-                              {levels?.contract_size ?? "N/A"}
-                            </span>
-                          </td>
-                        </tr>
-                        );
-                      });
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <footer className="matrix-footer">
-                <div>
-                  <i className="legend-dot passed" /> Confirmed
-                  <i className="legend-dot filtered" /> Filtered
-                  <i className="legend-dot watching" /> Watching
-                </div>
-                <p>Read-only observer · No live trading advice</p>
-              </footer>
-            </article>
-
-            <aside className="right-rail">
-              <article className="health-panel panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="section-kicker">Connection guardrail</span>
-                    <h2>System Health</h2>
-                  </div>
-                  <strong className="health-number">READY</strong>
-                </div>
-                <dl className="health-list">
-                  <div><dt>Backend</dt><dd>FastAPI online</dd></div>
-                  <div><dt>Persistence</dt><dd>SQLite durable</dd></div>
-                  <div><dt>Data source</dt><dd>Synthetic golden</dd></div>
-                  <div><dt>Execution</dt><dd>Disabled</dd></div>
-                </dl>
-                <p className="health-note">
-                  No live market API, order execution, charting, or WebSocket
-                  connection is present.
-                </p>
-              </article>
-
-              <article className="activity-panel panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="section-kicker">Latest changes</span>
-                    <h2>Recent Activity</h2>
-                  </div>
-                  <span className="event-arrow">→</span>
-                </div>
-                <div className="activity-list">
-                  {recentEvents.map((event) => (
+              <div className="activity-list">
+                {data.recent_events.length > 0 ? (
+                  data.recent_events.map((event) => (
                     <div key={event.id}>
-                      <i className={eventTone(event)}>{eventMark(event)}</i>
+                      <i>{eventMark(event)}</i>
                       <strong>{event.timeframe}</strong>
                       <span>{event.event_type.replaceAll("_", " ")}</span>
-                      <time>{time(event.occurred_at)}</time>
+                      <time>{utc(event.occurred_at)}</time>
                     </div>
-                  ))}
-                </div>
-              </article>
-            </aside>
+                  ))
+                ) : (
+                  <p className="empty-copy">No persisted events are available.</p>
+                )}
+              </div>
+            </article>
+
+            <article className="health-panel panel">
+              <div className="panel-heading">
+                <div><span className="section-kicker">Safety boundary</span><h2>Read-only system</h2></div>
+                <strong className="health-number">LOCKED</strong>
+              </div>
+              <dl className="health-list">
+                <div><dt>Execution</dt><dd>Disabled</dd></div>
+                <div><dt>Orders</dt><dd>{data.execution.orders}</dd></div>
+                <div><dt>Fills</dt><dd>{data.execution.fills}</dd></div>
+                <div><dt>Source</dt><dd>{snapshot.source}</dd></div>
+              </dl>
+              <p className="health-note">{data.execution.detail}</p>
+            </article>
           </section>
         </div>
       </section>

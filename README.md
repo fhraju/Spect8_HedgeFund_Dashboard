@@ -3,10 +3,11 @@
 Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` specification.
 
-Phase 2C preserves the Phase 2B deterministic replay runtime and adds a
-provider-selectable Twelve Data REST adapter for the `EUR/USD` pilot. The
-adapter supports H1, H4 and D1 only. Golden expected results remain a test-only
-oracle. The scanner remains read-only and contains no scheduler, trading,
+Phase 3A connects the Phase 2C Twelve Data adapter to a bounded polling
+runtime, the existing coordinator and evaluator, durable projections, a typed
+read-only API, and the protected `EUR/USD` dashboard. H1 and H4 remain
+independent signal timeframes and D1 remains context only. Golden expected
+results remain a test-only oracle. The scanner contains no trading,
 backtesting, optimization, WebSockets, or multi-instrument expansion.
 
 The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
@@ -59,6 +60,20 @@ $env:SPECT8_INTERNAL_API_KEY = "<same-long-random-key>"
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
+For the live EUR/USD slice, keep `TWELVE_DATA_API_KEY` only in the ignored
+`backend/.env` or the process environment and configure:
+
+```text
+SPECT8_MARKET_DATA_PROVIDER=twelve_data
+SPECT8_MARKET_DATA_RUNTIME_ENABLED=true
+SPECT8_MARKET_DATA_POLL_SECONDS=300
+SPECT8_AUTO_SEED_SYNTHETIC=false
+```
+
+The polling interval is validated between 60 and 900 seconds. Provider
+timeouts, retry bounds, candle completion rules, and H4/D1 boundaries remain
+owned by the Phase 2C adapter.
+
 Terminal 2:
 
 ```powershell
@@ -87,4 +102,6 @@ calculation and oracle boundaries. See
 normalization, closed-bar, health, and persistence behavior. See
 [Phase 2C Twelve Data](docs/PHASE2C_TWELVE_DATA_PROVIDER.md) for provider
 configuration, secret handling, completed-candle policy, fixture validation,
-and the explicitly invoked live smoke test.
+and the explicitly invoked live smoke test. See
+[Phase 3A vertical slice](docs/PHASE3A_EUR_USD_DASHBOARD.md) for runtime,
+dashboard API, frontend states, and live end-to-end validation evidence.

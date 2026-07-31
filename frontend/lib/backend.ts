@@ -1,11 +1,6 @@
 import "server-only";
 
-import type {
-  DashboardSnapshot,
-  EventRecord,
-  InstrumentStatus,
-  SyntheticEnvelope,
-} from "./api-types";
+import type { DashboardSnapshot, SyntheticEnvelope } from "./api-types";
 
 function backendConfiguration(): { baseUrl: string; apiKey: string } {
   const baseUrl = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
@@ -19,7 +14,7 @@ function backendConfiguration(): { baseUrl: string; apiKey: string } {
 async function backendFetch<T>(
   path: string,
   init?: RequestInit,
-): Promise<SyntheticEnvelope<T>> {
+): Promise<T> {
   const { baseUrl, apiKey } = backendConfiguration();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
@@ -32,16 +27,11 @@ async function backendFetch<T>(
   if (!response.ok) {
     throw new Error(`Backend ${path} failed with status ${response.status}`);
   }
-  return (await response.json()) as SyntheticEnvelope<T>;
+  return (await response.json()) as T;
 }
 
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const [health, statuses, events] = await Promise.all([
-    backendFetch<DashboardSnapshot["health"]["data"]>("/health"),
-    backendFetch<InstrumentStatus[]>("/statuses"),
-    backendFetch<EventRecord[]>("/events"),
-  ]);
-  return { health, statuses, events };
+  return backendFetch<DashboardSnapshot>("/dashboard");
 }
 
 export async function replaySyntheticCases(): Promise<

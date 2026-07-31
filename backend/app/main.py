@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from .config import Settings
+from .dashboard_api import DashboardEnvelope, dashboard_snapshot
 from .domain import primitive
 from .engine.strategy import Spect8StrategyEvaluator
 from .market_data.clock import FixedClock, SystemClock
@@ -15,6 +17,7 @@ from .market_data.coordinator import MarketDataCoordinator
 from .market_data.normalizer import CandleNormalizer
 from .market_data.registry import CanonicalInstrumentRegistry
 from .market_data.replay_provider import ReplayMarketDataProvider
+from .market_data.runtime import MarketDataRuntime
 from .market_data.twelve_data_provider import TwelveDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
@@ -54,17 +57,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         repository=repository,
         clock=clock,
     )
+    runtime = MarketDataRuntime(
+        coordinator,
+        repository,
+        poll_seconds=configured.market_data_poll_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         repository.initialize()
+        runtime_task: asyncio.Task[None] | None = None
         if configured.auto_seed_synthetic and provider.identity.synthetic:
-            coordinator.poll_once()
-        yield
+            runtime.run_once()
+        elif (
+            not provider.identity.synthetic
+            and configured.market_data_runtime_enabled
+        ):
+            runtime_task = asyncio.create_task(
+                runtime.run(), name="spect8-market-data-runtime"
+            )
+        try:
+            yield
+        finally:
+            if runtime_task is not None:
+                runtime.stop()
+                runtime_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime_task
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 2C",
-        version="0.4.0",
+        title="Spect8 HedgeFund Dashboard — Phase 3A",
+        version="0.5.0",
         description=(
             SYNTHETIC_NOTICE
             if provider.identity.synthetic
@@ -79,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.registry = registry
     app.state.clock = clock
     app.state.coordinator = coordinator
+    app.state.market_data_runtime = runtime
 
     def require_internal_key(
         x_spect8_internal_key: Annotated[str | None, Header()] = None,
@@ -129,7 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "mode": (
                     "PHASE_2B_REPLAY_MARKET_DATA"
                     if provider.identity.synthetic
-                    else "PHASE_2C_TWELVE_DATA"
+                    else "PHASE_3A_TWELVE_DATA_RUNTIME"
                 ),
                 "market_data": (
                     "REPLAY_ONLY"
@@ -199,9 +223,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def events(request: Request) -> dict[str, Any]:
         return envelope(request.app.state.repository.events())
 
+    @app.get(
+        "/dashboard",
+        dependencies=[protected],
+        response_model=DashboardEnvelope,
+    )
+    def dashboard() -> dict[str, Any]:
+        return envelope(
+            dashboard_snapshot(repository, registry.all()[0], clock.now())
+        )
+
     @app.post("/synthetic/replay", dependencies=[protected])
     def replay() -> dict[str, Any]:
-        poll = coordinator.poll_once()
+        if not provider.identity.synthetic:
+            raise HTTPException(
+                status_code=409,
+                detail="Synthetic replay is unavailable in live mode.",
+            )
+        poll = runtime.run_once()
         return envelope(
             [
                 {
