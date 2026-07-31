@@ -3,12 +3,11 @@
 Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` specification.
 
-Phase 2B is an end-to-end walking skeleton with an independent production
-calculation engine and a provider-neutral market-data foundation. The runtime
-replays the two committed synthetic examples through validated, completed
-H1/H4/D1 candles. Golden expected results remain a test-only oracle. It contains
-no live market-data API, scheduler, trading, charting, backtesting, WebSockets,
-or multi-user support.
+Phase 2C preserves the Phase 2B deterministic replay runtime and adds a
+provider-selectable Twelve Data REST adapter for the `EUR/USD` pilot. The
+adapter supports H1, H4 and D1 only. Golden expected results remain a test-only
+oracle. The scanner remains read-only and contains no scheduler, trading,
+backtesting, optimization, WebSockets, or multi-instrument expansion.
 
 The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
 SELL confirmations and preserves both directional calculations independently.
@@ -85,4 +84,7 @@ persistence, and authentication foundation, and
 [Phase 2A engine](docs/PHASE2A_PRODUCTION_ENGINE.md) for the production
 calculation and oracle boundaries. See
 [Phase 2B market data](docs/PHASE2B_MARKET_DATA_FOUNDATION.md) for replay,
-normalization, closed-bar, health, and persistence behavior.
+normalization, closed-bar, health, and persistence behavior. See
+[Phase 2C Twelve Data](docs/PHASE2C_TWELVE_DATA_PROVIDER.md) for provider
+configuration, secret handling, completed-candle policy, fixture validation,
+and the explicitly invoked live smoke test.

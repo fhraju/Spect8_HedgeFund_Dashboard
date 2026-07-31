@@ -13,6 +13,7 @@ from .interfaces import MarketDataProvider
 from .models import (
     CanonicalInstrument,
     HealthState,
+    MarketDataProviderError,
     NormalizationResult,
     ProviderClosedBar,
     ProviderHealth,
@@ -64,11 +65,22 @@ class MarketDataCoordinator:
     def poll_once(self) -> PollResult:
         now = self._clock.now()
         provider_health = self.provider.health(now)
-        raw_closed = self.provider.fetch_completed_bars(now)
+        try:
+            raw_closed = self.provider.fetch_completed_bars(now)
+        except MarketDataProviderError:
+            failed_health = self.provider.health(now)
+            self._repository.update_provider_health(failed_health)
+            return PollResult(
+                checked_at=now,
+                provider_health=failed_health,
+                outcomes=(),
+                canonical_bars_inserted=0,
+            )
+        provider_health = self.provider.health(now)
         prepared: list[tuple[ProviderClosedBar, Bar]] = []
         outcomes: list[PollOutcome] = []
         inserted = 0
-        poll_state = provider_health.state
+        override_state: HealthState | None = None
 
         for closed in raw_closed:
             instrument = self.registry.get(
@@ -79,7 +91,7 @@ class MarketDataCoordinator:
                 closed.candle, instrument
             )
             if normalized.candle is None:
-                poll_state = HealthState.QUARANTINED
+                override_state = HealthState.QUARANTINED
                 outcomes.append(
                     PollOutcome(
                         source_case_id=closed.source_id,
@@ -97,7 +109,7 @@ class MarketDataCoordinator:
             [candle for _, candle in prepared]
         )
         if trigger_issues:
-            poll_state = HealthState.QUARANTINED
+            override_state = HealthState.QUARANTINED
             outcomes.extend(
                 PollOutcome(
                     source_case_id=closed.source_id,
@@ -116,7 +128,21 @@ class MarketDataCoordinator:
                 closed.candle.provider_id,
                 closed.instrument_id,
             )
-            history = self.provider.fetch_required_history(closed, now)
+            try:
+                history = self.provider.fetch_required_history(closed, now)
+            except MarketDataProviderError as error:
+                override_state = error.health_state
+                outcomes.append(
+                    PollOutcome(
+                        source_case_id=closed.source_id,
+                        idempotency_key=None,
+                        replayed=False,
+                        events_created=0,
+                        health_state=error.health_state,
+                        issues=(error.code.value,),
+                    )
+                )
+                continue
             signal_bars, signal_issues = self._normalize_many(
                 history.signal_bars, instrument
             )
@@ -139,7 +165,7 @@ class MarketDataCoordinator:
                     if any(issue.startswith("INSUFFICIENT_") for issue in issues)
                     else HealthState.QUARANTINED
                 )
-                poll_state = state
+                override_state = state
                 outcomes.append(
                     PollOutcome(
                         source_case_id=closed.source_id,
@@ -173,7 +199,11 @@ class MarketDataCoordinator:
                 self._outcome(projection, provider_health.state)
             )
 
-        final_health = replace(provider_health, state=poll_state)
+        provider_health = self.provider.health(now)
+        final_health = replace(
+            provider_health,
+            state=override_state or provider_health.state,
+        )
         final_health = self._apply_recovery(final_health)
         self._repository.update_provider_health(final_health)
         if final_health.state is HealthState.RECOVERED:
@@ -227,7 +257,7 @@ class MarketDataCoordinator:
             return replace(
                 health,
                 state=HealthState.RECOVERED,
-                detail="Replay market data recovered to a healthy state.",
+                detail="Market data recovered to a healthy state.",
             )
         return health
 

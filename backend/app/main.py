@@ -9,12 +9,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from .config import Settings
 from .domain import primitive
 from .engine.strategy import Spect8StrategyEvaluator
-from .market_data.clock import FixedClock
+from .market_data.clock import FixedClock, SystemClock
 from .market_data.closed_bar import ClosedBarDetector
 from .market_data.coordinator import MarketDataCoordinator
 from .market_data.normalizer import CandleNormalizer
 from .market_data.registry import CanonicalInstrumentRegistry
 from .market_data.replay_provider import ReplayMarketDataProvider
+from .market_data.twelve_data_provider import TwelveDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
 
@@ -25,12 +26,22 @@ SYNTHETIC_NOTICE = (
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     configured = settings or Settings.from_environment()
+    configured.validate()
     repository = SQLiteProjectionRepository(configured.database_path)
-    provider = ReplayMarketDataProvider(
-        configured.repository_root / "golden",
-        configured.selected_cases,
-    )
-    clock = FixedClock(provider.initial_clock_time())
+    if configured.market_data_provider == "twelve_data":
+        assert configured.twelve_data_api_key is not None
+        provider = TwelveDataProvider(
+            configured.twelve_data_api_key,
+            instrument=configured.instrument,
+            timeframes=configured.timeframes,
+        )
+        clock = SystemClock()
+    else:
+        provider = ReplayMarketDataProvider(
+            configured.repository_root / "golden",
+            configured.selected_cases,
+        )
+        clock = FixedClock(provider.initial_clock_time())
     registry = CanonicalInstrumentRegistry(provider.discover_instruments())
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
@@ -47,14 +58,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         repository.initialize()
-        if configured.auto_seed_synthetic:
+        if configured.auto_seed_synthetic and provider.identity.synthetic:
             coordinator.poll_once()
         yield
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 2B",
-        version="0.3.0",
-        description=SYNTHETIC_NOTICE,
+        title="Spect8 HedgeFund Dashboard — Phase 2C",
+        version="0.4.0",
+        description=(
+            SYNTHETIC_NOTICE
+            if provider.identity.synthetic
+            else "READ-ONLY Twelve Data EUR/USD market-data scanner."
+        ),
         lifespan=lifespan,
     )
     app.state.settings = configured
@@ -77,9 +92,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def envelope(data: Any) -> dict[str, Any]:
         return {
-            "synthetic": True,
-            "source": "REPLAY_MARKET_DATA_PROVIDER",
-            "notice": SYNTHETIC_NOTICE,
+            "synthetic": provider.identity.synthetic,
+            "source": (
+                "REPLAY_MARKET_DATA_PROVIDER"
+                if provider.identity.synthetic
+                else "TWELVE_DATA_PROVIDER"
+            ),
+            "notice": (
+                SYNTHETIC_NOTICE
+                if provider.identity.synthetic
+                else "READ-ONLY Twelve Data EUR/USD market data."
+            ),
             "data": data,
         }
 
@@ -98,13 +121,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ],
                 "freshness_seconds": current["freshness_seconds"],
                 "detail": current["detail"],
-                "synthetic": True,
+                "synthetic": provider.identity.synthetic,
             }
         return envelope(
             {
                 "status": "ok",
-                "mode": "PHASE_2B_REPLAY_MARKET_DATA",
-                "market_data": "REPLAY_ONLY",
+                "mode": (
+                    "PHASE_2B_REPLAY_MARKET_DATA"
+                    if provider.identity.synthetic
+                    else "PHASE_2C_TWELVE_DATA"
+                ),
+                "market_data": (
+                    "REPLAY_ONLY"
+                    if provider.identity.synthetic
+                    else "TWELVE_DATA_EUR_USD"
+                ),
                 "database": "sqlite",
                 "provider": primitive(provider.identity),
                 "provider_health": provider_health,
@@ -134,7 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         else None
                     ),
                     "price_precision": instrument.price_precision,
-                    "synthetic": True,
+                    "synthetic": instrument.synthetic,
                 }
                 for instrument in registry.all()
             ]

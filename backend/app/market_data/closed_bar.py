@@ -11,6 +11,8 @@ TIMEFRAME_STEP = {
     Timeframe.H4: timedelta(hours=4),
     Timeframe.D1: timedelta(days=1),
 }
+MIN_SIGNAL_HISTORY = 30
+MIN_DAILY_HISTORY = 6
 
 
 class ClosedBarDetector:
@@ -49,9 +51,9 @@ class ClosedBarDetector:
         issues.extend(self._stream_issues(signal_bars, timeframe, "SIGNAL"))
         issues.extend(self._stream_issues(daily_bars, Timeframe.D1, "DAILY"))
 
-        if len(signal_bars) < 30:
+        if len(signal_bars) < MIN_SIGNAL_HISTORY:
             issues.append("INSUFFICIENT_SIGNAL_HISTORY")
-        if len(daily_bars) < 6:
+        if len(daily_bars) < MIN_DAILY_HISTORY:
             issues.append("INSUFFICIENT_DAILY_HISTORY")
         if signal_bars and signal_bars[-1].close_time != trigger_close_time:
             issues.append("MISSING_TRIGGER_CANDLE")

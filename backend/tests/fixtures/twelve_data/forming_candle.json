@@ -1,0 +1,9 @@
+{
+  "meta": {"symbol": "EUR/USD", "interval": "1h", "exchange_timezone": "UTC"},
+  "values": [
+    {"datetime": "2026-07-30 08:00:00", "open": "1.15050", "high": "1.15200", "low": "1.15000", "close": "1.15150"},
+    {"datetime": "2026-07-30 09:00:00", "open": "1.15150", "high": "1.15300", "low": "1.15100", "close": "1.15250"},
+    {"datetime": "2026-07-30 10:00:00", "open": "1.15250", "high": "1.15400", "low": "1.15200", "close": "1.15350"}
+  ],
+  "status": "ok"
+}

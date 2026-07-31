@@ -119,7 +119,7 @@ class WalkingSkeletonService:
             instrument_id=request.instrument.instrument_id,
             timeframe=request.timeframe,
             source_case_id=request.case_id,
-            synthetic=True,
+            synthetic=evaluation.signal_bar.synthetic,
             data_status=evaluation.data_status,
             dashboard_state=classification.dashboard_state,
             filter_result=filter_result,
@@ -171,7 +171,7 @@ class WalkingSkeletonService:
                     instrument_id=bar_event.bar.instrument_id,
                     timeframe=bar_event.bar.timeframe,
                     source_case_id=bar_event.source_case_id,
-                    synthetic=True,
+                    synthetic=bar_event.bar.synthetic,
                     payload=payload,
                 )
             )

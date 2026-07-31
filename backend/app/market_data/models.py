@@ -18,6 +18,35 @@ class HealthState(StrEnum):
     RECOVERED = "RECOVERED"
 
 
+class ProviderErrorCode(StrEnum):
+    AUTHENTICATION = "AUTHENTICATION"
+    VALIDATION = "VALIDATION"
+    RATE_LIMIT = "RATE_LIMIT"
+    TEMPORARY_UNAVAILABLE = "TEMPORARY_UNAVAILABLE"
+    TIMEOUT = "TIMEOUT"
+    DATA_UNAVAILABLE = "DATA_UNAVAILABLE"
+    MALFORMED_RESPONSE = "MALFORMED_RESPONSE"
+    DUPLICATE_CANDLE = "DUPLICATE_CANDLE"
+    MISSING_CANDLE = "MISSING_CANDLE"
+
+
+class MarketDataProviderError(RuntimeError):
+    """Sanitized provider-boundary error using canonical health vocabulary."""
+
+    def __init__(
+        self,
+        code: ProviderErrorCode,
+        health_state: HealthState,
+        detail: str,
+        *,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.health_state = health_state
+        self.retryable = retryable
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderIdentity:
     provider_id: str
@@ -48,6 +77,7 @@ class CanonicalInstrument:
     candle_boundary_convention: str
     available_timeframes: tuple[Timeframe, ...]
     strategy_id: str
+    synthetic: bool = True
 
     def to_strategy_metadata(self) -> InstrumentMetadata:
         return InstrumentMetadata(
@@ -111,6 +141,7 @@ class ProviderHealth:
     latest_completed_close: datetime | None
     freshness_seconds: int | None
     detail: str
+    synthetic: bool = True
 
 
 @dataclass(frozen=True, slots=True)

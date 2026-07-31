@@ -1,0 +1,7 @@
+{
+  "meta": {"symbol": "EUR/USD", "interval": "1h", "exchange_timezone": "UTC"},
+  "values": [
+    {"datetime": "2026-07-30 09:00:00", "open": "not-a-number", "high": "1.15300", "low": "1.15100"}
+  ],
+  "status": "ok"
+}

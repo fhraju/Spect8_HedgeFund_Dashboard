@@ -120,7 +120,7 @@ class CandleNormalizer:
                 raw_high=raw.high,
                 raw_low=raw.low,
                 raw_close=raw.close,
-                synthetic=True,
+                synthetic=instrument.synthetic,
             ),
             issues=(),
         )

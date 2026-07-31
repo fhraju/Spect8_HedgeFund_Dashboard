@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .models import (
     CanonicalInstrument,
@@ -12,6 +12,7 @@ from .models import (
 )
 
 
+@runtime_checkable
 class MarketDataProvider(Protocol):
     @property
     def identity(self) -> ProviderIdentity: ...

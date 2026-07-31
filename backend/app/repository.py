@@ -30,7 +30,7 @@ class SQLiteProjectionRepository:
                     idempotency_key TEXT PRIMARY KEY,
                     processed_at TEXT NOT NULL,
                     source_case_id TEXT NOT NULL,
-                    synthetic INTEGER NOT NULL CHECK (synthetic = 1)
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1))
                 );
 
                 CREATE TABLE IF NOT EXISTS instrument_status (
@@ -40,7 +40,7 @@ class SQLiteProjectionRepository:
                     timeframe TEXT NOT NULL,
                     status_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    synthetic INTEGER NOT NULL CHECK (synthetic = 1),
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
                     PRIMARY KEY (strategy_id, provider, instrument_id, timeframe)
                 );
 
@@ -54,7 +54,7 @@ class SQLiteProjectionRepository:
                     timeframe TEXT NOT NULL,
                     source_case_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
-                    synthetic INTEGER NOT NULL CHECK (synthetic = 1),
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
                     UNIQUE (idempotency_key, sequence),
                     FOREIGN KEY (idempotency_key)
                         REFERENCES processed_bars(idempotency_key)
@@ -76,7 +76,7 @@ class SQLiteProjectionRepository:
                     close TEXT NOT NULL,
                     volume TEXT,
                     raw_evidence_json TEXT NOT NULL,
-                    synthetic INTEGER NOT NULL CHECK (synthetic = 1),
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
                     PRIMARY KEY (
                         provider, instrument_id, timeframe, close_time_utc
                     )
@@ -90,12 +90,138 @@ class SQLiteProjectionRepository:
                     latest_completed_close TEXT,
                     freshness_seconds INTEGER,
                     detail TEXT NOT NULL,
-                    synthetic INTEGER NOT NULL CHECK (synthetic = 1)
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1))
                 );
                 """
             )
+            self._migrate_synthetic_constraints(connection)
             self._migrate_status_payloads(connection)
             connection.commit()
+
+    @staticmethod
+    def _migrate_synthetic_constraints(connection: sqlite3.Connection) -> None:
+        legacy = connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN (
+                  'processed_bars',
+                  'instrument_status',
+                  'event_history',
+                  'canonical_bars',
+                  'provider_health'
+              )
+              AND replace(sql, ' ', '') LIKE '%CHECK(synthetic=1)%'
+            LIMIT 1
+            """
+        ).fetchone()
+        if legacy is None:
+            return
+        connection.executescript(
+            """
+            PRAGMA foreign_keys = OFF;
+            BEGIN IMMEDIATE;
+
+            DROP TABLE IF EXISTS processed_bars_phase2c;
+            DROP TABLE IF EXISTS instrument_status_phase2c;
+            DROP TABLE IF EXISTS event_history_phase2c;
+            DROP TABLE IF EXISTS canonical_bars_phase2c;
+            DROP TABLE IF EXISTS provider_health_phase2c;
+
+            CREATE TABLE processed_bars_phase2c (
+                idempotency_key TEXT PRIMARY KEY,
+                processed_at TEXT NOT NULL,
+                source_case_id TEXT NOT NULL,
+                synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1))
+            );
+            INSERT INTO processed_bars_phase2c
+            SELECT * FROM processed_bars;
+
+            CREATE TABLE instrument_status_phase2c (
+                strategy_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                instrument_id TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                status_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
+                PRIMARY KEY (strategy_id, provider, instrument_id, timeframe)
+            );
+            INSERT INTO instrument_status_phase2c
+            SELECT * FROM instrument_status;
+
+            CREATE TABLE event_history_phase2c (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idempotency_key TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                instrument_id TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                source_case_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
+                UNIQUE (idempotency_key, sequence),
+                FOREIGN KEY (idempotency_key)
+                    REFERENCES processed_bars_phase2c(idempotency_key)
+            );
+            INSERT INTO event_history_phase2c
+            SELECT * FROM event_history;
+
+            CREATE TABLE canonical_bars_phase2c (
+                provider TEXT NOT NULL,
+                instrument_id TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                close_time_utc TEXT NOT NULL,
+                open_time_utc TEXT NOT NULL,
+                raw_open_time TEXT NOT NULL,
+                raw_close_time TEXT NOT NULL,
+                raw_provider_symbol TEXT NOT NULL,
+                session_timezone TEXT NOT NULL,
+                open TEXT NOT NULL,
+                high TEXT NOT NULL,
+                low TEXT NOT NULL,
+                close TEXT NOT NULL,
+                volume TEXT,
+                raw_evidence_json TEXT NOT NULL,
+                synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
+                PRIMARY KEY (
+                    provider, instrument_id, timeframe, close_time_utc
+                )
+            );
+            INSERT INTO canonical_bars_phase2c
+            SELECT * FROM canonical_bars;
+
+            CREATE TABLE provider_health_phase2c (
+                provider TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                previous_state TEXT,
+                checked_at TEXT NOT NULL,
+                latest_completed_close TEXT,
+                freshness_seconds INTEGER,
+                detail TEXT NOT NULL,
+                synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1))
+            );
+            INSERT INTO provider_health_phase2c
+            SELECT * FROM provider_health;
+
+            DROP TABLE event_history;
+            DROP TABLE instrument_status;
+            DROP TABLE canonical_bars;
+            DROP TABLE provider_health;
+            DROP TABLE processed_bars;
+
+            ALTER TABLE processed_bars_phase2c RENAME TO processed_bars;
+            ALTER TABLE instrument_status_phase2c RENAME TO instrument_status;
+            ALTER TABLE event_history_phase2c RENAME TO event_history;
+            ALTER TABLE canonical_bars_phase2c RENAME TO canonical_bars;
+            ALTER TABLE provider_health_phase2c RENAME TO provider_health;
+
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            """
+        )
 
     @staticmethod
     def _migrate_status_payloads(connection: sqlite3.Connection) -> None:
@@ -141,12 +267,13 @@ class SQLiteProjectionRepository:
                 """
                 INSERT OR IGNORE INTO processed_bars
                     (idempotency_key, processed_at, source_case_id, synthetic)
-                VALUES (?, ?, ?, 1)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     status.idempotency_key,
                     status_value["last_update"],
                     status.source_case_id,
+                    int(status.synthetic),
                 ),
             )
             if cursor.rowcount == 0:
@@ -161,7 +288,7 @@ class SQLiteProjectionRepository:
                         idempotency_key, sequence, event_type, occurred_at,
                         instrument_id, timeframe, source_case_id, payload_json,
                         synthetic
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event.idempotency_key,
@@ -172,6 +299,7 @@ class SQLiteProjectionRepository:
                         event.timeframe.value,
                         event.source_case_id,
                         json.dumps(event_value["payload"], sort_keys=True),
+                        int(event.synthetic),
                     ),
                 )
 
@@ -180,12 +308,12 @@ class SQLiteProjectionRepository:
                 INSERT INTO instrument_status (
                     strategy_id, provider, instrument_id, timeframe,
                     status_json, updated_at, synthetic
-                ) VALUES (?, ?, ?, ?, ?, ?, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(strategy_id, provider, instrument_id, timeframe)
                 DO UPDATE SET
                     status_json = excluded.status_json,
                     updated_at = excluded.updated_at,
-                    synthetic = 1
+                    synthetic = excluded.synthetic
                 """,
                 (
                     status.strategy_id,
@@ -194,6 +322,7 @@ class SQLiteProjectionRepository:
                     status.timeframe.value,
                     json.dumps(status_value, sort_keys=True),
                     status_value["last_update"],
+                    int(status.synthetic),
                 ),
             )
             connection.commit()
@@ -221,7 +350,7 @@ class SQLiteProjectionRepository:
                         open_time_utc, raw_open_time, raw_close_time,
                         raw_provider_symbol, session_timezone, open, high, low,
                         close, volume, raw_evidence_json, synthetic
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         bar.provider,
@@ -239,6 +368,7 @@ class SQLiteProjectionRepository:
                         str(bar.close),
                         str(bar.volume) if bar.volume is not None else None,
                         json.dumps(raw_evidence, sort_keys=True),
+                        int(bar.synthetic),
                     ),
                 )
                 inserted += max(cursor.rowcount, 0)
@@ -258,7 +388,7 @@ class SQLiteProjectionRepository:
                     provider, state, previous_state, checked_at,
                     latest_completed_close, freshness_seconds, detail,
                     synthetic
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider) DO UPDATE SET
                     state = excluded.state,
                     previous_state = excluded.previous_state,
@@ -266,7 +396,7 @@ class SQLiteProjectionRepository:
                     latest_completed_close = excluded.latest_completed_close,
                     freshness_seconds = excluded.freshness_seconds,
                     detail = excluded.detail,
-                    synthetic = 1
+                    synthetic = excluded.synthetic
                 """,
                 (
                     health.provider_id,
@@ -276,6 +406,7 @@ class SQLiteProjectionRepository:
                     value["latest_completed_close"],
                     health.freshness_seconds,
                     health.detail,
+                    int(health.synthetic),
                 ),
             )
             connection.commit()
