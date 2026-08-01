@@ -38,6 +38,7 @@ INTERVALS = {
     Timeframe.H4: "4h",
     Timeframe.D1: "1day",
 }
+MAX_CATCHUP_BARS = 168
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +122,19 @@ class ProviderDiagnostics:
     out_of_order_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderTelemetry:
+    network_attempts: int
+    successful_requests: int
+    failed_requests: int
+    rate_limit_responses: int
+    network_timeouts: int
+    cache_hits: int
+    duplicate_triggers_prevented: int
+    series_attempts: dict[str, int]
+    completed_discoveries: dict[str, int]
+
+
 class TwelveDataProvider:
     """Twelve Data REST adapter for the Phase 2C EUR/USD pilot."""
 
@@ -136,6 +150,7 @@ class TwelveDataProvider:
         max_attempts: int = 3,
         backoff_seconds: float = 0.25,
         max_retry_after_seconds: float = 60.0,
+        max_catchup_bars: int = MAX_CATCHUP_BARS,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if not api_key or not api_key.strip():
@@ -152,6 +167,8 @@ class TwelveDataProvider:
             raise ValueError("max_attempts must be between 1 and 5.")
         if backoff_seconds < 0 or max_retry_after_seconds < 0:
             raise ValueError("retry delays cannot be negative.")
+        if not 24 <= max_catchup_bars <= 720:
+            raise ValueError("max_catchup_bars must be between 24 and 720.")
 
         self._api_key = api_key
         self._transport = transport or StdlibTwelveDataHttpTransport()
@@ -161,6 +178,7 @@ class TwelveDataProvider:
         self._backoff_seconds = backoff_seconds
         self._max_retry_after_seconds = max_retry_after_seconds
         self._sleep = sleep
+        self._max_catchup_bars = max_catchup_bars
         self._identity = ProviderIdentity(
             provider_id=PROVIDER_ID,
             display_name="Twelve Data",
@@ -193,12 +211,30 @@ class TwelveDataProvider:
             synthetic=False,
         )
         self._cache: dict[
-            tuple[Timeframe, datetime], tuple[RawProviderCandle, ...]
+            tuple[Timeframe, datetime, int], tuple[RawProviderCandle, ...]
         ] = {}
+        self._latest_series: dict[
+            Timeframe, tuple[RawProviderCandle, ...]
+        ] = {}
+        self._last_fetch_as_of: dict[Timeframe, datetime] = {}
+        self._last_trigger_close: dict[Timeframe, datetime] = {}
         self._diagnostics: dict[Timeframe, ProviderDiagnostics] = {}
         self._state = HealthState.DATA_UNAVAILABLE
         self._detail = "No Twelve Data request has completed."
         self._latest_completed_close: datetime | None = None
+        self._network_attempts = 0
+        self._successful_requests = 0
+        self._failed_requests = 0
+        self._rate_limit_responses = 0
+        self._network_timeouts = 0
+        self._cache_hits = 0
+        self._duplicate_triggers_prevented = 0
+        self._series_attempts = {
+            timeframe.value: 0 for timeframe in SUPPORTED_TIMEFRAMES
+        }
+        self._completed_discoveries = {
+            timeframe.value: 0 for timeframe in SUPPORTED_TIMEFRAMES
+        }
 
     @property
     def identity(self) -> ProviderIdentity:
@@ -209,6 +245,30 @@ class TwelveDataProvider:
 
     def diagnostics(self, timeframe: Timeframe) -> ProviderDiagnostics:
         return self._diagnostics.get(timeframe, ProviderDiagnostics())
+
+    def telemetry(self) -> ProviderTelemetry:
+        return ProviderTelemetry(
+            network_attempts=self._network_attempts,
+            successful_requests=self._successful_requests,
+            failed_requests=self._failed_requests,
+            rate_limit_responses=self._rate_limit_responses,
+            network_timeouts=self._network_timeouts,
+            cache_hits=self._cache_hits,
+            duplicate_triggers_prevented=(
+                self._duplicate_triggers_prevented
+            ),
+            series_attempts=dict(self._series_attempts),
+            completed_discoveries=dict(self._completed_discoveries),
+        )
+
+    def set_resume_cursor(
+        self, timeframe: Timeframe, close_time: datetime | None
+    ) -> None:
+        if timeframe not in (Timeframe.H1, Timeframe.H4):
+            raise ValueError("resume cursor supports only H1 and H4")
+        if close_time is None:
+            return
+        self._last_trigger_close[timeframe] = self._aware_utc(close_time)
 
     def fetch_smoke_bars(
         self,
@@ -234,22 +294,50 @@ class TwelveDataProvider:
         checked_at = self._aware_utc(as_of)
         triggers: list[ProviderClosedBar] = []
         for timeframe in (Timeframe.H1, Timeframe.H4):
+            if not self._needs_refresh(timeframe, checked_at):
+                continue
             candles = self._fetch_series(
                 timeframe,
                 checked_at,
-                MIN_SIGNAL_HISTORY + 1,
+                MIN_SIGNAL_HISTORY + self._max_catchup_bars,
             )
             if not candles:
                 continue
-            terminal = candles[-1]
-            triggers.append(
-                ProviderClosedBar(
-                    source_id=self._source_id(terminal),
-                    instrument_id=PROVIDER_SYMBOL,
-                    evaluation_time=checked_at,
-                    candle=terminal,
+            cursor = self._last_trigger_close.get(timeframe)
+            if cursor is None:
+                candidates = (candles[-1],)
+            else:
+                candidates = tuple(
+                    candle
+                    for candle in candles
+                    if self._parse_utc(candle.raw_close_time) > cursor
                 )
-            )
+                if candidates:
+                    first_close = self._parse_utc(
+                        candidates[0].raw_close_time
+                    )
+                    if first_close > cursor + TIMEFRAME_STEP[timeframe]:
+                        error = MarketDataProviderError(
+                            ProviderErrorCode.MISSING_CANDLE,
+                            HealthState.INSUFFICIENT_HISTORY,
+                            "Catch-up window does not cover the resume cursor.",
+                        )
+                        self._record_error(error)
+                        raise error
+                elif self._parse_utc(candles[-1].raw_close_time) <= cursor:
+                    self._duplicate_triggers_prevented += 1
+            for terminal in candidates:
+                terminal_close = self._parse_utc(terminal.raw_close_time)
+                self._last_trigger_close[timeframe] = terminal_close
+                triggers.append(
+                    ProviderClosedBar(
+                        source_id=self._source_id(terminal),
+                        instrument_id=PROVIDER_SYMBOL,
+                        evaluation_time=checked_at,
+                        candle=terminal,
+                    )
+                )
+            self._completed_discoveries[timeframe.value] += len(candidates)
         return tuple(
             sorted(
                 triggers,
@@ -328,10 +416,22 @@ class TwelveDataProvider:
         as_of: datetime,
         outputsize: int,
     ) -> tuple[RawProviderCandle, ...]:
-        cache_key = (timeframe, as_of)
+        cache_key = (timeframe, as_of, outputsize)
         cached = self._cache.get(cache_key)
         if cached is not None:
+            self._cache_hits += 1
             return cached
+        latest_series = self._latest_series.get(timeframe)
+        if (
+            latest_series is not None
+            and (
+                self._last_fetch_as_of.get(timeframe) == as_of
+                or not self._needs_refresh(timeframe, as_of)
+            )
+        ):
+            self._cache_hits += 1
+            return latest_series[-outputsize:]
+        self._series_attempts[timeframe.value] += 1
         payload = self._request_json(
             {
                 "symbol": PROVIDER_SYMBOL,
@@ -344,11 +444,24 @@ class TwelveDataProvider:
             as_of,
         )
         candles = self._parse_payload(payload, timeframe, as_of)
+        previous = self._latest_series.get(timeframe)
         self._cache[cache_key] = candles
+        self._latest_series[timeframe] = candles
+        self._last_fetch_as_of[timeframe] = as_of
         while len(self._cache) > 12:
             self._cache.pop(next(iter(self._cache)))
         if candles:
             latest = self._parse_utc(candles[-1].raw_close_time)
+            previous_latest = (
+                self._parse_utc(previous[-1].raw_close_time)
+                if previous
+                else None
+            )
+            if (
+                timeframe is Timeframe.D1
+                and (previous_latest is None or latest > previous_latest)
+            ):
+                self._completed_discoveries[timeframe.value] += 1
             if (
                 self._latest_completed_close is None
                 or latest > self._latest_completed_close
@@ -369,6 +482,7 @@ class TwelveDataProvider:
         as_of: datetime,
     ) -> Mapping[str, Any]:
         for attempt in range(1, self._max_attempts + 1):
+            self._network_attempts += 1
             try:
                 response = self._transport.get(
                     "/time_series",
@@ -378,6 +492,8 @@ class TwelveDataProvider:
                     read_timeout=self._read_timeout,
                 )
             except TransportTimeoutError:
+                self._failed_requests += 1
+                self._network_timeouts += 1
                 error = MarketDataProviderError(
                     ProviderErrorCode.TIMEOUT,
                     HealthState.DATA_UNAVAILABLE,
@@ -390,6 +506,7 @@ class TwelveDataProvider:
                 self._record_error(error)
                 raise error from None
             except TransportConnectionError:
+                self._failed_requests += 1
                 error = MarketDataProviderError(
                     ProviderErrorCode.TEMPORARY_UNAVAILABLE,
                     HealthState.DATA_UNAVAILABLE,
@@ -403,6 +520,9 @@ class TwelveDataProvider:
                 raise error from None
 
             if response.status_code == 429 or 500 <= response.status_code <= 599:
+                self._failed_requests += 1
+                if response.status_code == 429:
+                    self._rate_limit_responses += 1
                 code = (
                     ProviderErrorCode.RATE_LIMIT
                     if response.status_code == 429
@@ -428,6 +548,7 @@ class TwelveDataProvider:
                 raise error
 
             if response.status_code in (401, 403):
+                self._failed_requests += 1
                 error = MarketDataProviderError(
                     ProviderErrorCode.AUTHENTICATION,
                     HealthState.DATA_UNAVAILABLE,
@@ -436,6 +557,7 @@ class TwelveDataProvider:
                 self._record_error(error)
                 raise error
             if not 200 <= response.status_code <= 299:
+                self._failed_requests += 1
                 error = MarketDataProviderError(
                     ProviderErrorCode.VALIDATION,
                     HealthState.DATA_UNAVAILABLE,
@@ -447,15 +569,20 @@ class TwelveDataProvider:
             try:
                 decoded = json.loads(response.body)
             except (json.JSONDecodeError, UnicodeDecodeError):
+                self._failed_requests += 1
                 error = self._malformed_error()
                 self._record_error(error)
                 raise error from None
             if not isinstance(decoded, dict):
+                self._failed_requests += 1
                 error = self._malformed_error()
                 self._record_error(error)
                 raise error
             provider_code = self._provider_error_code(decoded)
             if provider_code is not None:
+                self._failed_requests += 1
+                if provider_code == 429:
+                    self._rate_limit_responses += 1
                 if provider_code in (429, 500, 502, 503, 504):
                     code = (
                         ProviderErrorCode.RATE_LIMIT
@@ -494,6 +621,7 @@ class TwelveDataProvider:
                 )
                 self._record_error(error)
                 raise error
+            self._successful_requests += 1
             return decoded
         raise AssertionError("bounded retry loop exhausted unexpectedly")
 
@@ -669,6 +797,31 @@ class TwelveDataProvider:
     def _record_error(self, error: MarketDataProviderError) -> None:
         self._state = error.health_state
         self._detail = str(error)
+
+    def _needs_refresh(
+        self, timeframe: Timeframe, as_of: datetime
+    ) -> bool:
+        series = self._latest_series.get(timeframe)
+        if not series:
+            return True
+        latest = self._parse_utc(series[-1].raw_close_time)
+        return latest < self._expected_completed_close(timeframe, as_of)
+
+    @staticmethod
+    def _expected_completed_close(
+        timeframe: Timeframe, as_of: datetime
+    ) -> datetime:
+        checked_at = TwelveDataProvider._aware_utc(as_of)
+        if timeframe is Timeframe.H1:
+            return checked_at.replace(minute=0, second=0, microsecond=0)
+        if timeframe is Timeframe.D1:
+            return checked_at.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        current = checked_at.replace(minute=0, second=0, microsecond=0)
+        while current.hour not in {1, 5, 9, 13, 17, 21}:
+            current -= timedelta(hours=1)
+        return current
 
     @staticmethod
     def _malformed_error() -> MarketDataProviderError:

@@ -184,7 +184,72 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
         call["params"]["interval"]: call["params"]["outputsize"]
         for call in transport.calls
     }
-    assert outputsize == {"1h": "31", "4h": "31", "1day": "7"}
+    assert outputsize == {"1h": "198", "4h": "198", "1day": "7"}
+    telemetry = provider.telemetry()
+    assert telemetry.network_attempts == 3
+    assert telemetry.successful_requests == 3
+    assert telemetry.failed_requests == 0
+    assert telemetry.series_attempts == {"H1": 1, "H4": 1, "D1": 1}
+
+
+def test_boundary_cache_avoids_requests_until_a_series_can_advance() -> None:
+    provider, transport = _provider(_standard_routes())
+
+    triggers = provider.fetch_completed_bars(AS_OF)
+    provider.fetch_required_history(triggers[-1], AS_OF)
+    first_call_count = len(transport.calls)
+    same_boundary = provider.fetch_completed_bars(AS_OF)
+
+    assert first_call_count == 3
+    assert same_boundary == ()
+    assert len(transport.calls) == first_call_count
+    assert provider.telemetry().cache_hits >= 1
+
+
+def test_resume_cursor_returns_every_unseen_completed_h1_in_order() -> None:
+    start = datetime(2026, 7, 30, tzinfo=timezone.utc)
+    values = [
+        {
+            "datetime": (start + timedelta(hours=index)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "open": "1.10000",
+            "high": "1.10100",
+            "low": "1.09900",
+            "close": "1.10050",
+            "volume": "100",
+        }
+        for index in range(36)
+    ]
+    payload = {
+        "meta": {"symbol": "EUR/USD", "interval": "1h"},
+        "values": list(reversed(values)),
+        "status": "ok",
+    }
+    provider, _ = _provider(
+        _standard_routes(
+            h1=_response(payload),
+            h4=_empty("4h"),
+        )
+    )
+    provider.set_resume_cursor(
+        Timeframe.H1,
+        datetime(2026, 7, 31, 8, tzinfo=timezone.utc),
+    )
+
+    triggers = provider.fetch_completed_bars(
+        datetime(2026, 7, 31, 12, 0, 30, tzinfo=timezone.utc)
+    )
+
+    assert [
+        trigger.candle.raw_close_time for trigger in triggers
+    ] == [
+        "2026-07-31T09:00:00Z",
+        "2026-07-31T10:00:00Z",
+        "2026-07-31T11:00:00Z",
+        "2026-07-31T12:00:00Z",
+    ]
+    assert provider.telemetry().completed_discoveries["H1"] == 4
 
 
 def test_reverse_provider_order_is_normalized_to_utc_chronological_order() -> None:
@@ -345,6 +410,10 @@ def test_rate_limit_respects_retry_after_and_recovers() -> None:
     assert sleeps == [2.0]
     assert len([call for call in transport.calls if call["params"]["interval"] == "1h"]) == 2
     assert provider.health(AS_OF).state is HealthState.HEALTHY
+    telemetry = provider.telemetry()
+    assert telemetry.rate_limit_responses == 1
+    assert telemetry.failed_requests == 1
+    assert telemetry.successful_requests == 2
 
 
 @pytest.mark.parametrize(
@@ -379,6 +448,12 @@ def test_transient_failures_have_bounded_retry_count(
     assert captured.value.retryable is True
     assert len(transport.calls) == 3
     assert sleeps == pytest.approx([0.1, 0.2])
+    telemetry = provider.telemetry()
+    assert telemetry.network_attempts == 3
+    assert telemetry.failed_requests == 3
+    assert telemetry.network_timeouts == (
+        3 if expected_code is ProviderErrorCode.TIMEOUT else 0
+    )
 
 
 def test_health_transitions_from_failure_to_success() -> None:
@@ -474,7 +549,7 @@ def test_application_can_select_twelve_data_without_startup_network(
 
     assert application.state.provider.identity.provider_id == "TWELVE_DATA"
     assert health["synthetic"] is False
-    assert health["data"]["mode"] == "PHASE_3A_TWELVE_DATA_RUNTIME"
+    assert health["data"]["mode"] == "PHASE_3B_TWELVE_DATA_RUNTIME"
     assert health["data"]["provider_health"]["state"] == "DATA_UNAVAILABLE"
 
 
@@ -554,6 +629,64 @@ def _integration_coordinator(
     return coordinator, repository, evaluator
 
 
+def test_coordinator_catches_up_each_unseen_completed_trigger(
+    tmp_path: Path,
+) -> None:
+    provider, _ = _provider(
+        {
+            "1h": [
+                _golden_payload(
+                    "confirmed_buy_h1_01", "signal_bars.csv", "1h"
+                )
+            ],
+            "4h": [_empty("4h")],
+            "1day": [
+                _golden_payload(
+                    "confirmed_buy_h1_01", "daily_bars.csv", "1day"
+                )
+            ],
+        }
+    )
+    provider.set_resume_cursor(
+        Timeframe.H1,
+        datetime(2026, 2, 3, 9, tzinfo=timezone.utc),
+    )
+    repository = SQLiteProjectionRepository(tmp_path / "catchup.sqlite3")
+    repository.initialize()
+    evaluator = RecordingEvaluator()
+    coordinator = MarketDataCoordinator(
+        provider=provider,
+        registry=CanonicalInstrumentRegistry(
+            provider.discover_instruments()
+        ),
+        normalizer=CandleNormalizer(),
+        detector=ClosedBarDetector(),
+        service=WalkingSkeletonService(evaluator, None, repository),
+        repository=repository,
+        clock=FixedClock(
+            datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)
+        ),
+    )
+
+    result = coordinator.poll_once()
+
+    assert len(result.outcomes) == 2
+    assert [
+        request.signal_bars[-1].close_time
+        for request in evaluator.requests
+    ] == [
+        datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
+        datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
+    ]
+    assert repository.processed_count() == 2
+    assert len(
+        {
+            event["idempotency_key"]
+            for event in repository.events()
+        }
+    ) == 2
+
+
 def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -571,8 +704,8 @@ def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
     assert len(first.outcomes) == 1
     assert first.outcomes[0].replayed is False
     assert first.outcomes[0].events_created == 7
-    assert second.outcomes[0].replayed is True
-    assert third.outcomes[0].replayed is True
+    assert second.outcomes == ()
+    assert third.outcomes == ()
     assert repository.event_count() == 7
     assert reopened.event_count() == 7
     assert repository.processed_count() == 1

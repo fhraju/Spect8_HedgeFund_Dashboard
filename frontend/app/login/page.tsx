@@ -46,7 +46,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <button type="submit">Enter dashboard</button>
         </form>
         <p className="synthetic-login-note">
-          Phase 3A · EUR/USD strategy monitoring · no trading
+          Phase 3B · EUR/USD UAT candidate · no trading
         </p>
       </section>
     </main>

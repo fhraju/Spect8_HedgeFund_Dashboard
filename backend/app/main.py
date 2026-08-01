@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -18,6 +18,7 @@ from .market_data.normalizer import CandleNormalizer
 from .market_data.registry import CanonicalInstrumentRegistry
 from .market_data.replay_provider import ReplayMarketDataProvider
 from .market_data.runtime import MarketDataRuntime
+from .market_data.runtime_support import configure_runtime_logging
 from .market_data.twelve_data_provider import TwelveDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
@@ -57,10 +58,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         repository=repository,
         clock=clock,
     )
+    runtime_logger = (
+        configure_runtime_logging(
+            configured.runtime_log_path
+            or configured.repository_root / "var" / "spect8_runtime.log",
+            max_bytes=configured.runtime_log_max_bytes,
+            backup_count=configured.runtime_log_backup_count,
+        )
+        if (
+            not provider.identity.synthetic
+            and configured.market_data_runtime_enabled
+        )
+        else None
+    )
     runtime = MarketDataRuntime(
         coordinator,
         repository,
+        clock,
         poll_seconds=configured.market_data_poll_seconds,
+        safety_delay_seconds=configured.market_data_safety_delay_seconds,
+        logger=runtime_logger,
     )
 
     @asynccontextmanager
@@ -81,13 +98,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if runtime_task is not None:
                 runtime.stop()
-                runtime_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime_task
+                await runtime_task
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 3A",
-        version="0.5.0",
+        title="Spect8 HedgeFund Dashboard — Phase 3B",
+        version="0.6.0",
         description=(
             SYNTHETIC_NOTICE
             if provider.identity.synthetic
@@ -153,7 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "mode": (
                     "PHASE_2B_REPLAY_MARKET_DATA"
                     if provider.identity.synthetic
-                    else "PHASE_3A_TWELVE_DATA_RUNTIME"
+                    else "PHASE_3B_TWELVE_DATA_RUNTIME"
                 ),
                 "market_data": (
                     "REPLAY_ONLY"
@@ -222,6 +237,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/events", dependencies=[protected])
     def events(request: Request) -> dict[str, Any]:
         return envelope(request.app.state.repository.events())
+
+    @app.get("/runtime/status", dependencies=[protected])
+    def runtime_status() -> dict[str, Any]:
+        instrument = registry.all()[0]
+        return envelope(
+            {
+                "runtime": runtime.status(),
+                "observation": repository.observation_report(
+                    instrument.provider_id, instrument.instrument_id
+                ),
+            }
+        )
 
     @app.get(
         "/dashboard",

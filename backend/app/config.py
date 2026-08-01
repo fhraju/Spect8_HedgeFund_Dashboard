@@ -27,6 +27,10 @@ class Settings:
     twelve_data_api_key: str | None = field(default=None, repr=False)
     market_data_runtime_enabled: bool = False
     market_data_poll_seconds: int = 300
+    market_data_safety_delay_seconds: int = 30
+    runtime_log_path: Path | None = None
+    runtime_log_max_bytes: int = 5_000_000
+    runtime_log_backup_count: int = 5
 
     def validate(self) -> None:
         provider = self.market_data_provider.lower()
@@ -50,6 +54,17 @@ class Settings:
         if not 60 <= self.market_data_poll_seconds <= 900:
             raise ValueError(
                 "SPECT8_MARKET_DATA_POLL_SECONDS must be between 60 and 900."
+            )
+        if not 5 <= self.market_data_safety_delay_seconds <= 300:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS must be "
+                "between 5 and 300."
+            )
+        if not 65_536 <= self.runtime_log_max_bytes <= 100_000_000:
+            raise ValueError("SPECT8_RUNTIME_LOG_MAX_BYTES is outside bounds.")
+        if not 1 <= self.runtime_log_backup_count <= 10:
+            raise ValueError(
+                "SPECT8_RUNTIME_LOG_BACKUP_COUNT must be between 1 and 10."
             )
 
     @classmethod
@@ -96,6 +111,23 @@ class Settings:
             == "true",
             market_data_poll_seconds=int(
                 os.environ.get("SPECT8_MARKET_DATA_POLL_SECONDS", "300")
+            ),
+            market_data_safety_delay_seconds=int(
+                os.environ.get(
+                    "SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS", "30"
+                )
+            ),
+            runtime_log_path=Path(
+                os.environ.get(
+                    "SPECT8_RUNTIME_LOG_PATH",
+                    repository_root / "var" / "spect8_runtime.log",
+                )
+            ),
+            runtime_log_max_bytes=int(
+                os.environ.get("SPECT8_RUNTIME_LOG_MAX_BYTES", "5000000")
+            ),
+            runtime_log_backup_count=int(
+                os.environ.get("SPECT8_RUNTIME_LOG_BACKUP_COUNT", "5")
             ),
         )
         configured.validate()

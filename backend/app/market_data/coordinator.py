@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from ..domain import Bar
+from ..domain import Bar, Timeframe
 from ..engine.models import StrategyRequest
 from ..repository import SQLiteProjectionRepository
 from ..service import ProcessingOutcome, WalkingSkeletonService
@@ -64,6 +64,7 @@ class MarketDataCoordinator:
 
     def poll_once(self) -> PollResult:
         now = self._clock.now()
+        self._seed_resume_cursors()
         provider_health = self.provider.health(now)
         try:
             raw_closed = self.provider.fetch_completed_bars(now)
@@ -219,6 +220,28 @@ class MarketDataCoordinator:
             outcomes=tuple(outcomes),
             canonical_bars_inserted=inserted,
         )
+
+    def _seed_resume_cursors(self) -> None:
+        setter = getattr(self.provider, "set_resume_cursor", None)
+        if not callable(setter):
+            return
+        for instrument in self.registry.all():
+            for timeframe in (Timeframe.H1, Timeframe.H4):
+                value = self._repository.latest_evaluation_close(
+                    instrument.provider_id,
+                    instrument.instrument_id,
+                    timeframe.value,
+                )
+                setter(
+                    timeframe,
+                    (
+                        datetime.fromisoformat(
+                            value.replace("Z", "+00:00")
+                        )
+                        if value is not None
+                        else None
+                    ),
+                )
 
     def current_health(self) -> dict[str, object] | None:
         return self._repository.provider_health(

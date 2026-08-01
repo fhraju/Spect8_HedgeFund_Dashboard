@@ -34,7 +34,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     name: SESSION_COOKIE,
     value: createSessionToken(sessionSecret),
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure:
+      process.env.DASHBOARD_ORIGIN?.startsWith("https://") ??
+      process.env.NODE_ENV === "production",
     sameSite: "strict",
     path: "/",
     maxAge: SESSION_TTL_SECONDS,

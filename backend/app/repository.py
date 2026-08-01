@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from .domain import Bar, DomainEvent, InstrumentStatus, primitive
+from .observation import expansion_projections
 
 if TYPE_CHECKING:
     from .market_data.models import ProviderHealth
@@ -99,6 +101,31 @@ class SQLiteProjectionRepository:
                     last_attempt_at TEXT NOT NULL,
                     last_success_at TEXT,
                     detail TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS runtime_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    exit_reason TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS runtime_poll_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    attempted_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    health_state TEXT NOT NULL,
+                    previous_health_state TEXT,
+                    telemetry_json TEXT NOT NULL,
+                    canonical_bars_inserted INTEGER NOT NULL,
+                    evaluations_created INTEGER NOT NULL,
+                    duplicate_evaluations_prevented INTEGER NOT NULL,
+                    events_created INTEGER NOT NULL,
+                    issues_json TEXT NOT NULL
                 );
                 """
             )
@@ -454,6 +481,80 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
 
+    def start_runtime_session(
+        self, session_id: str, provider_id: str, started_at: str
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO runtime_sessions (
+                    session_id, provider, started_at
+                ) VALUES (?, ?, ?)
+                """,
+                (session_id, provider_id, started_at),
+            )
+            connection.commit()
+
+    def end_runtime_session(
+        self, session_id: str, ended_at: str, exit_reason: str
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE runtime_sessions
+                SET ended_at = ?, exit_reason = ?
+                WHERE session_id = ?
+                """,
+                (ended_at, exit_reason, session_id),
+            )
+            connection.commit()
+
+    def record_runtime_poll(
+        self,
+        *,
+        session_id: str,
+        provider_id: str,
+        attempted_at: str,
+        completed_at: str,
+        duration_ms: int,
+        health_state: str,
+        previous_health_state: str | None,
+        telemetry: dict[str, Any],
+        canonical_bars_inserted: int,
+        evaluations_created: int,
+        duplicate_evaluations_prevented: int,
+        events_created: int,
+        issues: tuple[str, ...],
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO runtime_poll_history (
+                    session_id, provider, attempted_at, completed_at,
+                    duration_ms, health_state, previous_health_state,
+                    telemetry_json, canonical_bars_inserted,
+                    evaluations_created, duplicate_evaluations_prevented,
+                    events_created, issues_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    provider_id,
+                    attempted_at,
+                    completed_at,
+                    duration_ms,
+                    health_state,
+                    previous_health_state,
+                    json.dumps(telemetry, sort_keys=True),
+                    canonical_bars_inserted,
+                    evaluations_created,
+                    duplicate_evaluations_prevented,
+                    events_created,
+                    json.dumps(list(issues), sort_keys=True),
+                ),
+            )
+            connection.commit()
+
     def statuses(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
@@ -635,6 +736,205 @@ class SQLiteProjectionRepository:
             row["timeframe"]: row["close_time_utc"]
             for row in rows
             if row["close_time_utc"] is not None
+        }
+
+    def latest_evaluation_close(
+        self,
+        provider_id: str,
+        instrument_id: str,
+        timeframe: str,
+    ) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT status_json
+                FROM instrument_status
+                WHERE provider = ?
+                  AND instrument_id = ?
+                  AND timeframe = ?
+                LIMIT 1
+                """,
+                (provider_id, instrument_id, timeframe),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["status_json"]).get("signal_bar_close_time")
+
+    def observation_report(
+        self,
+        provider_id: str,
+        instrument_id: str,
+        *,
+        as_of: datetime | None = None,
+    ) -> dict[str, Any]:
+        generated_at = (as_of or datetime.now(timezone.utc)).astimezone(
+            timezone.utc
+        )
+        with closing(self._connect()) as connection:
+            sessions = connection.execute(
+                """
+                SELECT session_id, started_at, ended_at, exit_reason
+                FROM runtime_sessions
+                WHERE provider = ?
+                ORDER BY started_at
+                """,
+                (provider_id,),
+            ).fetchall()
+            polls = connection.execute(
+                """
+                SELECT attempted_at, completed_at, duration_ms, health_state,
+                       previous_health_state, telemetry_json,
+                       canonical_bars_inserted, evaluations_created,
+                       duplicate_evaluations_prevented, events_created,
+                       issues_json
+                FROM runtime_poll_history
+                WHERE provider = ?
+                ORDER BY id
+                """,
+                (provider_id,),
+            ).fetchall()
+
+        timeframe_attempts = {"H1": 0, "H4": 0, "D1": 0}
+        discoveries = {"H1": 0, "H4": 0, "D1": 0}
+        totals = {
+            "network_attempts": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "rate_limit_responses": 0,
+            "network_timeouts": 0,
+            "cache_hits": 0,
+        }
+        transitions: list[dict[str, str]] = []
+        unhealthy_periods: list[dict[str, Any]] = []
+        unhealthy_start: str | None = None
+        unhealthy_states = {
+            "STALE",
+            "DATA_UNAVAILABLE",
+            "INSUFFICIENT_HISTORY",
+            "QUARANTINED",
+        }
+        last_state: str | None = None
+        for row in polls:
+            telemetry = json.loads(row["telemetry_json"])
+            for key in totals:
+                totals[key] += int(telemetry.get(key, 0))
+            for timeframe in timeframe_attempts:
+                timeframe_attempts[timeframe] += int(
+                    telemetry.get("series_attempts", {}).get(timeframe, 0)
+                )
+                discoveries[timeframe] += int(
+                    telemetry.get("completed_discoveries", {}).get(
+                        timeframe, 0
+                    )
+                )
+            state = str(row["health_state"])
+            if state != last_state:
+                transitions.append(
+                    {
+                        "at": row["completed_at"],
+                        "from": last_state or "UNOBSERVED",
+                        "to": state,
+                    }
+                )
+            if state in unhealthy_states and unhealthy_start is None:
+                unhealthy_start = row["completed_at"]
+            elif state not in unhealthy_states and unhealthy_start is not None:
+                start = datetime.fromisoformat(
+                    unhealthy_start.replace("Z", "+00:00")
+                )
+                end = datetime.fromisoformat(
+                    row["completed_at"].replace("Z", "+00:00")
+                )
+                unhealthy_periods.append(
+                    {
+                        "started_at": unhealthy_start,
+                        "recovered_at": row["completed_at"],
+                        "recovery_seconds": max(
+                            0, int((end - start).total_seconds())
+                        ),
+                    }
+                )
+                unhealthy_start = None
+            last_state = state
+        if unhealthy_start is not None:
+            unhealthy_periods.append(
+                {
+                    "started_at": unhealthy_start,
+                    "recovered_at": None,
+                    "recovery_seconds": None,
+                }
+            )
+
+        uptime_seconds = 0
+        for session in sessions:
+            start = datetime.fromisoformat(
+                session["started_at"].replace("Z", "+00:00")
+            )
+            end = (
+                datetime.fromisoformat(
+                    session["ended_at"].replace("Z", "+00:00")
+                )
+                if session["ended_at"]
+                else generated_at
+            )
+            uptime_seconds += max(0, int((end - start).total_seconds()))
+
+        measured_hours = uptime_seconds / 3600
+        measured_requests_per_hour = (
+            totals["network_attempts"] / measured_hours
+            if measured_hours > 0
+            else None
+        )
+
+        return {
+            "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
+            "provider_id": provider_id,
+            "instrument_id": instrument_id,
+            "observation_start_utc": (
+                sessions[0]["started_at"]
+                if sessions
+                else (polls[0]["attempted_at"] if polls else None)
+            ),
+            "observation_end_utc": (
+                polls[-1]["completed_at"] if polls else None
+            ),
+            "runtime_uptime_seconds": uptime_seconds,
+            "runtime_sessions": len(sessions),
+            "restarts": max(0, len(sessions) - 1),
+            "polls": len(polls),
+            "request_metrics": {
+                **totals,
+                "attempts_by_timeframe": timeframe_attempts,
+                "measured_average_requests_per_hour": (
+                    measured_requests_per_hour
+                ),
+                "measured_projected_requests_per_day": (
+                    measured_requests_per_hour * 24
+                    if measured_requests_per_hour is not None
+                    else None
+                ),
+            },
+            "steady_state_request_projections": expansion_projections(),
+            "completed_candle_discoveries": discoveries,
+            "evaluations_created": sum(
+                row["evaluations_created"] for row in polls
+            ),
+            "duplicate_evaluations_prevented": sum(
+                row["duplicate_evaluations_prevented"] for row in polls
+            ),
+            "events_created": sum(row["events_created"] for row in polls),
+            "canonical_bars_inserted": sum(
+                row["canonical_bars_inserted"] for row in polls
+            ),
+            "health_transitions": transitions,
+            "unhealthy_periods": unhealthy_periods,
+            "latest_completed_candles": self.latest_candle_timestamps(
+                provider_id, instrument_id
+            ),
+            "persisted_evaluations": self.processed_count(),
+            "persisted_events": self.event_count(),
+            "orders": 0,
+            "fills": 0,
         }
 
     def _connect(self) -> sqlite3.Connection:

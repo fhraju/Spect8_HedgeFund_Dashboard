@@ -188,7 +188,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             <div className="api-status">
               <i className={isHealthy ? "" : "warning-dot"} />
               <span>{data.instrument.provider_symbol}</span>
-              <b>PHASE 3A</b>
+              <b>PHASE 3B</b>
             </div>
             <RefreshButton />
           </div>

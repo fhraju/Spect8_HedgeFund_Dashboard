@@ -3,9 +3,10 @@
 Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` specification.
 
-Phase 3A connects the Phase 2C Twelve Data adapter to a bounded polling
-runtime, the existing coordinator and evaluator, durable projections, a typed
-read-only API, and the protected `EUR/USD` dashboard. H1 and H4 remain
+Phase 3B hardens the Phase 3A EUR/USD vertical slice for client UAT and
+sustained private observation. It adds single-runtime ownership,
+boundary-aware polling/catch-up, request accounting, sanitized rotating logs,
+runtime observation reports, and client/runbook checklists. H1 and H4 remain
 independent signal timeframes and D1 remains context only. Golden expected
 results remain a test-only oracle. The scanner contains no trading,
 backtesting, optimization, WebSockets, or multi-instrument expansion.
@@ -74,6 +75,12 @@ The polling interval is validated between 60 and 900 seconds. Provider
 timeouts, retry bounds, candle completion rules, and H4/D1 boundaries remain
 owned by the Phase 2C adapter.
 
+For a sustained private Phase 3B observation:
+
+```powershell
+.\scripts\start_phase3b_observation.ps1
+```
+
 Terminal 2:
 
 ```powershell
@@ -104,4 +111,8 @@ normalization, closed-bar, health, and persistence behavior. See
 configuration, secret handling, completed-candle policy, fixture validation,
 and the explicitly invoked live smoke test. See
 [Phase 3A vertical slice](docs/PHASE3A_EUR_USD_DASHBOARD.md) for runtime,
-dashboard API, frontend states, and live end-to-end validation evidence.
+dashboard API, frontend states, and live end-to-end validation evidence. See
+[Phase 3B observation runbook](docs/PHASE3B_OBSERVATION_RUNBOOK.md) and
+[Phase 3B client checklist](docs/PHASE3B_CLIENT_ACCEPTANCE.md) for sustained
+operation and UAT. Phase 3B remains conditional until the required multi-day
+observation and explicit client approval are complete.

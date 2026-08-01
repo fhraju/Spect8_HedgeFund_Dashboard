@@ -73,7 +73,22 @@ describe("single-client password and session protection", () => {
     expect(cookie).toContain(`${SESSION_COOKIE}=`);
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=strict");
+    expect(cookie).not.toContain("Secure");
     expect(cookie).not.toContain("correct horse battery staple");
+  });
+
+  it("marks the session Secure when the configured origin uses HTTPS", async () => {
+    process.env.DASHBOARD_ORIGIN = "https://dashboard.example.test";
+    const response = await login(
+      new NextRequest("https://dashboard.example.test/api/auth/login", {
+        method: "POST",
+        body: new URLSearchParams({
+          password: "correct horse battery staple",
+        }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      }),
+    );
+    expect(response.headers.get("set-cookie") ?? "").toContain("Secure");
   });
 
   it("rejects an incorrect login without creating a session", async () => {
