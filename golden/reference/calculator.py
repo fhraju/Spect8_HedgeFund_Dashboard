@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_DOWN, getcontext
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 getcontext().prec = 28
 
@@ -24,6 +25,7 @@ TIMEFRAME_STEP = {
     "H4": timedelta(hours=4),
     "D1": timedelta(days=1),
 }
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 def _dt(value: str) -> datetime:
@@ -97,8 +99,24 @@ def _missing_issue(
     issue: str,
 ) -> list[str]:
     step = TIMEFRAME_STEP[timeframe]
-    times = [bar["open_time"] for bar in candles]
-    if any(current - previous != step for previous, current in zip(times, times[1:])):
+    def expected(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+        if current["open_time"] - previous["open_time"] == step:
+            return True
+        if timeframe != "D1":
+            return False
+        previous_close = previous["close_time"].astimezone(NEW_YORK)
+        current_open = current["open_time"].astimezone(NEW_YORK)
+        return (
+            previous_close.weekday() == 4
+            and previous_close.hour == 17
+            and current_open.weekday() == 6
+            and current_open.hour == 17
+        )
+
+    if any(
+        not expected(previous, current)
+        for previous, current in zip(candles, candles[1:])
+    ):
         return [issue]
     return []
 
@@ -310,7 +328,7 @@ def evaluate_case(
         completed_daily = [
             bar
             for bar in selected_daily_source
-            if bar["is_complete"] and bar["close_time"] < signal_close
+            if bar["is_complete"] and bar["close_time"] <= signal_close
         ]
     else:
         completed_daily = []

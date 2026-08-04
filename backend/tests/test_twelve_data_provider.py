@@ -18,6 +18,7 @@ from backend.app.main import create_app
 from backend.app.market_data.clock import FixedClock
 from backend.app.market_data.closed_bar import ClosedBarDetector
 from backend.app.market_data.coordinator import MarketDataCoordinator
+from backend.app.market_data.daily_aggregator import NewYorkDailyAggregator
 from backend.app.market_data.interfaces import MarketDataProvider
 from backend.app.market_data.models import (
     HealthState,
@@ -169,7 +170,6 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
     assert {call["params"]["interval"] for call in transport.calls} == {
         "1h",
         "4h",
-        "1day",
     }
     for call in transport.calls:
         assert call["path"] == "/time_series"
@@ -180,16 +180,16 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
         assert call["read_timeout"] == 4.5
         assert "apikey" not in call["params"]
         assert call["headers"]["Authorization"].startswith("apikey ")
-    outputsize = {
-        call["params"]["interval"]: call["params"]["outputsize"]
-        for call in transport.calls
+    assert {call["params"]["outputsize"] for call in transport.calls} == {
+        "198",
+        "31",
+        "673",
     }
-    assert outputsize == {"1h": "198", "4h": "198", "1day": "7"}
     telemetry = provider.telemetry()
     assert telemetry.network_attempts == 3
     assert telemetry.successful_requests == 3
     assert telemetry.failed_requests == 0
-    assert telemetry.series_attempts == {"H1": 1, "H4": 1, "D1": 1}
+    assert telemetry.series_attempts == {"H1": 2, "H4": 1, "D1": 0}
 
 
 def test_boundary_cache_avoids_requests_until_a_series_can_advance() -> None:
@@ -577,6 +577,112 @@ def _golden_payload(case_id: str, filename: str, interval: str) -> HttpResponse:
     )
 
 
+def _combined_h1_payload(
+    *,
+    terminal_close: datetime = datetime(
+        2026, 2, 3, 11, tzinfo=timezone.utc
+    ),
+) -> HttpResponse:
+    path = ROOT / "golden" / "cases" / "confirmed_buy_h1_01" / "signal_bars.csv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        signal = {row["open_time"]: row for row in csv.DictReader(handle)}
+    start = terminal_close - timedelta(hours=505)
+    values = []
+    for index in range(505):
+        opened = start + timedelta(hours=index)
+        key = opened.isoformat().replace("+00:00", "Z")
+        row = signal.get(key)
+        values.append(
+            {
+                "datetime": opened.strftime("%Y-%m-%d %H:%M:%S"),
+                "open": row["open"] if row else "325.00000",
+                "high": row["high"] if row else "333.00000",
+                "low": row["low"] if row else "317.00000",
+                "close": row["close"] if row else "325.00000",
+                "volume": "100",
+            }
+        )
+    return _response(
+        {
+            "meta": {
+                "symbol": "EUR/USD",
+                "interval": "1h",
+                "exchange_timezone": "UTC",
+            },
+            "values": list(reversed(values)),
+            "status": "ok",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("timeframe", "interval"),
+    (
+        (Timeframe.H1, "1h"),
+        (Timeframe.H4, "4h"),
+    ),
+)
+def test_provider_supplies_h1_source_for_new_york_equal_close_context(
+    timeframe: Timeframe,
+    interval: str,
+) -> None:
+    terminal = datetime(2026, 1, 15, 22, tzinfo=timezone.utc)
+    h1 = _combined_h1_payload(terminal_close=terminal)
+    h4 = _empty("4h")
+    if timeframe is Timeframe.H4:
+        start = terminal - timedelta(hours=35 * 4)
+        values = [
+            {
+                "datetime": (start + timedelta(hours=index * 4)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "open": "325",
+                "high": "333",
+                "low": "317",
+                "close": "325",
+            }
+            for index in range(35)
+        ]
+        h4 = _response(
+            {
+                "meta": {"symbol": "EUR/USD", "interval": "4h"},
+                "values": list(reversed(values)),
+                "status": "ok",
+            }
+        )
+    routes = {
+        "1h": [h1],
+        "4h": [h4],
+        "1day": [_empty("1day")],
+    }
+    provider, _ = _provider(routes)
+    as_of = terminal + timedelta(seconds=1)
+
+    triggers = provider.fetch_completed_bars(as_of)
+    trigger = next(item for item in triggers if item.candle.timeframe is timeframe)
+    history = provider.fetch_required_history(trigger, as_of)
+
+    assert history.daily_bars == ()
+    assert len(history.daily_source_bars) == 505
+    assert all(bar.timeframe is Timeframe.H1 for bar in history.daily_source_bars)
+    assert history.daily_source_bars[-1].raw_close_time == trigger.candle.raw_close_time
+    instrument = provider.discover_instruments()[0]
+    canonical = tuple(
+        result.candle
+        for raw in history.daily_source_bars
+        if (result := CandleNormalizer().normalize(raw, instrument)).candle
+        is not None
+    )
+    aggregation = NewYorkDailyAggregator().aggregate(canonical, as_of=as_of)
+    assert aggregation.issues == ()
+    assert aggregation.bars[-1].close_time == datetime(
+        2026, 1, 15, 22, tzinfo=timezone.utc
+    )
+    assert aggregation.bars[-1].close_time == datetime.fromisoformat(
+        trigger.candle.raw_close_time.replace("Z", "+00:00")
+    )
+
+
 class RecordingEvaluator:
     def __init__(self) -> None:
         self.requests: list[Any] = []
@@ -596,17 +702,9 @@ def _integration_coordinator(
 ]:
     provider, _ = _provider(
         {
-            "1h": [
-                _golden_payload(
-                    "confirmed_buy_h1_01", "signal_bars.csv", "1h"
-                )
-            ],
+            "1h": [_combined_h1_payload()],
             "4h": [_empty("4h")],
-            "1day": [
-                _golden_payload(
-                    "confirmed_buy_h1_01", "daily_bars.csv", "1day"
-                )
-            ],
+            "1day": [_empty("1day")],
         }
     )
     repository = SQLiteProjectionRepository(database)
@@ -634,17 +732,9 @@ def test_coordinator_catches_up_each_unseen_completed_trigger(
 ) -> None:
     provider, _ = _provider(
         {
-            "1h": [
-                _golden_payload(
-                    "confirmed_buy_h1_01", "signal_bars.csv", "1h"
-                )
-            ],
+            "1h": [_combined_h1_payload()],
             "4h": [_empty("4h")],
-            "1day": [
-                _golden_payload(
-                    "confirmed_buy_h1_01", "daily_bars.csv", "1day"
-                )
-            ],
+            "1day": [_empty("1day")],
         }
     )
     provider.set_resume_cursor(
@@ -739,6 +829,20 @@ def test_example_environment_has_blank_key_and_local_env_is_ignored() -> None:
     assert "backend/.env" in (
         ROOT / ".gitignore"
     ).read_text(encoding="utf-8").splitlines()
+
+
+def test_native_daily_fetch_and_smoke_paths_are_explicitly_blocked() -> None:
+    provider, transport = _provider(_standard_routes())
+
+    with pytest.raises(ValueError, match="provider-native D1"):
+        provider.fetch_smoke_bars(Timeframe.D1, AS_OF)
+    with pytest.raises(ValueError, match="provider-native D1"):
+        provider.fetch_historical_bars(
+            Timeframe.D1,
+            AS_OF - timedelta(days=10),
+            AS_OF,
+        )
+    assert transport.calls == []
 
 
 def test_live_smoke_is_explicitly_not_run_without_key(

@@ -10,6 +10,11 @@ registry, candle normalizer, closed-bar detector, replay/restart idempotency,
 health states, and D1/cross-timeframe look-ahead tests. Repository history has
 no later or omitted committed 12-test set.
 
+> Historical phase record: native `1day` observations below document Phase 2C
+> only. Provider-native D1 retrieval is explicitly blocked in the active
+> v1.0.3 production, smoke, backfill, and historical-replay paths; canonical
+> D1 OHLC is reconstructed from completed H1 at 17:00 America/New_York.
+
 ## Scope
 
 Phase 2C adds one read-only REST adapter:
@@ -74,14 +79,15 @@ H1/H4/D1.
 
 | Canonical | Twelve Data interval | Requested history |
 | --- | --- | ---: |
-| H1 | `1h` | 31 |
-| H4 | `4h` | 31 |
-| D1 | `1day` | 7 |
+| H1 signal | `1h` | 31 |
+| H4 signal | `4h` | 31 |
+| D1 source | `1h` | 337 plus catch-up safety |
 
-The extra value allows the current value to be filtered while retaining the
-frozen minimum of 30 signal bars and 6 D1 bars. The provider requests UTC,
-interprets timezone-less forex datetimes as UTC, derives close time from open
-time plus interval, and returns ascending chronological candles.
+The signal extra value allows the current value to be filtered while retaining
+30 signal bars. D1 context uses enough H1 history to reconstruct at least six
+valid Forex sessions across weekends and holidays. Native `1day` requests are
+disabled. The provider requests intraday UTC, preserves raw timestamps, and
+returns ascending chronological candles.
 
 A candle is eligible only when:
 
@@ -91,8 +97,9 @@ derived_close_time < injected_as_of_utc
 
 Consequently it is excluded immediately before and exactly at its close, and
 becomes eligible immediately after close. This deliberately conservative rule
-implements the frozen requirement that close time must have passed. D1 history
-is also restricted to closes strictly before the signal trigger.
+implements the frozen requirement that close time must have passed. The shared
+aggregator builds D1 at 17:00 `America/New_York`; completed D1 closes at or
+before the signal trigger are eligible under active v1.0.3.
 
 ## Data quality, retry and health behavior
 

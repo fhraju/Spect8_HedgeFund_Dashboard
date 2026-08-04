@@ -25,9 +25,17 @@ describe("server-only protection and strategy boundary", () => {
       "proxy-test-session-secret-that-is-long-enough";
     const page = proxy(new NextRequest("http://localhost/dashboard"));
     const api = proxy(new NextRequest("http://localhost/api/dashboard"));
+    const replayPage = proxy(
+      new NextRequest("http://localhost/historical-replay"),
+    );
+    const replayApi = proxy(
+      new NextRequest("http://localhost/api/historical-replays"),
+    );
     expect(page.status).toBe(307);
     expect(page.headers.get("location")).toBe("http://localhost/login");
     expect(api.status).toBe(401);
+    expect(replayPage.status).toBe(307);
+    expect(replayApi.status).toBe(401);
   });
 
   it("allows a correctly signed session through the proxy", () => {
@@ -48,6 +56,12 @@ describe("server-only protection and strategy boundary", () => {
       "requestHasDashboardSession",
     );
     expect(source("app/api/dashboard/replay/route.ts")).toContain(
+      "requestHasDashboardSession",
+    );
+    expect(source("app/historical-replay/page.tsx")).toContain(
+      "requireDashboardSession",
+    );
+    expect(source("app/api/historical-replays/route.ts")).toContain(
       "requestHasDashboardSession",
     );
   });

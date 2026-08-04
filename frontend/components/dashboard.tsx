@@ -3,6 +3,7 @@ import type {
   EventRecord,
   InstrumentStatus,
 } from "@/lib/api-types";
+import Link from "next/link";
 
 import { RefreshButton } from "./refresh-button";
 
@@ -165,6 +166,9 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
           <span className="active"><i>⌕</i>Market Scanner</span>
           <span><i>↗</i>Signals <em>{confirmed}</em></span>
           <span><i>≋</i>Event Tape</span>
+          <Link className="nav-link" href="/historical-replay">
+            <i>◷</i>Historical Replay
+          </Link>
         </nav>
         <div className="sidebar-bottom">
           <form action="/api/auth/logout" method="post">

@@ -10,6 +10,7 @@ them; they compare them with the independent reference calculator.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import sys
@@ -28,6 +29,7 @@ from golden.reference.calculator import evaluate_case
 PROVIDER = "SYNTHETIC_UTC_V1"
 INSTRUMENT = "SYNTH_XAUUSD"
 STRATEGY_ID = "SPECT8_MICRO_DAILY_V1_0"
+SPECIFICATION_ID = "SPECT8_MICRO_DAILY_V1_0_3"
 CSV_FIELDS = [
     "canonical_instrument_id",
     "timeframe",
@@ -94,6 +96,90 @@ def standard_daily(base: Decimal) -> list[dict[str, str]]:
         )
         for index in range(10)
     ]
+
+
+def equal_close_filter_boundary(
+    timeframe: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Return the frozen counterexample for completed D1 timestamp equality."""
+
+    signal_close = datetime(2026, 1, 11, tzinfo=timezone.utc)
+    signal_step = timedelta(hours=1 if timeframe == "H1" else 4)
+    signal_start = signal_close - (signal_step * 35)
+    signal = [
+        candle(
+            timeframe,
+            signal_start + (signal_step * index),
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("51"),
+            Decimal("100"),
+            volume=12000 + index,
+        )
+        for index in range(35)
+    ]
+
+    daily_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    daily = [
+        candle(
+            "D1",
+            daily_start + timedelta(days=index),
+            Decimal("100"),
+            Decimal("100") if index == 9 else Decimal("101"),
+            Decimal("50") if index == 9 else Decimal("99"),
+            Decimal("90") if index == 9 else Decimal("100"),
+            volume=13000 + index,
+        )
+        for index in range(10)
+    ]
+    return signal, daily
+
+
+def new_york_close_filter_boundary(
+    timeframe: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Return a summer 17:00 New York equal-close Filter authority case."""
+
+    signal_close = datetime(2026, 7, 17, 21, tzinfo=timezone.utc)
+    signal_step = timedelta(hours=1 if timeframe == "H1" else 4)
+    signal_start = signal_close - (signal_step * 35)
+    signal = [
+        candle(
+            timeframe,
+            signal_start + (signal_step * index),
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("51"),
+            Decimal("100"),
+            volume=14000 + index,
+        )
+        for index in range(35)
+    ]
+    closes = (
+        datetime(2026, 7, 6, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 7, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 8, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 9, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 10, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 13, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 14, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 15, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 16, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 17, 21, tzinfo=timezone.utc),
+    )
+    daily = [
+        candle(
+            "D1",
+            close_time - timedelta(days=1),
+            Decimal("100"),
+            Decimal("100") if index == 9 else Decimal("101"),
+            Decimal("50") if index == 9 else Decimal("99"),
+            Decimal("90") if index == 9 else Decimal("100"),
+            volume=15000 + index,
+        )
+        for index, close_time in enumerate(closes)
+    ]
+    return signal, daily
 
 
 def equality_daily(base: Decimal, direction: str) -> list[dict[str, str]]:
@@ -377,14 +463,23 @@ def structural_failure(
     return signal, daily
 
 
-def instrument(*, metadata_available: bool = True, minimum: Decimal = Decimal("0.01"), min_stop_points: Decimal = Decimal("0")) -> dict[str, Any]:
+def instrument(
+    *,
+    metadata_available: bool = True,
+    minimum: Decimal = Decimal("0.01"),
+    min_stop_points: Decimal = Decimal("0"),
+    session_timezone: str = "UTC",
+    candle_boundary_convention: str = (
+        "D1 closes at 00:00 UTC; H1/H4 aligned to UTC midnight"
+    ),
+) -> dict[str, Any]:
     return {
         "strategy_id": STRATEGY_ID,
         "instrument_id": INSTRUMENT,
         "display_name": "Synthetic XAU/USD",
         "provider": PROVIDER,
-        "session_timezone": "UTC",
-        "candle_boundary_convention": "D1 closes at 00:00 UTC; H1/H4 aligned to UTC midnight",
+        "session_timezone": session_timezone,
+        "candle_boundary_convention": candle_boundary_convention,
         "price_precision": 2,
         "point_size": 0.01,
         "tick_size": 0.01 if metadata_available else None,
@@ -487,6 +582,35 @@ def ledger(case: dict[str, Any], result: dict[str, Any]) -> str:
             "",
         ]
     )
+    if "equal_close_d1_boundary" in case["coverage"]:
+        signal_close = datetime.fromisoformat(
+            result["bars"]["signal_bar_close_time"].replace("Z", "+00:00")
+        )
+        eligible_daily = [
+            row
+            for row in case["_daily"]
+            if row["is_complete"] == "true"
+            and datetime.fromisoformat(
+                row["close_time"].replace("Z", "+00:00")
+            )
+            <= signal_close
+        ]
+        lines.extend(
+            [
+                "",
+                "## Completed-as-of-close boundary evidence",
+                "",
+                "- Eligible D1 closes: "
+                + ", ".join(
+                    f"`{row['close_time']}`" for row in eligible_daily
+                ),
+                "- Selected two D1 closes: "
+                + ", ".join(
+                    f"`{row['close_time']}`" for row in eligible_daily[-2:]
+                ),
+                "- The latest selected D1 close equals the signal close and is complete.",
+            ]
+        )
     candidates = result["candidates"]
     if candidates["buy"] is None and candidates["sell"] is None:
         lines.append("- No confirmed candidate; entry, stop, target, and size are not calculated.")
@@ -621,6 +745,48 @@ def build_cases() -> list[dict[str, Any]]:
         daily,
     )
 
+    for timeframe in ("H1", "H4"):
+        signal, daily = equal_close_filter_boundary(timeframe)
+        add(
+            f"equal_close_filter_boundary_{timeframe.lower()}",
+            timeframe,
+            (
+                f"{timeframe} completed signal includes the D1 candle closing "
+                "at the identical UTC timestamp."
+            ),
+            [
+                "equal_close_d1_boundary",
+                "completed_as_of_close",
+                timeframe.lower(),
+            ],
+            signal,
+            daily,
+        )
+
+        signal, daily = new_york_close_filter_boundary(timeframe)
+        add(
+            f"new_york_close_filter_boundary_{timeframe.lower()}",
+            timeframe,
+            (
+                f"{timeframe} includes the reconstructed 17:00 New York D1 "
+                "closing at the identical summer UTC timestamp."
+            ),
+            [
+                "new_york_close_d1",
+                "equal_close_d1_boundary",
+                "completed_as_of_close",
+                timeframe.lower(),
+            ],
+            signal,
+            daily,
+            instrument(
+                session_timezone="America/New_York",
+                candle_boundary_convention=(
+                    "D1 closes at 17:00 America/New_York; H1/H4 in UTC"
+                ),
+            ),
+        )
+
     negative_cases = [
         ("technical_buy_without_filter_h1", "H1", "BUY"),
         ("technical_sell_without_filter_h1", "H1", "SELL"),
@@ -716,10 +882,24 @@ def build_cases() -> list[dict[str, Any]]:
     return specifications
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help="Write only the named case directory; always refresh the manifest.",
+    )
+    args = parser.parse_args(argv)
     CASES.mkdir(parents=True, exist_ok=True)
     cases = build_cases()
+    requested = set(args.case)
+    known = {case["id"] for case in cases}
+    unknown = requested - known
+    if unknown:
+        parser.error(f"unknown case(s): {', '.join(sorted(unknown))}")
     manifest_cases: list[dict[str, Any]] = []
+    written = 0
     for generated in cases:
         case = {
             key: value
@@ -727,6 +907,8 @@ def main() -> int:
             if not key.startswith("_")
         }
         manifest_cases.append(case)
+        if requested and case["id"] not in requested:
+            continue
         directory = GOLDEN / case["path"]
         directory.mkdir(parents=True, exist_ok=True)
         write_csv(directory / "signal_bars.csv", generated["_signal"])
@@ -741,14 +923,15 @@ def main() -> int:
             encoding="utf-8",
         )
         (directory / "calculation_ledger.md").write_text(
-            ledger(case, expected),
+            ledger(generated, expected),
             encoding="utf-8",
         )
+        written += 1
 
     manifest = {
         "strategy_id": STRATEGY_ID,
-        "authority": "../Spect8_Micro_Daily_v1_0_1_FROZEN.md",
-        "dataset_version": "1.0.1",
+        "authority": "../Spect8_Micro_Daily_v1_0_3_FROZEN.md",
+        "dataset_version": "1.0.3",
         "description": (
             "Deterministic synthetic golden cases for the separate client Market "
             "Scanner. These are test fixtures, not production strategy code."
@@ -759,7 +942,10 @@ def main() -> int:
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"Generated {len(manifest_cases)} golden cases.")
+    print(
+        f"Wrote {written} golden case directories and indexed "
+        f"{len(manifest_cases)} cases for {SPECIFICATION_ID}."
+    )
     return 0
 
 

@@ -31,6 +31,7 @@ class Settings:
     runtime_log_path: Path | None = None
     runtime_log_max_bytes: int = 5_000_000
     runtime_log_backup_count: int = 5
+    historical_replay_database_path: Path | None = None
 
     def validate(self) -> None:
         provider = self.market_data_provider.lower()
@@ -65,6 +66,14 @@ class Settings:
         if not 1 <= self.runtime_log_backup_count <= 10:
             raise ValueError(
                 "SPECT8_RUNTIME_LOG_BACKUP_COUNT must be between 1 and 10."
+            )
+        if (
+            self.historical_replay_database_path is not None
+            and self.historical_replay_database_path.resolve()
+            == self.database_path.resolve()
+        ):
+            raise ValueError(
+                "Historical replay database must be separate from live state."
             )
 
     @classmethod
@@ -128,6 +137,14 @@ class Settings:
             ),
             runtime_log_backup_count=int(
                 os.environ.get("SPECT8_RUNTIME_LOG_BACKUP_COUNT", "5")
+            ),
+            historical_replay_database_path=Path(
+                os.environ.get(
+                    "SPECT8_HISTORICAL_REPLAY_DATABASE_PATH",
+                    repository_root
+                    / "var"
+                    / "spect8_historical_replay.sqlite3",
+                )
             ),
         )
         configured.validate()

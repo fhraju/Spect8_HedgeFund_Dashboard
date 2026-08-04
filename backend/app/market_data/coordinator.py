@@ -8,7 +8,8 @@ from ..engine.models import StrategyRequest
 from ..repository import SQLiteProjectionRepository
 from ..service import ProcessingOutcome, WalkingSkeletonService
 from .clock import Clock
-from .closed_bar import ClosedBarDetector
+from .closed_bar import DAILY_ATR_INPUT_HISTORY, ClosedBarDetector
+from .daily_aggregator import NewYorkDailyAggregator
 from .interfaces import MarketDataProvider
 from .models import (
     CanonicalInstrument,
@@ -58,6 +59,7 @@ class MarketDataCoordinator:
         self.registry = registry
         self._normalizer = normalizer
         self._detector = detector
+        self._daily_aggregator = NewYorkDailyAggregator()
         self._service = service
         self._repository = repository
         self._clock = clock
@@ -150,8 +152,34 @@ class MarketDataCoordinator:
             daily_bars, daily_issues = self._normalize_many(
                 history.daily_bars, instrument
             )
+            daily_source, daily_source_issues = self._normalize_many(
+                history.daily_source_bars, instrument
+            )
+            aggregation_issues: tuple[str, ...] = ()
+            if daily_source:
+                aggregation = self._daily_aggregator.aggregate(
+                    daily_source,
+                    as_of=history.evaluation_time,
+                )
+                daily_bars = tuple(
+                    bar
+                    for bar in aggregation.bars
+                    if bar.close_time <= trigger.close_time
+                )[-DAILY_ATR_INPUT_HISTORY:]
+                aggregation_issues = tuple(
+                    issue.code.value for issue in aggregation.issues
+                )
             issues = tuple(
-                sorted(set((*signal_issues, *daily_issues)))
+                sorted(
+                    set(
+                        (
+                            *signal_issues,
+                            *daily_issues,
+                            *daily_source_issues,
+                            *aggregation_issues,
+                        )
+                    )
+                )
             )
             validation = self._detector.validate_history(
                 signal_bars,

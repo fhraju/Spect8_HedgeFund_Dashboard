@@ -59,7 +59,7 @@ class WalkingSkeletonService:
 
     def process_request(self, request: StrategyRequest) -> ProcessingOutcome:
         evaluated = self.evaluate_request(request)
-        events = self._event_trace(evaluated)
+        events = self.events_for_projection(evaluated)
         created = self._repository.persist_projection(evaluated.status, events)
         return ProcessingOutcome(
             source_case_id=request.case_id,
@@ -159,6 +159,14 @@ class WalkingSkeletonService:
             status=status,
             evaluation=evaluation,
         )
+
+    @classmethod
+    def events_for_projection(
+        cls, evaluated: EvaluatedProjection
+    ) -> tuple[DomainEvent, ...]:
+        """Return the production event projection without persisting it."""
+
+        return cls._event_trace(evaluated)
 
     @staticmethod
     def _levels(candidate: CandidateResult) -> LevelsResult:

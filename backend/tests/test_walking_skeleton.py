@@ -248,6 +248,43 @@ def test_api_statuses_match_selected_frozen_expected_results(
         assert status["levels_results"] == [status["levels_result"]]
 
 
+def test_api_persists_and_exposes_equal_close_boundary_results(
+    tmp_path: Path,
+) -> None:
+    case_ids = (
+        "equal_close_filter_boundary_h1",
+        "equal_close_filter_boundary_h4",
+    )
+    boundary_settings = Settings(
+        repository_root=ROOT,
+        database_path=tmp_path / "equal-close-api.sqlite3",
+        internal_api_key=API_KEY,
+        selected_cases=case_ids,
+        auto_seed_synthetic=True,
+    )
+    application = create_app(boundary_settings)
+
+    with TestClient(application) as client:
+        response = client.get("/statuses", headers=HEADERS)
+        filtered_response = client.get("/filtered", headers=HEADERS)
+        persisted = application.state.repository.statuses()
+
+    assert response.status_code == 200
+    exposed = {item["source_case_id"]: item for item in response.json()["data"]}
+    assert exposed == {item["source_case_id"]: item for item in persisted}
+    assert set(exposed) == set(case_ids)
+    assert filtered_response.status_code == 200
+    assert filtered_response.json()["data"] == []
+    for item in exposed.values():
+        assert item["dashboard_state"] == "WATCHING"
+        assert item["filter_result"] == {
+            "buy_matched": False,
+            "sell_matched": False,
+            "daily_buy_level": 50.58,
+            "daily_sell_level": 100.42,
+        }
+
+
 def test_confirmed_both_projects_two_independent_results_and_one_trace(
     tmp_path: Path,
 ) -> None:

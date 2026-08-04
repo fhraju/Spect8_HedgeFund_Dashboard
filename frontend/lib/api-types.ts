@@ -140,3 +140,125 @@ export type SyntheticEnvelope<T> = {
   notice: string;
   data: T;
 };
+
+export type HistoricalReplayEnvelope<T> = {
+  synthetic: false;
+  source: "TWELVE_DATA_HISTORICAL_REPLAY";
+  notice: string;
+  data: T;
+};
+
+export type HistoricalReplayRun = {
+  run_id: string;
+  dataset_fingerprint: string | null;
+  requested_dataset_fingerprint: string | null;
+  provider: string;
+  instrument: string;
+  display_start: string;
+  display_end: string;
+  timeframes: Array<"H1" | "H4">;
+  context_timeframe: "D1";
+  strategy_version: string;
+  status:
+    | "PENDING"
+    | "RUNNING"
+    | "COMPLETED"
+    | "PARTIAL"
+    | "FAILED"
+    | "QUARANTINED";
+  progress: { total: number; completed: number; percent: number };
+  duplicate_evaluations: number;
+  quarantined_windows: number;
+  determinism_digest: string | null;
+  error: { code: string; detail: string } | null;
+  orders: 0;
+  fills: 0;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type HistoricalReplaySummary = {
+  run: HistoricalReplayRun;
+  dataset: {
+    fingerprint: string;
+    warmup_start: string;
+    requested_ranges: Record<
+      string,
+      { start_utc: string; end_utc_exclusive: string }
+    >;
+    returned_ranges: Record<
+      string,
+      { first_close_utc: string | null; last_close_utc: string | null }
+    >;
+    candle_counts: Record<
+      string,
+      {
+        received: number;
+        accepted: number;
+        duplicates: number;
+        malformed: number;
+        gaps: number;
+        warmup: number;
+        display: number;
+      }
+    >;
+  } | null;
+  evaluation_counts: {
+    total: number;
+    H1: number;
+    H4: number;
+    filter_pass: number;
+    filter_fail: number;
+    signal: number;
+    no_signal: number;
+  };
+  reason_counts: Record<string, number>;
+  event_count: number;
+  data_quality: Array<{
+    code: string;
+    timeframe: string;
+    start_utc: string | null;
+    end_utc: string | null;
+    detail: string;
+  }>;
+  execution: { enabled: false; orders: 0; fills: 0; detail: string };
+};
+
+export type HistoricalReplayEvaluation = {
+  id: number;
+  ordinal: number;
+  signal_close_utc: string;
+  replay_as_of_utc: string;
+  timeframe: "H1" | "H4";
+  filter_outcome: "PASS" | "FAIL";
+  signal_outcome: "SIGNAL" | "NO_SIGNAL";
+  dashboard_state: string;
+  d1_context_close_utc: string;
+  reason_codes: string[];
+  market_values: MarketValues;
+};
+
+export type HistoricalReplayEvaluationPage = {
+  items: HistoricalReplayEvaluation[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+};
+
+export type HistoricalReplayEvaluationDetail = HistoricalReplayEvaluation & {
+  status: Record<string, unknown>;
+  evaluation: Record<string, unknown>;
+  input: {
+    replay_as_of_utc: string;
+    signal_bars: Array<Record<string, unknown>>;
+    daily_bars: Array<Record<string, unknown>>;
+  };
+  events: Array<{
+    sequence: number;
+    event_type: string;
+    occurred_at: string;
+    payload: Record<string, unknown>;
+  }>;
+};

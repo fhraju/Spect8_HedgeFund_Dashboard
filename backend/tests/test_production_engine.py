@@ -15,6 +15,7 @@ from backend.app.engine.indicators import (
     simple_moving_average,
     wilder_atr,
 )
+from backend.app.engine.micro_daily_filter import evaluate_micro_daily_filter
 from backend.app.engine.models import InstrumentMetadata
 from backend.app.engine.position_sizing import calculate_position_size
 from backend.app.engine.spect8_signal import evaluate_spect8_signal
@@ -298,6 +299,62 @@ def test_developing_signal_bar_is_excluded_even_if_values_are_extreme() -> None:
     assert changed.bars.excluded_incomplete_count == 1
 
 
+@pytest.mark.parametrize(
+    "case_id", ("equal_close_filter_boundary_h1", "equal_close_filter_boundary_h4")
+)
+def test_completed_d1_closing_at_signal_close_is_included(case_id: str) -> None:
+    request = SyntheticCaseInputLoader(ROOT).load(case_id)
+    result = Spect8StrategyEvaluator().evaluate(request)
+
+    assert result.bars.daily_endpoint_close_time == result.bars.signal_bar_close_time
+    assert result.indicators is not None
+    assert result.classification is not None
+    assert result.indicators.atr_d1_wilder_5 == Decimal("11.6")
+    assert result.indicators.activation_buffer == Decimal("0.580")
+    assert result.indicators.daily_raw_low == Decimal("50")
+    assert result.indicators.daily_buy_level == Decimal("50.580")
+    assert result.indicators.daily_sell_level == Decimal("100.420")
+    assert result.classification.buy_filter_matched is False
+    assert result.classification.sell_filter_matched is False
+
+
+@pytest.mark.parametrize(
+    "case_id", ("equal_close_filter_boundary_h1", "equal_close_filter_boundary_h4")
+)
+def test_future_d1_is_excluded_and_forming_equal_close_d1_is_not_completed(
+    case_id: str,
+) -> None:
+    request = SyntheticCaseInputLoader(ROOT).load(case_id)
+    evaluator = Spect8StrategyEvaluator()
+    baseline = evaluator.evaluate(request)
+    equal_bar = request.daily_bars[-1]
+    future_bar = replace(
+        equal_bar,
+        open_time=equal_bar.close_time,
+        close_time=equal_bar.close_time + timedelta(days=1),
+        high=Decimal("999"),
+        low=Decimal("1"),
+    )
+    with_future = evaluator.evaluate(
+        replace(request, daily_bars=(*request.daily_bars, future_bar))
+    )
+    assert with_future.indicators == baseline.indicators
+    assert with_future.classification == baseline.classification
+
+    forming = evaluator.evaluate(
+        replace(
+            request,
+            daily_bars=(*request.daily_bars[:-1], replace(equal_bar, is_complete=False)),
+        )
+    )
+    assert forming.bars.daily_endpoint_close_time < forming.bars.signal_bar_close_time
+    assert forming.indicators is not None
+    assert forming.classification is not None
+    assert forming.indicators.atr_d1_wilder_5 == Decimal("2")
+    assert forming.indicators.daily_raw_low == Decimal("99")
+    assert forming.classification.buy_filter_matched is True
+
+
 def test_non_selected_timeframe_cannot_change_h1_result() -> None:
     loader = SyntheticCaseInputLoader(ROOT)
     request = loader.load("confirmed_buy_h1_03")
@@ -330,6 +387,94 @@ def test_filter_is_non_consuming_across_repeated_evaluations() -> None:
     assert first.classification is not None
     assert first.classification.buy_filter_matched is True
     assert first.classification.confirmed_buy is True
+
+
+def _direct_filter_bars(
+    timeframe: Timeframe,
+    *,
+    recent_low: Decimal,
+    recent_high: Decimal,
+) -> tuple[Bar, ...]:
+    step = timedelta(hours=1 if timeframe is Timeframe.H1 else 4)
+    opened = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return tuple(
+        Bar(
+            instrument_id="TEST",
+            timeframe=timeframe,
+            open_time=opened + index * step,
+            close_time=opened + (index + 1) * step,
+            open=Decimal("100"),
+            high=recent_high,
+            low=recent_low,
+            close=Decimal("100"),
+            provider="TEST",
+            is_complete=True,
+        )
+        for index in range(21)
+    )
+
+
+def _direct_filter_daily_bars() -> tuple[Bar, ...]:
+    opened = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    values = ((Decimal("90"), Decimal("109")), (Decimal("91"), Decimal("110")))
+    return tuple(
+        Bar(
+            instrument_id="TEST",
+            timeframe=Timeframe.D1,
+            open_time=opened + timedelta(days=index),
+            close_time=opened + timedelta(days=index + 1),
+            open=Decimal("100"),
+            high=high,
+            low=low,
+            close=Decimal("100"),
+            provider="TEST",
+            is_complete=True,
+        )
+        for index, (low, high) in enumerate(values)
+    )
+
+
+@pytest.mark.parametrize("timeframe", (Timeframe.H1, Timeframe.H4))
+def test_micro_daily_filter_buy_sell_pass_fail_equality_and_independence(
+    timeframe: Timeframe,
+) -> None:
+    daily = _direct_filter_daily_bars()
+
+    both_pass = evaluate_micro_daily_filter(
+        _direct_filter_bars(
+            timeframe, recent_low=Decimal("90"), recent_high=Decimal("110")
+        ),
+        daily,
+        Decimal("10"),
+    )
+    both_fail = evaluate_micro_daily_filter(
+        _direct_filter_bars(
+            timeframe, recent_low=Decimal("91"), recent_high=Decimal("109")
+        ),
+        daily,
+        Decimal("10"),
+    )
+    equality = evaluate_micro_daily_filter(
+        _direct_filter_bars(
+            timeframe,
+            recent_low=Decimal("90.5"),
+            recent_high=Decimal("109.5"),
+        ),
+        daily,
+        Decimal("10"),
+    )
+    buy_only = evaluate_micro_daily_filter(
+        _direct_filter_bars(
+            timeframe, recent_low=Decimal("90"), recent_high=Decimal("109")
+        ),
+        daily,
+        Decimal("10"),
+    )
+
+    assert (both_pass.buy.matched, both_pass.sell.matched) == (True, True)
+    assert (both_fail.buy.matched, both_fail.sell.matched) == (False, False)
+    assert (equality.buy.matched, equality.sell.matched) == (True, True)
+    assert (buy_only.buy.matched, buy_only.sell.matched) == (True, False)
 
 
 def test_out_of_order_stream_is_quarantined() -> None:

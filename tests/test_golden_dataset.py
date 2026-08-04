@@ -74,7 +74,7 @@ def test_manifest_schema_and_identity_contract() -> None:
     validator("manifest.schema.json").validate(MANIFEST)
     ids = [case["id"] for case in CASES]
     paths = [case["path"] for case in CASES]
-    assert len(CASES) == 55
+    assert len(CASES) == 59
     assert len(ids) == len(set(ids))
     assert len(paths) == len(set(paths))
     assert all(case["path"] == f"cases/{case['id']}" for case in CASES)
@@ -180,6 +180,8 @@ def test_required_coverage_categories_are_manifested() -> None:
         "missing_candle",
         "duplicate_candle",
         "missing_metadata",
+        "equal_close_d1_boundary",
+        "completed_as_of_close",
     }
     assert required <= coverage.keys()
 
@@ -271,6 +273,36 @@ def test_equality_boundaries_are_inclusive() -> None:
         else:
             assert indicators["recent_high_21"] == indicators["daily_sell_level"]
         assert result["classification"][f"confirmed_{direction}"]
+
+
+def test_equal_close_d1_boundary_is_frozen_for_h1_and_h4() -> None:
+    boundary_cases = [
+        case for case in CASES if "equal_close_d1_boundary" in case["coverage"]
+    ]
+    assert {case["timeframe"] for case in boundary_cases} == {"H1", "H4"}
+    assert len(boundary_cases) == 4
+    for case in boundary_cases:
+        result = expected(case)
+        assert result["bars"]["daily_endpoint_close_time"] == result["bars"][
+            "signal_bar_close_time"
+        ]
+        assert result["indicators"]["atr_d1_wilder_5"] == 11.6
+        assert result["indicators"]["activation_buffer"] == 0.58
+        assert result["indicators"]["daily_raw_low"] == 50.0
+        assert result["indicators"]["daily_buy_level"] == 50.58
+        assert result["indicators"]["daily_sell_level"] == 100.42
+        assert result["classification"]["buy_filter_matched"] is False
+        assert result["classification"]["sell_filter_matched"] is False
+
+    new_york_cases = [
+        case for case in boundary_cases if "new_york_close_d1" in case["coverage"]
+    ]
+    assert len(new_york_cases) == 2
+    assert all(
+        expected(case)["bars"]["daily_endpoint_close_time"]
+        == "2026-07-17T21:00:00Z"
+        for case in new_york_cases
+    )
 
 
 def test_simultaneous_direction_preserves_both_candidates() -> None:
@@ -447,6 +479,8 @@ def test_frozen_checksums_are_complete_and_correct() -> None:
     required = {
         "Spect8_Micro_Daily_v1_0_FROZEN.md",
         "Spect8_Micro_Daily_v1_0_1_FROZEN.md",
+        "Spect8_Micro_Daily_v1_0_2_FROZEN.md",
+        "Spect8_Micro_Daily_v1_0_3_FROZEN.md",
         "golden/manifest.json",
     }
     for case in CASES:

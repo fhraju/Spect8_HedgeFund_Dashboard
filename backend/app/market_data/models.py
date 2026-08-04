@@ -131,6 +131,7 @@ class ProviderHistory:
     evaluation_time: datetime
     signal_bars: tuple[RawProviderCandle, ...]
     daily_bars: tuple[RawProviderCandle, ...]
+    daily_source_bars: tuple[RawProviderCandle, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

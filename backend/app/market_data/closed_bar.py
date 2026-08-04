@@ -5,6 +5,7 @@ from typing import Sequence
 
 from ..domain import Bar, Timeframe
 from .models import HistoryValidation
+from .session_boundaries import is_expected_forex_weekend_gap
 
 TIMEFRAME_STEP = {
     Timeframe.H1: timedelta(hours=1),
@@ -13,6 +14,7 @@ TIMEFRAME_STEP = {
 }
 MIN_SIGNAL_HISTORY = 30
 MIN_DAILY_HISTORY = 6
+DAILY_ATR_INPUT_HISTORY = 10
 
 
 class ClosedBarDetector:
@@ -59,7 +61,7 @@ class ClosedBarDetector:
             issues.append("MISSING_TRIGGER_CANDLE")
         if any(bar.close_time > trigger_close_time for bar in signal_bars):
             issues.append("LOOKAHEAD_CANDLE")
-        if any(bar.close_time >= trigger_close_time for bar in daily_bars):
+        if any(bar.close_time > trigger_close_time for bar in daily_bars):
             issues.append("LOOKAHEAD_CANDLE")
         if any(not bar.is_complete for bar in (*signal_bars, *daily_bars)):
             issues.append("INCOMPLETE_CANDLE")
@@ -99,6 +101,7 @@ class ClosedBarDetector:
         step = TIMEFRAME_STEP[timeframe]
         if any(
             current - previous != step
+            and not is_expected_forex_weekend_gap(previous + step, current)
             for previous, current in zip(opens, opens[1:])
         ):
             issues.append(f"MISSING_{label}_CANDLE")

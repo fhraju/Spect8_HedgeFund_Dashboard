@@ -24,6 +24,8 @@ def main() -> int:
     paths = [
         ROOT / "Spect8_Micro_Daily_v1_0_FROZEN.md",
         ROOT / "Spect8_Micro_Daily_v1_0_1_FROZEN.md",
+        ROOT / "Spect8_Micro_Daily_v1_0_2_FROZEN.md",
+        ROOT / "Spect8_Micro_Daily_v1_0_3_FROZEN.md",
         manifest_path,
     ]
     for case in manifest["cases"]:

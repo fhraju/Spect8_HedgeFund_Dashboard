@@ -1,4 +1,4 @@
-"""Independent production implementation of SPECT8_MICRO_DAILY_V1_0."""
+"""SPECT8_MICRO_DAILY_V1_0 calculations under frozen v1.0.3 boundaries."""
 
 from .models import (
     CandidateResult,

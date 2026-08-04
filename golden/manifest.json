@@ -1,5 +1,5 @@
 {
-  "authority": "../Spect8_Micro_Daily_v1_0_1_FROZEN.md",
+  "authority": "../Spect8_Micro_Daily_v1_0_3_FROZEN.md",
   "cases": [
     {
       "coverage": [
@@ -500,6 +500,56 @@
     },
     {
       "coverage": [
+        "equal_close_d1_boundary",
+        "completed_as_of_close",
+        "h1"
+      ],
+      "description": "H1 completed signal includes the D1 candle closing at the identical UTC timestamp.",
+      "evaluation_time": "2026-01-11T00:00:01Z",
+      "id": "equal_close_filter_boundary_h1",
+      "path": "cases/equal_close_filter_boundary_h1",
+      "timeframe": "H1"
+    },
+    {
+      "coverage": [
+        "new_york_close_d1",
+        "equal_close_d1_boundary",
+        "completed_as_of_close",
+        "h1"
+      ],
+      "description": "H1 includes the reconstructed 17:00 New York D1 closing at the identical summer UTC timestamp.",
+      "evaluation_time": "2026-07-17T21:00:01Z",
+      "id": "new_york_close_filter_boundary_h1",
+      "path": "cases/new_york_close_filter_boundary_h1",
+      "timeframe": "H1"
+    },
+    {
+      "coverage": [
+        "equal_close_d1_boundary",
+        "completed_as_of_close",
+        "h4"
+      ],
+      "description": "H4 completed signal includes the D1 candle closing at the identical UTC timestamp.",
+      "evaluation_time": "2026-01-11T00:00:01Z",
+      "id": "equal_close_filter_boundary_h4",
+      "path": "cases/equal_close_filter_boundary_h4",
+      "timeframe": "H4"
+    },
+    {
+      "coverage": [
+        "new_york_close_d1",
+        "equal_close_d1_boundary",
+        "completed_as_of_close",
+        "h4"
+      ],
+      "description": "H4 includes the reconstructed 17:00 New York D1 closing at the identical summer UTC timestamp.",
+      "evaluation_time": "2026-07-17T21:00:01Z",
+      "id": "new_york_close_filter_boundary_h4",
+      "path": "cases/new_york_close_filter_boundary_h4",
+      "timeframe": "H4"
+    },
+    {
+      "coverage": [
         "technical_signal_without_filter",
         "buy",
         "h1"
@@ -661,7 +711,7 @@
       "timeframe": "H1"
     }
   ],
-  "dataset_version": "1.0.1",
+  "dataset_version": "1.0.3",
   "description": "Deterministic synthetic golden cases for the separate client Market Scanner. These are test fixtures, not production strategy code.",
   "strategy_id": "SPECT8_MICRO_DAILY_V1_0"
 }

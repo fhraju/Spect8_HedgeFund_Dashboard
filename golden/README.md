@@ -1,8 +1,9 @@
 # Spect8 Micro Daily golden dataset
 
 This directory is the synthetic golden-test foundation for
-`SPECT8_MICRO_DAILY_V1_0` plus the frozen v1.0.1 simultaneous-direction
-clarification. It is deliberately separate from any production strategy
+`SPECT8_MICRO_DAILY_V1_0` under the active frozen v1.0.3 specification, which
+includes the earlier simultaneous-direction and equal-close clarifications and
+the New York-close D1 authority. It is deliberately separate from any production strategy
 engine, API, frontend, database, or market-data integration.
 
 ## Layout
@@ -19,8 +20,9 @@ engine, API, frontend, database, or market-data integration.
 Each CSV candle row follows `candle.schema.json` after CSV scalar coercion. The
 explicit `is_complete` field records provider completion. The reference
 calculator additionally requires the candle close to be strictly earlier than
-the evaluation boundary. D1 bars must close strictly before the selected signal
-bar closes.
+the evaluation boundary. A completed D1 bar is eligible when its close is at or
+before the selected signal close; incomplete D1 bars and closes after the
+signal remain excluded.
 
 ## ATR convention
 

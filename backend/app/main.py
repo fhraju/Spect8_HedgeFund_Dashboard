@@ -5,12 +5,37 @@ import hmac
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 
 from .config import Settings
 from .dashboard_api import DashboardEnvelope, dashboard_snapshot
 from .domain import primitive
 from .engine.strategy import Spect8StrategyEvaluator
+from .historical_replay import (
+    HistoricalReplayRepository,
+    HistoricalReplayService,
+    ReplayConflictError,
+    ReplayNotFoundError,
+    TwelveDataHistoricalSource,
+)
+from .historical_replay_api import (
+    HistoricalReplayEnvelope,
+    ReplayCreateRequest,
+    ReplayDeleteView,
+    ReplayEvaluationDetail,
+    ReplayEvaluationPage,
+    ReplayRunView,
+    ReplayRunsView,
+    ReplaySummaryView,
+)
 from .market_data.clock import FixedClock, SystemClock
 from .market_data.closed_bar import ClosedBarDetector
 from .market_data.coordinator import MarketDataCoordinator
@@ -28,7 +53,10 @@ SYNTHETIC_NOTICE = (
 )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    historical_replay_service: HistoricalReplayService | None = None,
+) -> FastAPI:
     configured = settings or Settings.from_environment()
     configured.validate()
     repository = SQLiteProjectionRepository(configured.database_path)
@@ -79,10 +107,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         safety_delay_seconds=configured.market_data_safety_delay_seconds,
         logger=runtime_logger,
     )
+    replay_database_path = (
+        configured.historical_replay_database_path
+        or configured.repository_root
+        / "var"
+        / "spect8_historical_replay.sqlite3"
+    )
+    replay_repository = HistoricalReplayRepository(
+        replay_database_path, configured.database_path
+    )
+    replay_service = historical_replay_service or HistoricalReplayService(
+        replay_repository,
+        (
+            TwelveDataHistoricalSource(
+                TwelveDataProvider(
+                    configured.twelve_data_api_key or "",
+                    instrument=configured.instrument,
+                    timeframes=configured.timeframes,
+                )
+            )
+            if isinstance(provider, TwelveDataProvider)
+            else None
+        ),
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         repository.initialize()
+        replay_service.repository.initialize()
         runtime_task: asyncio.Task[None] | None = None
         if configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
@@ -118,6 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.clock = clock
     app.state.coordinator = coordinator
     app.state.market_data_runtime = runtime
+    app.state.historical_replay_service = replay_service
 
     def require_internal_key(
         x_spect8_internal_key: Annotated[str | None, Header()] = None,
@@ -259,6 +312,146 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return envelope(
             dashboard_snapshot(repository, registry.all()[0], clock.now())
         )
+
+    def historical_envelope(data: Any) -> dict[str, Any]:
+        return {
+            "synthetic": False,
+            "source": "TWELVE_DATA_HISTORICAL_REPLAY",
+            "notice": "REPLAY - NOT LIVE. Functional validation only.",
+            "data": data,
+        }
+
+    def replay_not_found() -> HTTPException:
+        return HTTPException(status_code=404, detail="Replay record not found.")
+
+    @app.post(
+        "/historical-replays",
+        dependencies=[protected],
+        status_code=202,
+        response_model=HistoricalReplayEnvelope[ReplayRunView],
+    )
+    def create_historical_replay(
+        payload: ReplayCreateRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, Any]:
+        try:
+            config = payload.to_config()
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        if (
+            replay_service.source is None
+            and config.requested_dataset_fingerprint is None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Historical provider source is unavailable.",
+            )
+        try:
+            run = replay_service.create_run(config)
+        except ReplayConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        background_tasks.add_task(replay_service.execute, run["run_id"])
+        return historical_envelope(run)
+
+    @app.get(
+        "/historical-replays",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplayRunsView],
+    )
+    def list_historical_replays(
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, Any]:
+        return historical_envelope(
+            {"items": replay_service.repository.list_runs(limit)}
+        )
+
+    @app.get(
+        "/historical-replays/{run_id}",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplayRunView],
+    )
+    def historical_replay_status(run_id: str) -> dict[str, Any]:
+        try:
+            value = replay_service.repository.get_run(run_id)
+        except ReplayNotFoundError:
+            raise replay_not_found() from None
+        return historical_envelope(value)
+
+    @app.get(
+        "/historical-replays/{run_id}/summary",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplaySummaryView],
+    )
+    def historical_replay_summary(run_id: str) -> dict[str, Any]:
+        try:
+            value = replay_service.repository.summary(run_id)
+        except ReplayNotFoundError:
+            raise replay_not_found() from None
+        return historical_envelope(value)
+
+    @app.get(
+        "/historical-replays/{run_id}/evaluations",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplayEvaluationPage],
+    )
+    def historical_replay_evaluations(
+        run_id: str,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=50, ge=1, le=200),
+        timeframe: str | None = Query(default=None, pattern="^(H1|H4)$"),
+        outcome: str | None = Query(
+            default=None, pattern="^(SIGNAL|NO_SIGNAL)$"
+        ),
+        filter_outcome: str | None = Query(
+            default=None, pattern="^(PASS|FAIL)$"
+        ),
+        reason_code: str | None = Query(
+            default=None, min_length=1, max_length=80, pattern="^[A-Z0-9_]+$"
+        ),
+    ) -> dict[str, Any]:
+        try:
+            value = replay_service.repository.evaluations(
+                run_id,
+                page=page,
+                page_size=page_size,
+                timeframe=timeframe,
+                outcome=outcome,
+                filter_outcome=filter_outcome,
+                reason_code=reason_code,
+            )
+        except ReplayNotFoundError:
+            raise replay_not_found() from None
+        return historical_envelope(value)
+
+    @app.get(
+        "/historical-replays/{run_id}/evaluations/{evaluation_id}",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplayEvaluationDetail],
+    )
+    def historical_replay_evaluation(
+        run_id: str, evaluation_id: int
+    ) -> dict[str, Any]:
+        try:
+            value = replay_service.repository.evaluation(
+                run_id, evaluation_id
+            )
+        except ReplayNotFoundError:
+            raise replay_not_found() from None
+        return historical_envelope(value)
+
+    @app.delete(
+        "/historical-replays/{run_id}",
+        dependencies=[protected],
+        response_model=HistoricalReplayEnvelope[ReplayDeleteView],
+    )
+    def delete_historical_replay(run_id: str) -> dict[str, Any]:
+        try:
+            deleted = replay_service.repository.delete_run(run_id)
+        except ReplayConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        if not deleted:
+            raise replay_not_found()
+        return historical_envelope({"deleted": True, "run_id": run_id})
 
     @app.post("/synthetic/replay", dependencies=[protected])
     def replay() -> dict[str, Any]:

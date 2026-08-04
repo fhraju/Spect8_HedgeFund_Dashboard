@@ -77,8 +77,8 @@ The selected cases are:
 - `confirmed_sell_h4_01`, evaluated at `2026-02-07T20:00:01Z`.
 
 At the H1 evaluation time, the later H4 trigger is not visible. Signal history
-is restricted to close times at or before its trigger, while D1 history is
-strictly earlier than the signal trigger. At the H4 evaluation time, its H4
+is restricted to close times at or before its trigger, while completed D1
+history is restricted to close times at or before the signal trigger. At the H4 evaluation time, its H4
 stream is evaluated independently. Incomplete signal or D1 rows are excluded
 before normalization and cannot become a `BAR_CLOSED` event.
 

@@ -103,7 +103,7 @@ For at least three H1 closes, one H4 close, and D1 if observed:
 3. Compare the dashboard evaluation to `instrument_status.status_json`.
 4. Confirm the evaluated signal close equals the newly completed close.
 5. Confirm no candle with close after the trigger entered the evaluation.
-6. Confirm D1 context close is strictly earlier than the trigger.
+6. Confirm completed D1 context close is at or before the trigger and never after it.
 7. Confirm exactly one new applicable evaluation and expected event trace.
 8. Confirm H1/H4 independence and zero orders/fills.
 

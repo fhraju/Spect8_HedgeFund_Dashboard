@@ -1,5 +1,10 @@
 # Phase 3B Client Acceptance Candidate
 
+> Historical checklist: the D1-at-00:00-UTC item below records the original
+> Phase 3B candidate and is superseded by the active v1.0.3 rule. Current D1
+> candles are reconstructed from H1 and close at 17:00 America/New_York
+> (21:00 UTC in summer, 22:00 UTC in winter).
+
 Client approval has **not** yet been received. This checklist is the review
 candidate for the EUR/USD-only read-only dashboard.
 

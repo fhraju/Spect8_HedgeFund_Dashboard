@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Mapping, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlencode
 
 from ..domain import Timeframe
@@ -29,14 +30,15 @@ from .models import (
     ProviderIdentity,
     RawProviderCandle,
 )
+from .session_boundaries import is_expected_forex_weekend_gap
 
 PROVIDER_ID = "TWELVE_DATA"
 PROVIDER_SYMBOL = "EUR/USD"
 SUPPORTED_TIMEFRAMES = (Timeframe.H1, Timeframe.H4, Timeframe.D1)
+DAILY_AGGREGATION_H1_BARS = (24 * 21) + 1
 INTERVALS = {
     Timeframe.H1: "1h",
     Timeframe.H4: "4h",
-    Timeframe.D1: "1day",
 }
 MAX_CATCHUP_BARS = 168
 
@@ -204,7 +206,7 @@ class TwelveDataProvider:
             profit_currency="USD",
             session_timezone="UTC",
             candle_boundary_convention=(
-                "Twelve Data forex UTC open; close equals open plus interval"
+                "Twelve Data intraday UTC; D1 aggregated at 17:00 America/New_York"
             ),
             available_timeframes=SUPPORTED_TIMEFRAMES,
             strategy_id=STRATEGY_ID,
@@ -279,6 +281,10 @@ class TwelveDataProvider:
 
         if timeframe not in SUPPORTED_TIMEFRAMES:
             raise ValueError("unsupported Twelve Data timeframe")
+        if timeframe is Timeframe.D1:
+            raise ValueError(
+                "provider-native D1 smoke is disabled; validate reconstructed D1"
+            )
         checked_at = self._aware_utc(as_of)
         required = (
             MIN_DAILY_HISTORY
@@ -286,6 +292,52 @@ class TwelveDataProvider:
             else MIN_SIGNAL_HISTORY
         )
         return self._fetch_series(timeframe, checked_at, required + 1)
+
+    def fetch_historical_bars(
+        self,
+        timeframe: Timeframe,
+        start_close: datetime,
+        end_close: datetime,
+    ) -> tuple[RawProviderCandle, ...]:
+        """Fetch one immutable, date-bounded completed historical series.
+
+        The bounds apply to derived UTC close times.  Authentication remains in
+        the request header, and no authenticated URL is constructed or exposed.
+        """
+
+        if timeframe is Timeframe.D1:
+            raise ValueError(
+                "provider-native D1 is disabled; aggregate canonical D1 from H1"
+            )
+        if timeframe not in (Timeframe.H1, Timeframe.H4):
+            raise ValueError("unsupported Twelve Data timeframe")
+        start = self._aware_utc(start_close)
+        end = self._aware_utc(end_close)
+        if start >= end:
+            raise ValueError("historical start must be before end")
+        step = TIMEFRAME_STEP[timeframe]
+        expected = int((end - start) / step) + 2
+        if expected > 5_000:
+            raise ValueError("historical request exceeds 5000 candles")
+        payload = self._request_json(
+            {
+                "symbol": PROVIDER_SYMBOL,
+                "interval": INTERVALS[timeframe],
+                "start_date": self._provider_datetime(start - step),
+                "end_date": self._provider_datetime(end),
+                "outputsize": str(expected),
+                "order": "desc",
+                "timezone": "UTC",
+                "format": "JSON",
+            },
+            end,
+        )
+        candles = self._parse_payload(payload, timeframe, end)
+        return tuple(
+            candle
+            for candle in candles
+            if start <= self._parse_utc(candle.raw_close_time) < end
+        )
 
     def fetch_completed_bars(
         self,
@@ -296,10 +348,16 @@ class TwelveDataProvider:
         for timeframe in (Timeframe.H1, Timeframe.H4):
             if not self._needs_refresh(timeframe, checked_at):
                 continue
+            outputsize = MIN_SIGNAL_HISTORY + self._max_catchup_bars
+            if timeframe is Timeframe.H1:
+                outputsize = max(
+                    outputsize,
+                    DAILY_AGGREGATION_H1_BARS + self._max_catchup_bars,
+                )
             candles = self._fetch_series(
                 timeframe,
                 checked_at,
-                MIN_SIGNAL_HISTORY + self._max_catchup_bars,
+                outputsize,
             )
             if not candles:
                 continue
@@ -365,15 +423,16 @@ class TwelveDataProvider:
             )
             if self._parse_utc(candle.raw_close_time) <= trigger_close
         )[-MIN_SIGNAL_HISTORY:]
-        daily = tuple(
+        daily: tuple[RawProviderCandle, ...] = ()
+        daily_source = tuple(
             candle
             for candle in self._fetch_series(
-                Timeframe.D1,
+                Timeframe.H1,
                 checked_at,
-                MIN_DAILY_HISTORY + 1,
+                DAILY_AGGREGATION_H1_BARS + self._max_catchup_bars,
             )
-            if self._parse_utc(candle.raw_close_time) < trigger_close
-        )[-MIN_DAILY_HISTORY:]
+            if self._parse_utc(candle.raw_close_time) <= trigger_close
+        )[-DAILY_AGGREGATION_H1_BARS:]
         return ProviderHistory(
             source_id=closed_bar.source_id,
             instrument_id=PROVIDER_SYMBOL,
@@ -381,6 +440,7 @@ class TwelveDataProvider:
             evaluation_time=checked_at,
             signal_bars=signal,
             daily_bars=daily,
+            daily_source_bars=daily_source,
         )
 
     def health(self, as_of: datetime) -> ProviderHealth:
@@ -416,6 +476,10 @@ class TwelveDataProvider:
         as_of: datetime,
         outputsize: int,
     ) -> tuple[RawProviderCandle, ...]:
+        if timeframe is Timeframe.D1:
+            raise ValueError(
+                "provider-native D1 is disabled; aggregate canonical D1 from H1"
+            )
         cache_key = (timeframe, as_of, outputsize)
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -424,6 +488,7 @@ class TwelveDataProvider:
         latest_series = self._latest_series.get(timeframe)
         if (
             latest_series is not None
+            and len(latest_series) >= outputsize
             and (
                 self._last_fetch_as_of.get(timeframe) == as_of
                 or not self._needs_refresh(timeframe, as_of)
@@ -445,23 +510,34 @@ class TwelveDataProvider:
         )
         candles = self._parse_payload(payload, timeframe, as_of)
         previous = self._latest_series.get(timeframe)
-        self._cache[cache_key] = candles
-        self._latest_series[timeframe] = candles
+        if previous:
+            merged = {
+                candle.raw_close_time: candle
+                for candle in (*previous, *candles)
+            }
+            retained = tuple(
+                sorted(
+                    merged.values(),
+                    key=lambda candle: self._parse_utc(
+                        candle.raw_close_time
+                    ),
+                )
+            )[-max(len(previous), outputsize) :]
+        else:
+            retained = candles
+        result = retained[-outputsize:]
+        self._cache[cache_key] = result
+        self._latest_series[timeframe] = retained
         self._last_fetch_as_of[timeframe] = as_of
         while len(self._cache) > 12:
             self._cache.pop(next(iter(self._cache)))
-        if candles:
-            latest = self._parse_utc(candles[-1].raw_close_time)
+        if result:
+            latest = self._parse_utc(result[-1].raw_close_time)
             previous_latest = (
                 self._parse_utc(previous[-1].raw_close_time)
                 if previous
                 else None
             )
-            if (
-                timeframe is Timeframe.D1
-                and (previous_latest is None or latest > previous_latest)
-            ):
-                self._completed_discoveries[timeframe.value] += 1
             if (
                 self._latest_completed_close is None
                 or latest > self._latest_completed_close
@@ -474,7 +550,7 @@ class TwelveDataProvider:
         else:
             self._state = HealthState.DATA_UNAVAILABLE
             self._detail = "Twelve Data returned no completed candles."
-        return candles
+        return result
 
     def _request_json(
         self,
@@ -641,6 +717,10 @@ class TwelveDataProvider:
             or not isinstance(values, list)
         ):
             self._raise_data_error(self._malformed_error())
+        try:
+            self._validate_exchange_timezone(meta)
+        except ValueError:
+            self._raise_data_error(self._malformed_error())
         if not values:
             self._diagnostics[timeframe] = ProviderDiagnostics()
             return ()
@@ -680,6 +760,13 @@ class TwelveDataProvider:
         gap_count = int(
             any(
                 current - previous != step
+                and not (
+                    timeframe in (Timeframe.H1, Timeframe.H4)
+                    and is_expected_forex_weekend_gap(
+                        previous + step,
+                        current,
+                    )
+                )
                 for previous, current in zip(opens, opens[1:])
             )
         )
@@ -732,6 +819,20 @@ class TwelveDataProvider:
             out_of_order_count=out_of_order_count,
         )
         return tuple(candles)
+
+    @staticmethod
+    def _validate_exchange_timezone(meta: Mapping[str, Any]) -> None:
+        value = meta.get("exchange_timezone")
+        if value is None:
+            return
+        if not isinstance(value, str) or not value:
+            raise ValueError("invalid provider exchange timezone metadata")
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as error:
+            raise ValueError(
+                "invalid provider exchange timezone metadata"
+            ) from error
 
     @staticmethod
     def _validate_prices(value: Mapping[str, Any]) -> None:
@@ -815,8 +916,8 @@ class TwelveDataProvider:
         if timeframe is Timeframe.H1:
             return checked_at.replace(minute=0, second=0, microsecond=0)
         if timeframe is Timeframe.D1:
-            return checked_at.replace(
-                hour=0, minute=0, second=0, microsecond=0
+            raise ValueError(
+                "provider-native D1 is disabled; aggregate canonical D1 from H1"
             )
         current = checked_at.replace(minute=0, second=0, microsecond=0)
         while current.hour not in {1, 5, 9, 13, 17, 21}:
@@ -865,3 +966,7 @@ class TwelveDataProvider:
     @staticmethod
     def _iso_utc(value: datetime) -> str:
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _provider_datetime(value: datetime) -> str:
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

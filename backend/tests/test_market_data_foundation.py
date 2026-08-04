@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
-from backend.app.domain import EventType, Timeframe
+from backend.app.domain import Bar, EventType, Timeframe
 from backend.app.engine.strategy import Spect8StrategyEvaluator
 from backend.app.main import create_app
 from backend.app.market_data.clock import FixedClock
@@ -98,6 +98,57 @@ def _raw(
     }
     values.update(overrides)
     return RawProviderCandle(**values)  # type: ignore[arg-type]
+
+
+def _completed_bars(
+    timeframe: Timeframe,
+    count: int,
+    terminal_close: datetime,
+) -> tuple[Bar, ...]:
+    step = {
+        Timeframe.H1: timedelta(hours=1),
+        Timeframe.H4: timedelta(hours=4),
+        Timeframe.D1: timedelta(days=1),
+    }[timeframe]
+    first_open = terminal_close - count * step
+    return tuple(
+        Bar(
+            instrument_id="TEST",
+            timeframe=timeframe,
+            open_time=first_open + index * step,
+            close_time=first_open + (index + 1) * step,
+            open=Decimal("100"),
+            high=Decimal("101"),
+            low=Decimal("99"),
+            close=Decimal("100"),
+            provider="TEST",
+            is_complete=True,
+        )
+        for index in range(count)
+    )
+
+
+@pytest.mark.parametrize("timeframe", (Timeframe.H1, Timeframe.H4))
+def test_closed_bar_detector_accepts_complete_equal_close_d1_only(
+    timeframe: Timeframe,
+) -> None:
+    trigger_close = datetime(2026, 1, 11, tzinfo=timezone.utc)
+    signal = _completed_bars(timeframe, 30, trigger_close)
+    daily = _completed_bars(Timeframe.D1, 6, trigger_close)
+    detector = ClosedBarDetector()
+
+    accepted = detector.validate_history(signal, daily, timeframe, trigger_close)
+    assert accepted.issues == ()
+
+    future = _completed_bars(Timeframe.D1, 7, trigger_close + timedelta(days=1))
+    future_result = detector.validate_history(signal, future, timeframe, trigger_close)
+    assert "LOOKAHEAD_CANDLE" in future_result.issues
+
+    forming_equal = (*daily[:-1], replace(daily[-1], is_complete=False))
+    forming_result = detector.validate_history(
+        signal, forming_equal, timeframe, trigger_close
+    )
+    assert "INCOMPLETE_CANDLE" in forming_result.issues
 
 
 def test_provider_contract_and_registry_are_provider_neutral() -> None:
@@ -293,9 +344,38 @@ def test_replay_prevents_d1_and_cross_timeframe_lookahead() -> None:
         datetime.fromisoformat(
             bar.raw_close_time.replace("Z", "+00:00")
         )
-        < trigger_close
+        <= trigger_close
         for bar in history.daily_bars
     )
+
+
+def test_equal_close_boundary_replay_projects_exact_h1_h4_statuses(
+    tmp_path: Path,
+) -> None:
+    case_ids = (
+        "equal_close_filter_boundary_h1",
+        "equal_close_filter_boundary_h4",
+    )
+    coordinator, _, _, repository = _coordinator(
+        tmp_path / "equal-close.sqlite3", case_ids
+    )
+
+    poll = coordinator.poll_once()
+
+    assert poll.provider_health.state is HealthState.HEALTHY
+    assert len(poll.outcomes) == 2
+    statuses = {status["source_case_id"]: status for status in repository.statuses()}
+    assert set(statuses) == set(case_ids)
+    for case_id, timeframe in zip(case_ids, ("H1", "H4"), strict=True):
+        status = statuses[case_id]
+        assert status["timeframe"] == timeframe
+        assert status["dashboard_state"] == "WATCHING"
+        assert status["filter_result"] == {
+            "buy_matched": False,
+            "sell_matched": False,
+            "daily_buy_level": 50.58,
+            "daily_sell_level": 100.42,
+        }
 
 
 @pytest.mark.parametrize(

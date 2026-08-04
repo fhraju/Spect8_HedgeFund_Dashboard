@@ -1,5 +1,10 @@
 # Phase 3A — EUR/USD Read-Only Dashboard Vertical Slice
 
+> Historical phase record: provider-native midnight-UTC D1 statements below
+> describe the Phase 3A baseline. They are not current runtime authority. The
+> active v1.0.3 runtime reconstructs D1 OHLC from H1 at the DST-aware 17:00
+> America/New_York close.
+
 ## Scope and immutable boundaries
 
 Phase 3A connects only:
@@ -16,8 +21,9 @@ Twelve Data EUR/USD H1/H4/D1
 
 It adds no strategy rule, candle aggregation, instrument, provider, execution,
 order, fill, backtest, optimizer, alert, or deployment path. H1 and H4 are
-evaluated independently. D1 is context only and remains strictly earlier than
-the signal trigger.
+evaluated independently. D1 is context only; under the active v1.0.2 boundary,
+a completed D1 close at the signal trigger is included and future closes are
+excluded.
 
 ## Verified baseline
 

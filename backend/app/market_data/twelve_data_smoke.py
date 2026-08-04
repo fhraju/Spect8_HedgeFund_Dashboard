@@ -6,13 +6,13 @@ from datetime import datetime, timezone
 from ..domain import Timeframe
 from .models import MarketDataProviderError
 from .normalizer import CandleNormalizer
-from .twelve_data_provider import SUPPORTED_TIMEFRAMES, TwelveDataProvider
+from .twelve_data_provider import TwelveDataProvider
 
 REQUIRED_HISTORY = {
     Timeframe.H1: 30,
     Timeframe.H4: 30,
-    Timeframe.D1: 6,
 }
+SMOKE_TIMEFRAMES = (Timeframe.H1, Timeframe.H4)
 
 
 def _iso(value: datetime) -> str:
@@ -30,7 +30,7 @@ def main() -> int:
     normalizer = CandleNormalizer()
     as_of = datetime.now(timezone.utc)
     try:
-        for timeframe in SUPPORTED_TIMEFRAMES:
+        for timeframe in SMOKE_TIMEFRAMES:
             raw = provider.fetch_smoke_bars(timeframe, as_of)
             canonical = []
             for candle in raw:

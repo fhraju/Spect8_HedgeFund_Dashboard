@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Protocol, Sequence
 
 from ..domain import Bar, Direction, Timeframe
+from ..market_data.session_boundaries import is_expected_forex_weekend_gap
 from .indicators import simple_moving_average, wilder_atr
 from .levels import calculate_candidate_levels, calculate_level_distances
 from .micro_daily_filter import evaluate_micro_daily_filter
@@ -18,6 +19,7 @@ from .models import (
 from .spect8_signal import evaluate_spect8_signal
 
 STRATEGY_ID = "SPECT8_MICRO_DAILY_V1_0"
+SPECIFICATION_ID = "SPECT8_MICRO_DAILY_V1_0_3"
 TIMEFRAME_STEP = {
     Timeframe.H1: timedelta(hours=1),
     Timeframe.H4: timedelta(hours=4),
@@ -62,6 +64,10 @@ def _missing_issue(
     step = TIMEFRAME_STEP[timeframe]
     if any(
         current.open_time - previous.open_time != step
+        and not is_expected_forex_weekend_gap(
+            previous.open_time + step,
+            current.open_time,
+        )
         for previous, current in zip(bars, bars[1:])
     ):
         return [issue]
@@ -140,7 +146,7 @@ class Spect8StrategyEvaluator:
             completed_daily = [
                 bar
                 for bar in selected_daily
-                if bar.is_complete and bar.close_time < signal_close
+                if bar.is_complete and bar.close_time <= signal_close
             ]
         issues.extend(
             _missing_issue(

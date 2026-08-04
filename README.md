@@ -1,7 +1,8 @@
 # Spect8 HedgeFund Dashboard
 
 Protected read-only Market Scanner for the frozen
-`SPECT8_MICRO_DAILY_V1_0` specification.
+`SPECT8_MICRO_DAILY_V1_0` calculation strategy under the active frozen
+`SPECT8_MICRO_DAILY_V1_0_3` specification.
 
 Phase 3B hardens the Phase 3A EUR/USD vertical slice for client UAT and
 sustained private observation. It adds single-runtime ownership,
@@ -9,10 +10,18 @@ boundary-aware polling/catch-up, request accounting, sanitized rotating logs,
 runtime observation reports, and client/runbook checklists. H1 and H4 remain
 independent signal timeframes and D1 remains context only. Golden expected
 results remain a test-only oracle. The scanner contains no trading,
-backtesting, optimization, WebSockets, or multi-instrument expansion.
+profitability backtesting, optimization, WebSockets, or multi-instrument
+expansion. The isolated Historical Replay page validates scanner/dashboard
+function over bounded history without contaminating live state.
 
 The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
 SELL confirmations and preserves both directional calculations independently.
+The frozen v1.0.2 boundary clarification includes a completed D1 candle when
+its close equals the evaluated H1/H4 signal close; incomplete and future D1
+candles remain excluded.
+The frozen v1.0.3 authority constructs canonical D1 context from completed H1
+bars over DST-aware 17:00-to-17:00 `America/New_York` sessions; provider-native
+Daily OHLC is not a strategy input.
 
 ## Applications
 
@@ -90,6 +99,8 @@ npm.cmd run dev
 
 Open `http://localhost:3000`. The backend is available at
 `http://127.0.0.1:8000`; its data endpoints require the internal server key.
+The protected historical workspace is at
+`http://localhost:3000/historical-replay`.
 
 ## Validation
 
@@ -114,5 +125,8 @@ and the explicitly invoked live smoke test. See
 dashboard API, frontend states, and live end-to-end validation evidence. See
 [Phase 3B observation runbook](docs/PHASE3B_OBSERVATION_RUNBOOK.md) and
 [Phase 3B client checklist](docs/PHASE3B_CLIENT_ACCEPTANCE.md) for sustained
-operation and UAT. Phase 3B remains conditional until the required multi-day
-observation and explicit client approval are complete.
+operation and UAT. See
+[Phase 3B historical replay validation](docs/PHASE3B_HISTORICAL_REPLAY_VALIDATION.md)
+for the isolated July 2026 functional replay evidence. The historical replay
+track passed; the separate live-observation gate remains conditional until the
+required multi-day observation and explicit client approval are complete.

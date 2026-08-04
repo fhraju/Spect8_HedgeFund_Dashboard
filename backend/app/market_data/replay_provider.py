@@ -234,7 +234,7 @@ class ReplayMarketDataProvider:
             and candle.provider_id == closed_bar.candle.provider_id
             and candle.provider_symbol == closed_bar.candle.provider_symbol
             and candle.is_complete
-            and _datetime(candle.raw_close_time) < trigger_close
+            and _datetime(candle.raw_close_time) <= trigger_close
             and _datetime(candle.raw_close_time) <= as_of
         )
         return ProviderHistory(

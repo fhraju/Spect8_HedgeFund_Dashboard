@@ -123,7 +123,7 @@ warning.
 Deterministic evidence passes for:
 
 - forming-candle exclusion;
-- D1 strictly before each signal trigger;
+- completed D1 at or before each signal trigger, with future D1 excluded;
 - H1/H4 independence;
 - missed-boundary catch-up in chronological order;
 - same-process and reconstructed-process duplicate prevention;

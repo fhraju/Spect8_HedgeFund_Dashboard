@@ -4,11 +4,12 @@ import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-from .domain import Bar, DomainEvent, InstrumentStatus, primitive
+from .domain import Bar, DomainEvent, InstrumentStatus, Timeframe, primitive
 from .observation import expansion_projections
 
 if TYPE_CHECKING:
@@ -409,6 +410,248 @@ class SQLiteProjectionRepository:
                 inserted += max(cursor.rowcount, 0)
             connection.commit()
         return inserted
+
+    def canonical_bar_objects(
+        self,
+        provider: str,
+        instrument_id: str,
+        timeframe: str,
+    ) -> tuple[Bar, ...]:
+        """Load exact persisted bars for controlled maintenance workflows."""
+
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT provider, instrument_id, timeframe, close_time_utc,
+                       open_time_utc, raw_open_time, raw_close_time,
+                       raw_provider_symbol, session_timezone, open, high, low,
+                       close, volume, synthetic
+                FROM canonical_bars
+                WHERE provider = ? AND instrument_id = ? AND timeframe = ?
+                ORDER BY close_time_utc
+                """,
+                (provider, instrument_id, timeframe),
+            ).fetchall()
+        return tuple(
+            Bar(
+                instrument_id=row["instrument_id"],
+                timeframe=Timeframe(row["timeframe"]),
+                open_time=datetime.fromisoformat(
+                    row["open_time_utc"].replace("Z", "+00:00")
+                ),
+                close_time=datetime.fromisoformat(
+                    row["close_time_utc"].replace("Z", "+00:00")
+                ),
+                open=Decimal(row["open"]),
+                high=Decimal(row["high"]),
+                low=Decimal(row["low"]),
+                close=Decimal(row["close"]),
+                provider=row["provider"],
+                is_complete=True,
+                volume=(
+                    Decimal(row["volume"])
+                    if row["volume"] is not None
+                    else None
+                ),
+                session_timezone=row["session_timezone"],
+                raw_provider_symbol=row["raw_provider_symbol"],
+                raw_open_time=row["raw_open_time"],
+                raw_close_time=row["raw_close_time"],
+                raw_open=row["open"],
+                raw_high=row["high"],
+                raw_low=row["low"],
+                raw_close=row["close"],
+                synthetic=bool(row["synthetic"]),
+            )
+            for row in rows
+        )
+
+    def projection_sources(
+        self,
+        strategy_id: str,
+        provider: str,
+        instrument_id: str,
+    ) -> dict[str, str]:
+        prefix = f"{strategy_id}:{provider}:{instrument_id}:"
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT idempotency_key, source_case_id
+                FROM processed_bars
+                WHERE substr(idempotency_key, 1, ?) = ?
+                ORDER BY idempotency_key
+                """,
+                (len(prefix), prefix),
+            ).fetchall()
+        return {row["idempotency_key"]: row["source_case_id"] for row in rows}
+
+    def replace_daily_and_projections(
+        self,
+        *,
+        strategy_id: str,
+        provider: str,
+        instrument_id: str,
+        daily_bars: tuple[Bar, ...],
+        projections: tuple[
+            tuple[InstrumentStatus, tuple[DomainEvent, ...]], ...
+        ],
+    ) -> None:
+        """Atomically replace D1 bars and all dependent strategy projections."""
+
+        prefix = f"{strategy_id}:{provider}:{instrument_id}:"
+        with self._lock, closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                keys = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        """
+                        SELECT idempotency_key FROM processed_bars
+                        WHERE substr(idempotency_key, 1, ?) = ?
+                        """,
+                        (len(prefix), prefix),
+                    ).fetchall()
+                )
+                if keys:
+                    placeholders = ",".join("?" for _ in keys)
+                    connection.execute(
+                        f"DELETE FROM event_history WHERE idempotency_key IN ({placeholders})",
+                        keys,
+                    )
+                    connection.execute(
+                        f"DELETE FROM processed_bars WHERE idempotency_key IN ({placeholders})",
+                        keys,
+                    )
+                connection.execute(
+                    """
+                    DELETE FROM instrument_status
+                    WHERE strategy_id = ? AND provider = ? AND instrument_id = ?
+                    """,
+                    (strategy_id, provider, instrument_id),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM canonical_bars
+                    WHERE provider = ? AND instrument_id = ? AND timeframe = 'D1'
+                    """,
+                    (provider, instrument_id),
+                )
+                for bar in daily_bars:
+                    self._insert_canonical_bar(connection, bar)
+                for status, events in projections:
+                    self._insert_projection(connection, status, events)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    @staticmethod
+    def _insert_canonical_bar(
+        connection: sqlite3.Connection,
+        bar: Bar,
+    ) -> None:
+        value = primitive(bar)
+        raw_evidence = {
+            "provider_symbol": bar.raw_provider_symbol,
+            "open_time": bar.raw_open_time,
+            "close_time": bar.raw_close_time,
+            "open": bar.raw_open,
+            "high": bar.raw_high,
+            "low": bar.raw_low,
+            "close": bar.raw_close,
+        }
+        connection.execute(
+            """
+            INSERT INTO canonical_bars (
+                provider, instrument_id, timeframe, close_time_utc,
+                open_time_utc, raw_open_time, raw_close_time,
+                raw_provider_symbol, session_timezone, open, high, low,
+                close, volume, raw_evidence_json, synthetic
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bar.provider,
+                bar.instrument_id,
+                bar.timeframe.value,
+                value["close_time"],
+                value["open_time"],
+                bar.raw_open_time or value["open_time"],
+                bar.raw_close_time or value["close_time"],
+                bar.raw_provider_symbol or bar.instrument_id,
+                bar.session_timezone,
+                str(bar.open),
+                str(bar.high),
+                str(bar.low),
+                str(bar.close),
+                str(bar.volume) if bar.volume is not None else None,
+                json.dumps(raw_evidence, sort_keys=True),
+                int(bar.synthetic),
+            ),
+        )
+
+    @staticmethod
+    def _insert_projection(
+        connection: sqlite3.Connection,
+        status: InstrumentStatus,
+        events: tuple[DomainEvent, ...],
+    ) -> None:
+        status_value = primitive(status)
+        connection.execute(
+            """
+            INSERT INTO processed_bars
+                (idempotency_key, processed_at, source_case_id, synthetic)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                status.idempotency_key,
+                status_value["last_update"],
+                status.source_case_id,
+                int(status.synthetic),
+            ),
+        )
+        for event in events:
+            event_value = primitive(event)
+            connection.execute(
+                """
+                INSERT INTO event_history (
+                    idempotency_key, sequence, event_type, occurred_at,
+                    instrument_id, timeframe, source_case_id, payload_json,
+                    synthetic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.idempotency_key,
+                    event.sequence,
+                    event.event_type.value,
+                    event_value["occurred_at"],
+                    event.instrument_id,
+                    event.timeframe.value,
+                    event.source_case_id,
+                    json.dumps(event_value["payload"], sort_keys=True),
+                    int(event.synthetic),
+                ),
+            )
+        connection.execute(
+            """
+            INSERT INTO instrument_status (
+                strategy_id, provider, instrument_id, timeframe,
+                status_json, updated_at, synthetic
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(strategy_id, provider, instrument_id, timeframe)
+            DO UPDATE SET status_json = excluded.status_json,
+                          updated_at = excluded.updated_at,
+                          synthetic = excluded.synthetic
+            """,
+            (
+                status.strategy_id,
+                status.provider,
+                status.instrument_id,
+                status.timeframe.value,
+                json.dumps(status_value, sort_keys=True),
+                status_value["last_update"],
+                int(status.synthetic),
+            ),
+        )
 
     def update_provider_health(self, health: "ProviderHealth") -> None:
         value = primitive(health)
