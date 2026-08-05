@@ -43,6 +43,88 @@ export type MarketValues = {
   daily_context_close_time: string | null;
 };
 
+export type FilterAuditDailySession = {
+  session_identifier: string;
+  session_open_time: string;
+  session_close_time: string;
+  daily_high: string;
+  daily_low: string;
+};
+
+export type FilterAuditBuyComparison = {
+  recent_low: string;
+  operator: "<=";
+  buy_threshold: string;
+  matched: boolean;
+};
+
+export type FilterAuditSellComparison = {
+  recent_high: string;
+  operator: ">=";
+  sell_threshold: string;
+  matched: boolean;
+};
+
+export type FilterAuditBar = {
+  sequence: number;
+  open_time: string;
+  close_time: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  source_id: string;
+  recent_low: boolean;
+  recent_high: boolean;
+  expected_market_closure_before: boolean;
+};
+
+export type FilterAudit = {
+  instrument_id: string;
+  strategy_version: string;
+  timeframe: "H1" | "H4";
+  evaluation_time: string;
+  evaluation_bar_open_time: string;
+  evaluation_bar_close_time: string;
+  evaluation_bar_open: string;
+  evaluation_bar_high: string;
+  evaluation_bar_low: string;
+  evaluation_bar_close: string;
+  evaluation_bar_confirmed_closed: boolean;
+  completed_bar_count: number;
+  available_completed_bar_count: number;
+  lookback_period: number;
+  lookback_start_time: string;
+  lookback_end_time: string;
+  recent_low: string;
+  recent_low_bar_open_time: string;
+  recent_low_bar_close_time: string;
+  recent_high: string;
+  recent_high_bar_open_time: string;
+  recent_high_bar_close_time: string;
+  daily_session: FilterAuditDailySession;
+  daily_reference_sessions: FilterAuditDailySession[];
+  atr_sessions: FilterAuditDailySession[];
+  d1_context_eligibility_time: string;
+  atr_period: number;
+  atr_value: string;
+  buffer_percentage: string;
+  buffer_value: string;
+  daily_low: string;
+  daily_high: string;
+  buy_threshold: string;
+  sell_threshold: string;
+  buy_comparison: FilterAuditBuyComparison;
+  sell_comparison: FilterAuditSellComparison;
+  final_classification: string;
+  source_provider: string;
+  construction_profile: string;
+  canonical_timezone: string;
+  display_timezone: string;
+  daily_session_authority: string;
+  selected_bars: FilterAuditBar[];
+};
+
 export type InstrumentStatus = {
   strategy_id: string;
   provider: string;
@@ -61,6 +143,61 @@ export type InstrumentStatus = {
   signal_bar_close_time: string;
   last_update: string;
   idempotency_key: string;
+  filter_audit?: FilterAudit | null;
+  strategy_version?: string;
+  daily_filter_snapshot_id?: string | null;
+};
+
+export type DailyFilterSnapshot = {
+  snapshot_id: string;
+  strategy_version: string;
+  canonical_profile_version: string;
+  provider: string;
+  instrument: string;
+  evaluation_time_utc: string;
+  as_of_h1_close_time_utc: string;
+  current_partial_d1: {
+    session_identifier: string;
+    session_open_utc: string;
+    session_close_utc: string;
+    first_h1_open_time_utc: string;
+    last_h1_close_time_utc: string;
+    h1_count: number;
+    source_h1_ids: string[];
+    source_checksum: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    quality_status: string;
+  };
+  previous_d1_candle_id: string;
+  previous_d1_session_id: string;
+  previous_d1_open_utc: string;
+  previous_d1_close_utc: string;
+  previous_d1_high: string;
+  previous_d1_low: string;
+  previous_d1_close: string;
+  atr_period: number;
+  atr_value: string;
+  atr_source_d1_ids: string[];
+  atr_source_checksum: string;
+  buffer_percentage: string;
+  buffer_value: string;
+  buy_threshold: string;
+  sell_threshold: string;
+  buy_left_value: string;
+  buy_operator: "<=";
+  buy_right_value: string;
+  buy_matched: boolean;
+  sell_left_value: string;
+  sell_operator: ">=";
+  sell_right_value: string;
+  sell_matched: boolean;
+  final_classification: "NONE" | "BUY" | "SELL" | "BUY_AND_SELL";
+  data_quality_status: string;
+  ingestion_run_id: string | null;
+  created_at: string;
 };
 
 export type EventRecord = {
@@ -118,6 +255,7 @@ export type DashboardData = {
     D1: string | null;
   };
   evaluations: InstrumentStatus[];
+  daily_filter?: DailyFilterSnapshot | null;
   recent_events: EventRecord[];
   execution: {
     enabled: false;

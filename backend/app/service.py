@@ -8,6 +8,11 @@ from .domain import (
     BarClosedEvent,
     DomainEvent,
     EventType,
+    FilterAudit,
+    FilterAuditBar,
+    FilterAuditBuyComparison,
+    FilterAuditDailySession,
+    FilterAuditSellComparison,
     FilterResult,
     InstrumentStatus,
     LevelsResult,
@@ -15,13 +20,19 @@ from .domain import (
     StrategyMarketValues,
     primitive,
 )
-from .engine.models import CandidateResult, StrategyEvaluation, StrategyRequest
+from .engine.models import (
+    CandidateResult,
+    FilterAuditDailySession as EngineFilterAuditDailySession,
+    StrategyEvaluation,
+    StrategyRequest,
+)
 from .engine.strategy import StrategyEvaluator
 from .repository import SQLiteProjectionRepository
 
 
 class CaseInputLoader(Protocol):
-    def load(self, case_id: str) -> StrategyRequest: ...
+    def load(self, case_id: str) -> StrategyRequest:
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,9 +98,7 @@ class WalkingSkeletonService:
             or evaluation.indicators is None
             or evaluation.signal_bar is None
         ):
-            raise ValueError(
-                f"{request.case_id}: strategy result cannot be projected"
-            )
+            raise ValueError(f"{request.case_id}: strategy result cannot be projected")
 
         classification = evaluation.classification
         filter_result = FilterResult(
@@ -142,13 +151,14 @@ class WalkingSkeletonService:
                 daily_sell_level=evaluation.indicators.daily_sell_level,
                 recent_low_21=evaluation.indicators.recent_low_21,
                 recent_high_21=evaluation.indicators.recent_high_21,
-                daily_context_close_time=(
-                    evaluation.bars.daily_endpoint_close_time
-                ),
+                daily_context_close_time=(evaluation.bars.daily_endpoint_close_time),
             ),
             signal_bar_close_time=evaluation.signal_bar.close_time,
             last_update=request.evaluation_time,
             idempotency_key=bar_event.idempotency_key,
+            filter_audit=self._filter_audit(evaluation),
+            strategy_version=evaluation.strategy_version,
+            daily_filter_snapshot_id=evaluation.daily_filter_snapshot_id,
         )
         return EvaluatedProjection(
             bar_event=bar_event,
@@ -167,6 +177,96 @@ class WalkingSkeletonService:
         """Return the production event projection without persisting it."""
 
         return cls._event_trace(evaluated)
+
+    @staticmethod
+    def _filter_audit(evaluation: StrategyEvaluation) -> FilterAudit | None:
+        audit = evaluation.filter_audit
+        if audit is None:
+            return None
+
+        def session(
+            value: EngineFilterAuditDailySession,
+        ) -> FilterAuditDailySession:
+            return FilterAuditDailySession(
+                session_identifier=value.session_identifier,
+                session_open_time=value.session_open_time,
+                session_close_time=value.session_close_time,
+                daily_high=str(value.high),
+                daily_low=str(value.low),
+            )
+
+        return FilterAudit(
+            instrument_id=audit.instrument_id,
+            strategy_version=audit.strategy_version,
+            timeframe=audit.timeframe,
+            evaluation_time=audit.evaluation_time,
+            evaluation_bar_open_time=audit.evaluation_bar_open_time,
+            evaluation_bar_close_time=audit.evaluation_bar_close_time,
+            evaluation_bar_open=str(audit.evaluation_bar_open),
+            evaluation_bar_high=str(audit.evaluation_bar_high),
+            evaluation_bar_low=str(audit.evaluation_bar_low),
+            evaluation_bar_close=str(audit.evaluation_bar_close),
+            evaluation_bar_confirmed_closed=(audit.evaluation_bar_confirmed_closed),
+            completed_bar_count=audit.completed_bar_count,
+            available_completed_bar_count=(audit.available_completed_bar_count),
+            lookback_period=audit.lookback_period,
+            lookback_start_time=audit.lookback_start_time,
+            lookback_end_time=audit.lookback_end_time,
+            recent_low=str(audit.recent_low),
+            recent_low_bar_open_time=audit.recent_low_bar_open_time,
+            recent_low_bar_close_time=audit.recent_low_bar_close_time,
+            recent_high=str(audit.recent_high),
+            recent_high_bar_open_time=audit.recent_high_bar_open_time,
+            recent_high_bar_close_time=audit.recent_high_bar_close_time,
+            daily_session=session(audit.daily_session),
+            daily_reference_sessions=tuple(
+                session(value) for value in audit.daily_reference_sessions
+            ),
+            atr_sessions=tuple(session(value) for value in audit.atr_sessions),
+            d1_context_eligibility_time=audit.d1_context_eligibility_time,
+            atr_period=audit.atr_period,
+            atr_value=str(audit.atr_value),
+            buffer_percentage=str(audit.buffer_percentage),
+            buffer_value=str(audit.buffer_value),
+            daily_low=str(audit.daily_low),
+            daily_high=str(audit.daily_high),
+            buy_threshold=str(audit.buy_threshold),
+            sell_threshold=str(audit.sell_threshold),
+            buy_comparison=FilterAuditBuyComparison(
+                recent_low=str(audit.buy_comparison.recent_low),
+                operator=audit.buy_comparison.operator,
+                buy_threshold=str(audit.buy_comparison.buy_threshold),
+                matched=audit.buy_comparison.matched,
+            ),
+            sell_comparison=FilterAuditSellComparison(
+                recent_high=str(audit.sell_comparison.recent_high),
+                operator=audit.sell_comparison.operator,
+                sell_threshold=str(audit.sell_comparison.sell_threshold),
+                matched=audit.sell_comparison.matched,
+            ),
+            final_classification=audit.final_classification,
+            source_provider=audit.source_provider,
+            construction_profile=audit.construction_profile,
+            canonical_timezone=audit.canonical_timezone,
+            display_timezone=audit.display_timezone,
+            daily_session_authority=audit.daily_session_authority,
+            selected_bars=tuple(
+                FilterAuditBar(
+                    sequence=bar.sequence,
+                    open_time=bar.open_time,
+                    close_time=bar.close_time,
+                    open=str(bar.open),
+                    high=str(bar.high),
+                    low=str(bar.low),
+                    close=str(bar.close),
+                    source_id=bar.source_id,
+                    recent_low=bar.recent_low,
+                    recent_high=bar.recent_high,
+                    expected_market_closure_before=bar.expected_market_closure_before,
+                )
+                for bar in audit.selected_bars
+            ),
+        )
 
     @staticmethod
     def _levels(candidate: CandidateResult) -> LevelsResult:
@@ -211,7 +311,12 @@ class WalkingSkeletonService:
                 "strategy_id": bar_event.strategy_id,
             },
         )
-        emit(EventType.FILTER_EVALUATED, primitive(adapted.filter_result))
+        filter_payload = primitive(adapted.filter_result)
+        filter_payload[
+            "daily_filter_snapshot_id"
+        ] = adapted.status.daily_filter_snapshot_id
+        filter_payload["strategy_version"] = adapted.status.strategy_version
+        emit(EventType.FILTER_EVALUATED, filter_payload)
         emit(
             (
                 EventType.FILTER_MATCHED
@@ -240,9 +345,7 @@ class WalkingSkeletonService:
                     if len(confirmed_directions) == 2
                     else None
                 ),
-                "directions": [
-                    direction.value for direction in confirmed_directions
-                ],
+                "directions": [direction.value for direction in confirmed_directions],
             },
         )
         if adapted.levels_results:

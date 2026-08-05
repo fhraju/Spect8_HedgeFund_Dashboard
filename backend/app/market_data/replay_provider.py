@@ -16,7 +16,9 @@ from .models import (
     ProviderHealth,
     ProviderHistory,
     ProviderIdentity,
+    ProviderProfile,
     RawProviderCandle,
+    TimestampSemantics,
 )
 
 
@@ -125,9 +127,7 @@ class ReplayMarketDataProvider:
                 point_size=Decimal(str(raw_metadata["point_size"])),
                 tick_size=_optional_decimal(raw_metadata["tick_size"]),
                 price_precision=int(raw_metadata["price_precision"]),
-                tick_value_usd=_optional_decimal(
-                    raw_metadata["tick_value_usd"]
-                ),
+                tick_value_usd=_optional_decimal(raw_metadata["tick_value_usd"]),
                 conversion_rate_to_usd=_optional_decimal(
                     raw_metadata["conversion_rate_to_usd"]
                 ),
@@ -140,9 +140,7 @@ class ReplayMarketDataProvider:
                 quote_currency="USD",
                 profit_currency="USD",
                 session_timezone=raw_metadata["session_timezone"],
-                candle_boundary_convention=raw_metadata[
-                    "candle_boundary_convention"
-                ],
+                candle_boundary_convention=raw_metadata["candle_boundary_convention"],
                 available_timeframes=tuple(
                     sorted(available, key=lambda value: value.value)
                 ),
@@ -151,9 +149,7 @@ class ReplayMarketDataProvider:
         self._instruments = tuple(instruments.values())
         self._identity = ProviderIdentity(
             provider_id=(
-                self._instruments[0].provider_id
-                if self._instruments
-                else "REPLAY"
+                self._instruments[0].provider_id if self._instruments else "REPLAY"
             ),
             display_name="Deterministic Replay Provider",
             adapter_version="1.0",
@@ -166,6 +162,74 @@ class ReplayMarketDataProvider:
 
     def discover_instruments(self) -> tuple[CanonicalInstrument, ...]:
         return self._instruments
+
+    def provider_profile(self) -> ProviderProfile:
+        return ProviderProfile(
+            provider_name=self.identity.provider_id,
+            adapter_version=self.identity.adapter_version,
+            timestamp_semantics=TimestampSemantics.INTERVAL_START,
+            native_timeframes=tuple(
+                sorted(
+                    {case.timeframe for case in self._cases},
+                    key=lambda value: value.value,
+                )
+            ),
+        )
+
+    def map_symbol(self, canonical_instrument: str) -> str:
+        if canonical_instrument not in {
+            instrument.instrument_id for instrument in self._instruments
+        }:
+            raise ValueError("replay adapter has no mapped instrument")
+        return canonical_instrument
+
+    def fetch_raw_candles(
+        self,
+        instrument: str,
+        timeframe: Timeframe,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[RawProviderCandle, ...]:
+        self.map_symbol(instrument)
+        values = {
+            candle.source_id
+            or (
+                f"{candle.provider_id}:{instrument}:{timeframe.value}:"
+                f"{candle.raw_close_time}"
+            ): candle
+            for case in self._cases
+            for candle in (*case.signal_source, *case.daily_source)
+            if candle.timeframe is timeframe
+            and start <= _datetime(candle.raw_close_time) <= end
+        }
+        return tuple(sorted(values.values(), key=lambda candle: candle.raw_close_time))
+
+    @staticmethod
+    def normalize_timestamp(
+        provider_timestamp: str,
+        semantics: TimestampSemantics,
+        timeframe: Timeframe,
+    ) -> tuple[datetime, datetime]:
+        value = _datetime(provider_timestamp)
+        step = {
+            Timeframe.H1: timedelta(hours=1),
+            Timeframe.H4: timedelta(hours=4),
+            Timeframe.D1: timedelta(days=1),
+        }[timeframe]
+        if semantics in (
+            TimestampSemantics.OPEN_TIME,
+            TimestampSemantics.INTERVAL_START,
+        ):
+            return value, value + step
+        if semantics in (
+            TimestampSemantics.CLOSE_TIME,
+            TimestampSemantics.INTERVAL_END,
+        ):
+            return value - step, value
+        raise ValueError("replay timestamp semantics must be explicit")
+
+    def report_health(self, as_of: datetime) -> ProviderHealth:
+        return self.health(as_of)
 
     def initial_clock_time(self) -> datetime:
         if not self._cases:
@@ -207,11 +271,7 @@ class ReplayMarketDataProvider:
     ) -> ProviderHistory:
         self._require_aware(as_of)
         replay_case = next(
-            (
-                case
-                for case in self._cases
-                if case.source_id == closed_bar.source_id
-            ),
+            (case for case in self._cases if case.source_id == closed_bar.source_id),
             None,
         )
         if replay_case is None:
@@ -312,6 +372,20 @@ class ReplayMarketDataProvider:
                         volume=row.get("volume") or None,
                         is_complete=row["is_complete"].lower() == "true",
                         session_timezone=session_timezone,
+                        provider_name=row["provider"],
+                        canonical_instrument=row["canonical_instrument_id"],
+                        source_timeframe=Timeframe(row["timeframe"]),
+                        provider_timestamp=row["open_time"],
+                        timestamp_semantics=TimestampSemantics.INTERVAL_START,
+                        open_time_utc=_datetime(row["open_time"]),
+                        close_time_utc=_datetime(row["close_time"]),
+                        source_id=(
+                            f"replay:{row['canonical_instrument_id']}:"
+                            f"{row['timeframe']}:{row['close_time']}"
+                        ),
+                        received_at=_datetime(row["close_time"]),
+                        provider_metadata={"fixture": path.name},
+                        adapter_version="1.0",
                     )
                 )
         return tuple(rows)

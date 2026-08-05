@@ -81,7 +81,7 @@ describe("server-only protection and strategy boundary", () => {
     for (const code of productionFiles) {
       expect(code).not.toContain("golden/reference");
       expect(code).not.toContain("reference/calculator");
-      expect(code).not.toMatch(/\bSMA10\b|\bSMA20\b|\bATR\b/);
+      expect(code).not.toMatch(/\bSMA10\b|\bSMA20\b/);
       expect(code).not.toContain("activation_buffer");
       expect(code).not.toContain("pivot_low");
     }

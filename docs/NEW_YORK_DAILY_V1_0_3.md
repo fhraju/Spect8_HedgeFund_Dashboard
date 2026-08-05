@@ -24,6 +24,43 @@ out-of-order, duplicate, overlapping, non-hourly, or incomplete-coverage H1
 input with typed reasons. A rejected session produces no D1. Expected weekend
 closure outside active Forex sessions is not classified as a missing candle.
 
+## Dashboard session naming and timestamps
+
+The dashboard names a canonical D1 session by the calendar date of its closing
+17:00 `America/New_York` boundary. For example, the session opening at 17:00
+EDT on 2026-08-03 and closing at 17:00 EDT on 2026-08-04 is the **04 Aug 2026
+New York Daily Session**. This is the same `session_date` convention used by
+`NewYorkDailyAggregator`; it is not inferred from the UTC date in the browser.
+
+Canonical timestamps remain stored and transported in UTC. Strategy-session
+membership continues to use `America/New_York`. Dashboard presentation is a
+separate concern: its primary timezone is configured with
+`DASHBOARD_DISPLAY_TIMEZONE` and its label with
+`DASHBOARD_DISPLAY_TIMEZONE_LABEL`. The local default is `Europe/Athens` /
+`Broker Time`, which is UTC+3 in summer and UTC+2 in winter under IANA rules.
+New York `EST`/`EDT` and UTC remain visible as secondary evidence. No fixed
+offset arithmetic is used.
+
+## Latest Filter Audit reconstruction
+
+Legacy status rows created before `filter_audit` remain valid decisions but do
+not contain the evidence payload. The guarded reconstruction command selects
+the latest persisted H1 and H4 signal closes, loads the latest 30 eligible
+canonical signal bars and ten eligible reconstructed D1 sessions, and calls
+`Spect8StrategyEvaluator` twice. It refuses missing history, non-determinism,
+or any change outside `filter_audit`. Applying updates both status payloads in
+one transaction without replacing processed-bar identities or event history.
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.app.filter_audit_rebuild_cli `
+  --database var/spect8_phase1.sqlite3 --dry-run
+```
+
+For the active database, stop its runtime writer, replace `--dry-run` with
+`--apply`, and add `--confirm-active-database` followed by the exact resolved
+database path. Apply creates a point-in-time SQLite backup first. A repeated
+apply is deterministic and reports `changed=false`.
+
 ## Guarded history backfill and rebuild
 
 Neither workflow requests provider-native D1. Backfill authenticates Twelve
@@ -41,7 +78,7 @@ resolved target. Each apply creates a SQLite point-in-time backup first.
 After review, replace `--dry-run` with both `--apply` and:
 
 ```text
---confirm-active-database E:\Work\The-System\Spect8_HedgeFund_Dashboard\var\spect8_phase1.sqlite3
+--confirm-active-database <absolute-path-to-var\spect8_phase1.sqlite3>
 ```
 
 Dry-run the D1/projection replacement:

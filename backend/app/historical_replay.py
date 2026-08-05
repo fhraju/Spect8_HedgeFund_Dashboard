@@ -58,9 +58,7 @@ def _iso(value: datetime) -> str:
 
 
 def _parse(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-        timezone.utc
-    )
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 def _json(value: Any) -> str:
@@ -110,9 +108,7 @@ class ReplayConfig:
             "display_end": _iso(self.display_end),
             "timeframes": [item.value for item in self.timeframes],
             "context_timeframe": self.context_timeframe.value,
-            "requested_dataset_fingerprint": (
-                self.requested_dataset_fingerprint
-            ),
+            "requested_dataset_fingerprint": (self.requested_dataset_fingerprint),
             "strategy_version": SPECIFICATION_ID,
         }
         return hashlib.sha256(_json(payload).encode()).hexdigest()
@@ -140,7 +136,8 @@ class HistoricalDataset:
 
 
 class HistoricalDataSource(Protocol):
-    def load(self, config: ReplayConfig) -> HistoricalDataset: ...
+    def load(self, config: ReplayConfig) -> HistoricalDataset:
+        ...
 
 
 class ReplayConflictError(RuntimeError):
@@ -228,9 +225,7 @@ def _instrument_from_payload(value: Mapping[str, Any]) -> CanonicalInstrument:
         contract_min=decimal("contract_min"),
         contract_max=decimal("contract_max"),
         contract_step=decimal("contract_step"),
-        minimum_stop_distance_points=decimal(
-            "minimum_stop_distance_points"
-        ),
+        minimum_stop_distance_points=decimal("minimum_stop_distance_points"),
         quote_currency=str(value["quote_currency"]),
         profit_currency=str(value["profit_currency"]),
         session_timezone=str(value["session_timezone"]),
@@ -256,9 +251,7 @@ def _bar_from_payload(value: Mapping[str, Any]) -> Bar:
         provider=str(value["provider"]),
         is_complete=bool(value["is_complete"]),
         volume=(
-            Decimal(str(value["volume"]))
-            if value.get("volume") is not None
-            else None
+            Decimal(str(value["volume"])) if value.get("volume") is not None else None
         ),
         session_timezone=str(value.get("session_timezone", "UTC")),
         raw_provider_symbol=value.get("raw_provider_symbol"),
@@ -269,6 +262,28 @@ def _bar_from_payload(value: Mapping[str, Any]) -> Bar:
         raw_low=value.get("raw_low"),
         raw_close=value.get("raw_close"),
         synthetic=bool(value.get("synthetic", False)),
+        quality_status=str(value.get("quality_status", "VALID")),
+        construction_profile_version=str(
+            value.get("construction_profile_version", "LEGACY")
+        ),
+        provider_adapter_version=str(value.get("provider_adapter_version", "legacy")),
+        source_timeframe=(
+            Timeframe(value["source_timeframe"])
+            if value.get("source_timeframe") is not None
+            else None
+        ),
+        source_candle_ids=tuple(value.get("source_candle_ids", ())),
+        forward_filled=bool(value.get("forward_filled", False)),
+        expected_closure_before=bool(value.get("expected_closure_before", False)),
+        ingestion_run_id=value.get("ingestion_run_id"),
+        created_at=(
+            _parse(str(value["created_at"]))
+            if value.get("created_at") is not None
+            else None
+        ),
+        session_identifier=value.get("session_identifier"),
+        session_open_broker_time=value.get("session_open_broker_time"),
+        session_close_broker_time=value.get("session_close_broker_time"),
     )
 
 
@@ -354,9 +369,7 @@ def build_historical_dataset(
         }
         returned[timeframe.value] = {
             "first_close_utc": (
-                _iso(accepted[timeframe][0].close_time)
-                if accepted[timeframe]
-                else None
+                _iso(accepted[timeframe][0].close_time) if accepted[timeframe] else None
             ),
             "last_close_utc": (
                 _iso(accepted[timeframe][-1].close_time)
@@ -371,8 +384,7 @@ def build_historical_dataset(
             "malformed": malformed,
             "gaps": gaps,
             "warmup": sum(
-                bar.close_time < config.display_start
-                for bar in accepted[timeframe]
+                bar.close_time < config.display_start for bar in accepted[timeframe]
             ),
             "display": sum(
                 config.display_start <= bar.close_time < config.display_end
@@ -422,8 +434,7 @@ def build_historical_dataset(
         "malformed": 0,
         "gaps": len(aggregation.issues),
         "warmup": sum(
-            bar.close_time < config.display_start
-            for bar in accepted[Timeframe.D1]
+            bar.close_time < config.display_start for bar in accepted[Timeframe.D1]
         ),
         "display": sum(
             config.display_start <= bar.close_time < config.display_end
@@ -449,9 +460,7 @@ def build_historical_dataset(
             for timeframe in (*REPLAY_TIMEFRAMES, CONTEXT_TIMEFRAME)
         },
     }
-    fingerprint = hashlib.sha256(
-        _json(fingerprint_payload).encode()
-    ).hexdigest()
+    fingerprint = hashlib.sha256(_json(fingerprint_payload).encode()).hexdigest()
     return HistoricalDataset(
         fingerprint=fingerprint,
         instrument=instrument,
@@ -678,9 +687,7 @@ class HistoricalReplayRepository:
             {
                 "code": finding.code,
                 "timeframe": finding.timeframe.value,
-                "start_utc": (
-                    _iso(finding.start_utc) if finding.start_utc else None
-                ),
+                "start_utc": (_iso(finding.start_utc) if finding.start_utc else None),
                 "end_utc": _iso(finding.end_utc) if finding.end_utc else None,
                 "detail": finding.detail,
             }
@@ -744,9 +751,7 @@ class HistoricalReplayRepository:
                         )
             connection.commit()
 
-    def load_dataset(
-        self, fingerprint: str, config: ReplayConfig
-    ) -> HistoricalDataset:
+    def load_dataset(self, fingerprint: str, config: ReplayConfig) -> HistoricalDataset:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM replay_datasets WHERE fingerprint = ?",
@@ -785,9 +790,7 @@ class HistoricalReplayRepository:
             QualityFinding(
                 code=item["code"],
                 timeframe=Timeframe(item["timeframe"]),
-                start_utc=(
-                    _parse(item["start_utc"]) if item["start_utc"] else None
-                ),
+                start_utc=(_parse(item["start_utc"]) if item["start_utc"] else None),
                 end_utc=_parse(item["end_utc"]) if item["end_utc"] else None,
                 detail=item["detail"],
             )
@@ -795,9 +798,7 @@ class HistoricalReplayRepository:
         )
         return HistoricalDataset(
             fingerprint=fingerprint,
-            instrument=_instrument_from_payload(
-                json.loads(row["instrument_json"])
-            ),
+            instrument=_instrument_from_payload(json.loads(row["instrument_json"])),
             config=config,
             bars={key: tuple(value) for key, value in bars.items()},
             requested_ranges=json.loads(row["requested_ranges_json"]),
@@ -828,9 +829,7 @@ class HistoricalReplayRepository:
                 self._insert_finding(connection, run_id, finding)
             connection.commit()
 
-    def persist_finding(
-        self, run_id: str, finding: QualityFinding
-    ) -> None:
+    def persist_finding(self, run_id: str, finding: QualityFinding) -> None:
         with self._lock, closing(self._connect()) as connection:
             self._insert_finding(connection, run_id, finding)
             connection.execute(
@@ -879,8 +878,7 @@ class HistoricalReplayRepository:
         assert classification is not None
         filter_outcome = (
             "PASS"
-            if classification.buy_filter_matched
-            or classification.sell_filter_matched
+            if classification.buy_filter_matched or classification.sell_filter_matched
             else "FAIL"
         )
         signal_outcome = (
@@ -1019,9 +1017,7 @@ class HistoricalReplayRepository:
             connection.commit()
 
     @staticmethod
-    def _determinism_digest(
-        connection: sqlite3.Connection, run_id: str
-    ) -> str:
+    def _determinism_digest(connection: sqlite3.Connection, run_id: str) -> str:
         evaluations = [
             dict(row)
             for row in connection.execute(
@@ -1076,9 +1072,7 @@ class HistoricalReplayRepository:
         return {
             "run_id": row["run_id"],
             "dataset_fingerprint": row["dataset_fingerprint"],
-            "requested_dataset_fingerprint": row[
-                "requested_dataset_fingerprint"
-            ],
+            "requested_dataset_fingerprint": row["requested_dataset_fingerprint"],
             "provider": row["provider"],
             "instrument": row["instrument"],
             "display_start": row["display_start"],
@@ -1149,9 +1143,7 @@ class HistoricalReplayRepository:
             "filter_pass": sum(row["filter_outcome"] == "PASS" for row in rows),
             "filter_fail": sum(row["filter_outcome"] == "FAIL" for row in rows),
             "signal": sum(row["signal_outcome"] == "SIGNAL" for row in rows),
-            "no_signal": sum(
-                row["signal_outcome"] == "NO_SIGNAL" for row in rows
-            ),
+            "no_signal": sum(row["signal_outcome"] == "NO_SIGNAL" for row in rows),
         }
         return {
             "run": run,
@@ -1159,15 +1151,9 @@ class HistoricalReplayRepository:
                 {
                     "fingerprint": dataset["fingerprint"],
                     "warmup_start": dataset["warmup_start"],
-                    "requested_ranges": json.loads(
-                        dataset["requested_ranges_json"]
-                    ),
-                    "returned_ranges": json.loads(
-                        dataset["returned_ranges_json"]
-                    ),
-                    "candle_counts": json.loads(
-                        dataset["candle_counts_json"]
-                    ),
+                    "requested_ranges": json.loads(dataset["requested_ranges_json"]),
+                    "returned_ranges": json.loads(dataset["returned_ranges_json"]),
+                    "candle_counts": json.loads(dataset["candle_counts_json"]),
                 }
                 if dataset is not None
                 else None
@@ -1238,9 +1224,7 @@ class HistoricalReplayRepository:
                     "filter_outcome": row["filter_outcome"],
                     "signal_outcome": row["signal_outcome"],
                     "dashboard_state": row["dashboard_state"],
-                    "d1_context_close_utc": row[
-                        "d1_context_close_utc"
-                    ],
+                    "d1_context_close_utc": row["d1_context_close_utc"],
                     "reason_codes": json.loads(row["reason_codes_json"]),
                     "market_values": json.loads(row["market_values_json"]),
                 }
@@ -1343,9 +1327,7 @@ class HistoricalReplayService:
         config = ReplayConfig(
             display_start=_parse(run["display_start"]),
             display_end=_parse(run["display_end"]),
-            requested_dataset_fingerprint=run[
-                "requested_dataset_fingerprint"
-            ],
+            requested_dataset_fingerprint=run["requested_dataset_fingerprint"],
         )
         try:
             if config.requested_dataset_fingerprint:
@@ -1365,9 +1347,7 @@ class HistoricalReplayService:
                     bar
                     for timeframe in REPLAY_TIMEFRAMES
                     for bar in dataset.bars[timeframe]
-                    if config.display_start
-                    <= bar.close_time
-                    < config.display_end
+                    if config.display_start <= bar.close_time < config.display_end
                 ),
                 key=lambda bar: (
                     bar.close_time,
@@ -1423,9 +1403,7 @@ class HistoricalReplayService:
                         instrument=dataset.instrument.to_strategy_metadata(),
                     )
                     projection = self._projection_service.evaluate_request(request)
-                    events = self._projection_service.events_for_projection(
-                        projection
-                    )
+                    events = self._projection_service.events_for_projection(projection)
                     self.repository.persist_evaluation(
                         run_id,
                         ordinal,

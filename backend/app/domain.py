@@ -52,6 +52,18 @@ class Bar:
     raw_low: str | None = None
     raw_close: str | None = None
     synthetic: bool = True
+    quality_status: str = "VALID"
+    construction_profile_version: str = "LEGACY"
+    provider_adapter_version: str = "legacy"
+    source_timeframe: Timeframe | None = None
+    source_candle_ids: tuple[str, ...] = ()
+    forward_filled: bool = False
+    expected_closure_before: bool = False
+    ingestion_run_id: str | None = None
+    created_at: datetime | None = None
+    session_identifier: str | None = None
+    session_open_broker_time: str | None = None
+    session_close_broker_time: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +149,93 @@ class StrategyMarketValues:
 
 
 @dataclass(frozen=True, slots=True)
+class FilterAuditDailySession:
+    session_identifier: str
+    session_open_time: datetime
+    session_close_time: datetime
+    daily_high: str
+    daily_low: str
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditBuyComparison:
+    recent_low: str
+    operator: str
+    buy_threshold: str
+    matched: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditSellComparison:
+    recent_high: str
+    operator: str
+    sell_threshold: str
+    matched: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditBar:
+    sequence: int
+    open_time: datetime
+    close_time: datetime
+    open: str
+    high: str
+    low: str
+    close: str
+    source_id: str
+    recent_low: bool
+    recent_high: bool
+    expected_market_closure_before: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAudit:
+    instrument_id: str
+    strategy_version: str
+    timeframe: Timeframe
+    evaluation_time: datetime
+    evaluation_bar_open_time: datetime
+    evaluation_bar_close_time: datetime
+    evaluation_bar_open: str
+    evaluation_bar_high: str
+    evaluation_bar_low: str
+    evaluation_bar_close: str
+    evaluation_bar_confirmed_closed: bool
+    completed_bar_count: int
+    available_completed_bar_count: int
+    lookback_period: int
+    lookback_start_time: datetime
+    lookback_end_time: datetime
+    recent_low: str
+    recent_low_bar_open_time: datetime
+    recent_low_bar_close_time: datetime
+    recent_high: str
+    recent_high_bar_open_time: datetime
+    recent_high_bar_close_time: datetime
+    daily_session: FilterAuditDailySession
+    daily_reference_sessions: tuple[FilterAuditDailySession, ...]
+    atr_sessions: tuple[FilterAuditDailySession, ...]
+    d1_context_eligibility_time: datetime
+    atr_period: int
+    atr_value: str
+    buffer_percentage: str
+    buffer_value: str
+    daily_low: str
+    daily_high: str
+    buy_threshold: str
+    sell_threshold: str
+    buy_comparison: FilterAuditBuyComparison
+    sell_comparison: FilterAuditSellComparison
+    final_classification: str
+    source_provider: str
+    construction_profile: str
+    canonical_timezone: str
+    display_timezone: str
+    daily_session_authority: str
+    selected_bars: tuple[FilterAuditBar, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentStatus:
     strategy_id: str
     provider: str
@@ -155,6 +254,9 @@ class InstrumentStatus:
     signal_bar_close_time: datetime
     last_update: datetime
     idempotency_key: str
+    filter_audit: FilterAudit | None = None
+    strategy_version: str = "SPECT8_MICRO_DAILY_V1_0_3"
+    daily_filter_snapshot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

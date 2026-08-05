@@ -8,10 +8,13 @@ from typing import Sequence
 
 from ..domain import Bar, Timeframe
 from .session_boundaries import (
+    NEW_YORK,
     NEW_YORK_SESSION_TIMEZONE,
     completed_forex_session_dates,
     new_york_session_bounds,
 )
+from .forex_profile import broker_wall_time
+from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 
 
 class DailyAggregationIssueCode(StrEnum):
@@ -100,9 +103,7 @@ class NewYorkDailyAggregator:
                 )
                 continue
             members = tuple(
-                bar
-                for bar in bars
-                if start <= bar.open_time and bar.close_time <= end
+                bar for bar in bars if start <= bar.open_time and bar.close_time <= end
             )
             coverage_issue = self._coverage_issue(members, start, end)
             if coverage_issue is not None:
@@ -183,10 +184,7 @@ class NewYorkDailyAggregator:
                     "H1 aggregation input contains a future candle.",
                 )
             )
-        if any(
-            bar.close_time - bar.open_time != timedelta(hours=1)
-            for bar in bars
-        ):
+        if any(bar.close_time - bar.open_time != timedelta(hours=1) for bar in bars):
             issues.append(
                 DailyAggregationIssue(
                     DailyAggregationIssueCode.INVALID_INTERVAL,
@@ -238,12 +236,8 @@ class NewYorkDailyAggregator:
             )
         first = members[0]
         last = members[-1]
-        iso_start = start.astimezone(timezone.utc).isoformat().replace(
-            "+00:00", "Z"
-        )
-        iso_end = end.astimezone(timezone.utc).isoformat().replace(
-            "+00:00", "Z"
-        )
+        iso_start = start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        iso_end = end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         return Bar(
             instrument_id=first.instrument_id,
             timeframe=Timeframe.D1,
@@ -265,4 +259,33 @@ class NewYorkDailyAggregator:
             raw_low=str(min(bar.low for bar in members)),
             raw_close=str(last.close),
             synthetic=all(bar.synthetic for bar in members),
+            quality_status="VALID",
+            construction_profile_version=(
+                PROFILE_ID
+                if all(
+                    bar.construction_profile_version == PROFILE_ID and not bar.synthetic
+                    for bar in members
+                )
+                else first.construction_profile_version
+            ),
+            provider_adapter_version=first.provider_adapter_version,
+            source_timeframe=Timeframe.H1,
+            source_candle_ids=tuple(
+                source_id
+                for bar in members
+                for source_id in (
+                    bar.source_candle_ids
+                    or (
+                        f"{bar.provider}:{bar.instrument_id}:H1:"
+                        f"{bar.close_time.isoformat()}",
+                    )
+                )
+            ),
+            forward_filled=False,
+            expected_closure_before=first.expected_closure_before,
+            ingestion_run_id=first.ingestion_run_id,
+            created_at=max((bar.created_at or bar.close_time for bar in members)),
+            session_identifier=end.astimezone(NEW_YORK).date().isoformat(),
+            session_open_broker_time=broker_wall_time(start).isoformat(),
+            session_close_broker_time=broker_wall_time(end).isoformat(),
         )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any, Mapping
 
 from ..domain import Bar, Timeframe
 from ..engine.models import InstrumentMetadata
@@ -28,6 +29,14 @@ class ProviderErrorCode(StrEnum):
     MALFORMED_RESPONSE = "MALFORMED_RESPONSE"
     DUPLICATE_CANDLE = "DUPLICATE_CANDLE"
     MISSING_CANDLE = "MISSING_CANDLE"
+
+
+class TimestampSemantics(StrEnum):
+    OPEN_TIME = "OPEN_TIME"
+    CLOSE_TIME = "CLOSE_TIME"
+    INTERVAL_START = "INTERVAL_START"
+    INTERVAL_END = "INTERVAL_END"
+    UNKNOWN = "UNKNOWN"
 
 
 class MarketDataProviderError(RuntimeError):
@@ -113,6 +122,28 @@ class RawProviderCandle:
     volume: str | None
     is_complete: bool
     session_timezone: str
+    provider_name: str | None = None
+    canonical_instrument: str | None = None
+    source_timeframe: Timeframe | None = None
+    provider_timestamp: str | None = None
+    timestamp_semantics: TimestampSemantics = TimestampSemantics.UNKNOWN
+    open_time_utc: datetime | None = None
+    close_time_utc: datetime | None = None
+    source_id: str | None = None
+    received_at: datetime | None = None
+    provider_metadata: Mapping[str, Any] | None = None
+    adapter_version: str = "legacy"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderProfile:
+    provider_name: str
+    adapter_version: str
+    timestamp_semantics: TimestampSemantics
+    native_timeframes: tuple[Timeframe, ...]
+    canonical_base_timeframe: Timeframe = Timeframe.H1
+    native_h4_strategy_certified: bool = False
+    native_d1_strategy_certified: bool = False
 
 
 @dataclass(frozen=True, slots=True)

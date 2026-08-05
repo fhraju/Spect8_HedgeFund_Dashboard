@@ -5,14 +5,31 @@ from decimal import Decimal
 from typing import Protocol, Sequence
 
 from ..domain import Bar, Direction, Timeframe
-from ..market_data.session_boundaries import is_expected_forex_weekend_gap
-from .indicators import simple_moving_average, wilder_atr
+from ..market_data.forex_profile import (
+    CANONICAL_TIMEZONE,
+    PROFILE_ID,
+    GapType,
+    classify_market_gap,
+)
+from ..market_data.session_boundaries import (
+    NEW_YORK,
+    is_expected_forex_weekend_gap,
+)
+from .indicators import completed_extremes, simple_moving_average, wilder_atr
 from .levels import calculate_candidate_levels, calculate_level_distances
 from .micro_daily_filter import evaluate_micro_daily_filter
 from .models import (
     BarsUsed,
+    FilterAuditBar,
     ClassificationResult,
+    FilterAuditBuyComparison,
+    FilterAuditDailySession,
+    FilterAuditResult,
+    FilterAuditSellComparison,
+    FilterSideResult,
     IndicatorResult,
+    MicroDailyFilterResult,
+    CURRENT_D1_FILTER_V2,
     StrategyEvaluation,
     StrategyRequest,
 )
@@ -48,10 +65,7 @@ def _stream_issues(bars: Sequence[Bar], timeframe: Timeframe) -> list[str]:
     if len(identities) != len(set(identities)):
         issues.append("DUPLICATE_CANDLE")
     open_times = [bar.open_time for bar in relevant]
-    if any(
-        current < previous
-        for previous, current in zip(open_times, open_times[1:])
-    ):
+    if any(current < previous for previous, current in zip(open_times, open_times[1:])):
         issues.append("OUT_OF_ORDER_CANDLE")
     return issues
 
@@ -95,11 +109,21 @@ def _dashboard_state(
     return "WATCHING"
 
 
+def _filter_classification(buy_matched: bool, sell_matched: bool) -> str:
+    if buy_matched and sell_matched:
+        return "BUY + SELL"
+    if buy_matched:
+        return "BUY"
+    if sell_matched:
+        return "SELL"
+    return "WATCHING"
+
+
 class Spect8StrategyEvaluator:
     """Pure production evaluator for the frozen Spect8 Micro Daily rules."""
 
     def evaluate(self, request: StrategyRequest) -> StrategyEvaluation:
-        if request.strategy_id != STRATEGY_ID:
+        if request.strategy_id not in (STRATEGY_ID, CURRENT_D1_FILTER_V2):
             raise ValueError(f"unsupported strategy: {request.strategy_id}")
         if request.timeframe not in (Timeframe.H1, Timeframe.H4):
             raise ValueError("strategy timeframe must be H1 or H4")
@@ -159,6 +183,17 @@ class Spect8StrategyEvaluator:
             issues.append("INSUFFICIENT_SIGNAL_HISTORY")
         if len(completed_daily) < 6:
             issues.append("INSUFFICIENT_DAILY_HISTORY")
+        snapshot = request.daily_filter_snapshot
+        if request.strategy_version == CURRENT_D1_FILTER_V2:
+            if snapshot is None:
+                issues.append("DAILY_FILTER_SNAPSHOT_UNAVAILABLE")
+            elif completed_signal and (
+                snapshot.instrument != instrument.instrument_id
+                or snapshot.provider != instrument.provider
+                or snapshot.as_of_h1_close_time_utc != completed_signal[-1].close_time
+                or snapshot.strategy_version != CURRENT_D1_FILTER_V2
+            ):
+                issues.append("DAILY_FILTER_SNAPSHOT_MISMATCH")
         if issues:
             unique_issues = tuple(sorted(set(issues)))
             return StrategyEvaluation(
@@ -184,36 +219,60 @@ class Spect8StrategyEvaluator:
                 buy_candidate=None,
                 sell_candidate=None,
                 signal_bar=None,
+                strategy_version=request.strategy_version,
+                daily_filter_snapshot_id=(
+                    snapshot.snapshot_id if snapshot is not None else None
+                ),
             )
 
-        atr = wilder_atr(completed_daily, 5)
+        atr = (
+            snapshot.atr_value
+            if snapshot is not None and request.strategy_version == CURRENT_D1_FILTER_V2
+            else wilder_atr(completed_daily, 5)
+        )
         sma10 = simple_moving_average(completed_signal, 10)
         sma20 = simple_moving_average(completed_signal, 20)
-        filter_result = evaluate_micro_daily_filter(
-            completed_signal, completed_daily, atr
-        )
-        signal_result = evaluate_spect8_signal(
-            completed_signal, sma10, sma20
-        )
-        confirmed_buy = (
-            filter_result.buy.matched
-            and signal_result.buy.technical_signal
-        )
+        recent_low, recent_high = completed_extremes(completed_signal, 21)
+        if snapshot is not None and request.strategy_version == CURRENT_D1_FILTER_V2:
+            filter_result = MicroDailyFilterResult(
+                buy=FilterSideResult(
+                    direction=Direction.BUY,
+                    matched=snapshot.buy_matched,
+                    recent_extreme=recent_low,
+                    daily_level=snapshot.buy_threshold,
+                    reason_code=(
+                        "BUY_FILTER_MATCHED"
+                        if snapshot.buy_matched
+                        else "BUY_FILTER_NOT_MATCHED"
+                    ),
+                ),
+                sell=FilterSideResult(
+                    direction=Direction.SELL,
+                    matched=snapshot.sell_matched,
+                    recent_extreme=recent_high,
+                    daily_level=snapshot.sell_threshold,
+                    reason_code=(
+                        "SELL_FILTER_MATCHED"
+                        if snapshot.sell_matched
+                        else "SELL_FILTER_NOT_MATCHED"
+                    ),
+                ),
+                daily_raw_low=snapshot.previous_d1_low,
+                daily_raw_high=snapshot.previous_d1_high,
+                activation_buffer=snapshot.buffer_value,
+            )
+        else:
+            filter_result = evaluate_micro_daily_filter(
+                completed_signal, completed_daily, atr
+            )
+        signal_result = evaluate_spect8_signal(completed_signal, sma10, sma20)
+        confirmed_buy = filter_result.buy.matched and signal_result.buy.technical_signal
         confirmed_sell = (
-            filter_result.sell.matched
-            and signal_result.sell.technical_signal
+            filter_result.sell.matched and signal_result.sell.technical_signal
         )
         classification_reason_codes = (
-            (
-                "CONFIRMED_BUY"
-                if confirmed_buy
-                else "BUY_NOT_CONFIRMED"
-            ),
-            (
-                "CONFIRMED_SELL"
-                if confirmed_sell
-                else "SELL_NOT_CONFIRMED"
-            ),
+            ("CONFIRMED_BUY" if confirmed_buy else "BUY_NOT_CONFIRMED"),
+            ("CONFIRMED_SELL" if confirmed_sell else "SELL_NOT_CONFIRMED"),
         )
         dashboard_state = _dashboard_state(
             confirmed_buy,
@@ -236,9 +295,111 @@ class Spect8StrategyEvaluator:
             reason_codes=classification_reason_codes,
         )
         latest = completed_signal[-1]
-        stop_atr_distance, point_adjustment = calculate_level_distances(
-            atr, instrument
+        filter_window = completed_signal[-21:]
+        recent_low_bar = min(filter_window, key=lambda bar: bar.low)
+        recent_high_bar = max(filter_window, key=lambda bar: bar.high)
+        selected_audit_bars = []
+        for sequence, bar in enumerate(filter_window, start=1):
+            previous = filter_window[sequence - 2] if sequence > 1 else None
+            gap = classify_market_gap(previous, bar) if previous else None
+            selected_audit_bars.append(
+                FilterAuditBar(
+                    sequence=sequence,
+                    open_time=bar.open_time,
+                    close_time=bar.close_time,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    source_id=(
+                        f"{bar.provider}:{bar.instrument_id}:"
+                        f"{bar.timeframe.value}:{bar.close_time.isoformat()}"
+                    ),
+                    recent_low=bar is recent_low_bar,
+                    recent_high=bar is recent_high_bar,
+                    expected_market_closure_before=(
+                        gap is not None
+                        and gap.gap_type is GapType.EXPECTED_MARKET_CLOSURE
+                    ),
+                )
+            )
+
+        def daily_session(bar: Bar) -> FilterAuditDailySession:
+            return FilterAuditDailySession(
+                session_identifier=(
+                    bar.close_time.astimezone(NEW_YORK).date().isoformat()
+                ),
+                session_open_time=bar.open_time,
+                session_close_time=bar.close_time,
+                high=bar.high,
+                low=bar.low,
+            )
+
+        audit = FilterAuditResult(
+            instrument_id=instrument.instrument_id,
+            strategy_version=SPECIFICATION_ID,
+            timeframe=request.timeframe,
+            evaluation_time=request.evaluation_time,
+            evaluation_bar_open_time=latest.open_time,
+            evaluation_bar_close_time=latest.close_time,
+            evaluation_bar_open=latest.open,
+            evaluation_bar_high=latest.high,
+            evaluation_bar_low=latest.low,
+            evaluation_bar_close=latest.close,
+            evaluation_bar_confirmed_closed=(
+                latest.is_complete and latest.close_time < request.evaluation_time
+            ),
+            completed_bar_count=len(filter_window),
+            available_completed_bar_count=len(completed_signal),
+            lookback_period=21,
+            lookback_start_time=filter_window[0].close_time,
+            lookback_end_time=filter_window[-1].close_time,
+            recent_low=filter_result.buy.recent_extreme,
+            recent_low_bar_open_time=recent_low_bar.open_time,
+            recent_low_bar_close_time=recent_low_bar.close_time,
+            recent_high=filter_result.sell.recent_extreme,
+            recent_high_bar_open_time=recent_high_bar.open_time,
+            recent_high_bar_close_time=recent_high_bar.close_time,
+            daily_session=daily_session(completed_daily[-1]),
+            daily_reference_sessions=tuple(
+                daily_session(bar) for bar in completed_daily[-2:]
+            ),
+            atr_sessions=tuple(daily_session(bar) for bar in completed_daily),
+            d1_context_eligibility_time=latest.close_time,
+            atr_period=5,
+            atr_value=atr,
+            buffer_percentage=Decimal("0.05"),
+            buffer_value=filter_result.activation_buffer,
+            daily_low=filter_result.daily_raw_low,
+            daily_high=filter_result.daily_raw_high,
+            buy_threshold=filter_result.buy.daily_level,
+            sell_threshold=filter_result.sell.daily_level,
+            buy_comparison=FilterAuditBuyComparison(
+                recent_low=filter_result.buy.recent_extreme,
+                operator="<=",
+                buy_threshold=filter_result.buy.daily_level,
+                matched=filter_result.buy.matched,
+            ),
+            sell_comparison=FilterAuditSellComparison(
+                recent_high=filter_result.sell.recent_extreme,
+                operator=">=",
+                sell_threshold=filter_result.sell.daily_level,
+                matched=filter_result.sell.matched,
+            ),
+            final_classification=_filter_classification(
+                filter_result.buy.matched,
+                filter_result.sell.matched,
+            ),
+            source_provider=instrument.provider,
+            construction_profile=PROFILE_ID,
+            canonical_timezone=CANONICAL_TIMEZONE,
+            display_timezone="Broker Time",
+            daily_session_authority="17:00 America/New_York",
+            selected_bars=tuple(selected_audit_bars),
         )
+        if request.strategy_version == CURRENT_D1_FILTER_V2:
+            audit = None
+        stop_atr_distance, point_adjustment = calculate_level_distances(atr, instrument)
         buy_candidate = (
             calculate_candidate_levels(
                 Direction.BUY,
@@ -292,16 +453,8 @@ class Spect8StrategyEvaluator:
             *signal_result.buy.reason_codes,
             *signal_result.sell.reason_codes,
             *classification_reason_codes,
-            *(
-                buy_candidate.reason_codes
-                if buy_candidate is not None
-                else ()
-            ),
-            *(
-                sell_candidate.reason_codes
-                if sell_candidate is not None
-                else ()
-            ),
+            *(buy_candidate.reason_codes if buy_candidate is not None else ()),
+            *(sell_candidate.reason_codes if sell_candidate is not None else ()),
         )
         return StrategyEvaluation(
             case_id=request.case_id,
@@ -326,4 +479,9 @@ class Spect8StrategyEvaluator:
             buy_candidate=buy_candidate,
             sell_candidate=sell_candidate,
             signal_bar=latest,
+            filter_audit=audit,
+            strategy_version=request.strategy_version,
+            daily_filter_snapshot_id=(
+                snapshot.snapshot_id if snapshot is not None else None
+            ),
         )

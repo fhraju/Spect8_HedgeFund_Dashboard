@@ -9,7 +9,9 @@ from .models import (
     CanonicalInstrument,
     NormalizationResult,
     RawProviderCandle,
+    TimestampSemantics,
 )
+from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 
 
 def _utc(value: str, session_timezone: str) -> datetime:
@@ -43,8 +45,20 @@ class CandleNormalizer:
             issues.append("INCOMPLETE_CANDLE")
 
         try:
-            open_time = _utc(raw.raw_open_time, raw.session_timezone)
-            close_time = _utc(raw.raw_close_time, raw.session_timezone)
+            if raw.open_time_utc is not None or raw.close_time_utc is not None:
+                if (
+                    raw.open_time_utc is None
+                    or raw.close_time_utc is None
+                    or raw.timestamp_semantics is TimestampSemantics.UNKNOWN
+                ):
+                    raise ValueError("explicit timestamps require declared semantics")
+                open_time = raw.open_time_utc.astimezone(timezone.utc)
+                close_time = raw.close_time_utc.astimezone(timezone.utc)
+            else:
+                # Compatibility path for frozen replay/test fixtures created
+                # before explicit provider timestamp semantics existed.
+                open_time = _utc(raw.raw_open_time, raw.session_timezone)
+                close_time = _utc(raw.raw_close_time, raw.session_timezone)
         except (ValueError, TypeError):
             issues.append("INVALID_TIMESTAMP")
             open_time = close_time = None
@@ -59,8 +73,7 @@ class CandleNormalizer:
             issues.append("INVALID_PRICE")
             prices = ()
         prices_are_valid = bool(prices) and not any(
-            not price.is_finite() or price <= Decimal("0")
-            for price in prices
+            not price.is_finite() or price <= Decimal("0") for price in prices
         )
         if prices and not prices_are_valid:
             issues.append("INVALID_PRICE")
@@ -121,6 +134,33 @@ class CandleNormalizer:
                 raw_low=raw.low,
                 raw_close=raw.close,
                 synthetic=instrument.synthetic,
+                quality_status="VALID",
+                construction_profile_version=(
+                    PROFILE_ID
+                    if (
+                        raw.timeframe.value == "H1"
+                        and instrument.asset_class == "FOREX"
+                        and not instrument.synthetic
+                    )
+                    else "PROVIDER_NATIVE_COMPARISON_ONLY"
+                ),
+                provider_adapter_version=raw.adapter_version,
+                source_timeframe=raw.source_timeframe or raw.timeframe,
+                source_candle_ids=(
+                    raw.source_id
+                    or (
+                        f"{raw.provider_id}:{instrument.instrument_id}:"
+                        f"{raw.timeframe.value}:{close_time.isoformat()}"
+                    ),
+                ),
+                forward_filled=False,
+                ingestion_run_id=(
+                    str(raw.provider_metadata.get("ingestion_run_id"))
+                    if raw.provider_metadata
+                    and raw.provider_metadata.get("ingestion_run_id")
+                    else None
+                ),
+                created_at=raw.received_at or close_time,
             ),
             issues=(),
         )

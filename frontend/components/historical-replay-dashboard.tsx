@@ -6,6 +6,7 @@ import type {
   HistoricalReplayRun,
   HistoricalReplaySummary,
 } from "@/lib/api-types";
+import { ZonedTimestamp } from "./zoned-timestamp";
 
 type ReplayFilters = {
   run?: string;
@@ -16,16 +17,6 @@ type ReplayFilters = {
   page?: string;
   evaluation?: string;
 };
-
-function utc(value: string | null | undefined): string {
-  if (!value) return "Not available";
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-    hour12: false,
-  }).format(new Date(value));
-}
 
 function price(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -113,7 +104,8 @@ export function HistoricalReplayDashboard({
             </div>
             {run && (
               <dl>
-                <div><dt>Display range</dt><dd>{utc(run.display_start)} — {utc(run.display_end)} UTC</dd></div>
+                <div><dt>Display range start</dt><dd><ZonedTimestamp value={run.display_start} /></dd></div>
+                <div><dt>Display range end</dt><dd><ZonedTimestamp value={run.display_end} /></dd></div>
                 <div><dt>Provider</dt><dd>{run.provider}</dd></div>
                 <div><dt>Strategy</dt><dd>{run.strategy_version}</dd></div>
                 <div><dt>Progress</dt><dd>{run.progress.completed}/{run.progress.total} · {run.progress.percent}%</dd></div>
@@ -130,7 +122,7 @@ export function HistoricalReplayDashboard({
                   key={item.run_id}
                 >
                   <b>{item.status}</b>
-                  <span>{utc(item.created_at)} UTC</span>
+                  <ZonedTimestamp value={item.created_at} />
                   <small>{item.run_id.slice(0, 10)}</small>
                 </Link>
               ))}
@@ -168,7 +160,7 @@ export function HistoricalReplayDashboard({
                   {summary?.dataset ? (
                     <dl>
                       <div><dt>Fingerprint</dt><dd title={summary.dataset.fingerprint}>{summary.dataset.fingerprint}</dd></div>
-                      <div><dt>Warm-up start</dt><dd>{utc(summary.dataset.warmup_start)} UTC</dd></div>
+                      <div><dt>Warm-up start</dt><dd><ZonedTimestamp value={summary.dataset.warmup_start} /></dd></div>
                       {Object.entries(summary.dataset.candle_counts).map(([timeframe, value]) => (
                         <div key={timeframe}><dt>{timeframe} candles</dt><dd>{value.accepted} accepted · {value.warmup} warm-up · {value.display} display</dd></div>
                       ))}
@@ -195,7 +187,7 @@ export function HistoricalReplayDashboard({
                   <button type="submit">Apply filters</button>
                 </form>
                 {evaluations?.items.length ? (
-                  <div className="replay-table-wrap"><table className="replay-table"><thead><tr><th>Timestamp UTC</th><th>TF</th><th>Filter</th><th>Signal</th><th>Close</th><th>D1 context</th><th>Reason codes</th><th /></tr></thead><tbody>{evaluations.items.map((item) => <tr key={item.id}><td>{utc(item.signal_close_utc)}</td><td><span className="tf-tag">{item.timeframe}</span></td><td><span className={`replay-result ${item.filter_outcome.toLowerCase()}`}>{item.filter_outcome}</span></td><td><span className={`replay-result ${item.signal_outcome === "SIGNAL" ? "pass" : "neutral"}`}>{item.signal_outcome}</span></td><td>{price(item.market_values.signal_close)}</td><td>{utc(item.d1_context_close_utc)}</td><td><span className="replay-reasons">{item.reason_codes.slice(0, 3).join(" · ")}</span></td><td><Link href={href(filters, { evaluation: String(item.id) })}>Inspect</Link></td></tr>)}</tbody></table></div>
+                  <div className="replay-table-wrap"><table className="replay-table"><thead><tr><th>Timestamp (Broker Time)</th><th>TF</th><th>Filter</th><th>Signal</th><th>Close</th><th>New York D1 close</th><th>Reason codes</th><th /></tr></thead><tbody>{evaluations.items.map((item) => <tr key={item.id}><td><ZonedTimestamp value={item.signal_close_utc} /></td><td><span className="tf-tag">{item.timeframe}</span></td><td><span className={`replay-result ${item.filter_outcome.toLowerCase()}`}>{item.filter_outcome}</span></td><td><span className={`replay-result ${item.signal_outcome === "SIGNAL" ? "pass" : "neutral"}`}>{item.signal_outcome}</span></td><td>{price(item.market_values.signal_close)}</td><td><ZonedTimestamp value={item.d1_context_close_utc} newYorkPrefix="New York close" /></td><td><span className="replay-reasons">{item.reason_codes.slice(0, 3).join(" · ")}</span></td><td><Link href={href(filters, { evaluation: String(item.id) })}>Inspect</Link></td></tr>)}</tbody></table></div>
                 ) : <div className="replay-empty-row">No evaluations match the selected filters.</div>}
                 {evaluations && evaluations.pages > 1 && <div className="replay-pagination"><Link aria-disabled={evaluations.page <= 1} href={href(filters, { page: String(Math.max(1, evaluations.page - 1)), evaluation: "" })}>Previous</Link><span>Page {evaluations.page} of {evaluations.pages}</span><Link aria-disabled={evaluations.page >= evaluations.pages} href={href(filters, { page: String(Math.min(evaluations.pages, evaluations.page + 1)), evaluation: "" })}>Next</Link></div>}
               </section>
@@ -204,7 +196,7 @@ export function HistoricalReplayDashboard({
                 <section className="panel replay-inspector" aria-label="Evaluation inspector">
                   <div className="panel-heading"><div><span className="section-kicker">Persisted inputs and outputs</span><h2>Evaluation #{detail.ordinal} · {detail.timeframe}</h2></div><Link href={href(filters, { evaluation: "" })}>Close</Link></div>
                   <div className="inspector-grid">
-                    <dl><div><dt>Signal close</dt><dd>{utc(detail.signal_close_utc)} UTC</dd></div><div><dt>Replay as-of</dt><dd>{utc(detail.replay_as_of_utc)} UTC</dd></div><div><dt>D1 context</dt><dd>{utc(detail.d1_context_close_utc)} UTC</dd></div><div><dt>Filter / signal</dt><dd>{detail.filter_outcome} / {detail.signal_outcome}</dd></div></dl>
+                    <dl><div><dt>Signal close</dt><dd><ZonedTimestamp value={detail.signal_close_utc} /></dd></div><div><dt>Replay as-of</dt><dd><ZonedTimestamp value={detail.replay_as_of_utc} /></dd></div><div><dt>New York D1 close</dt><dd><ZonedTimestamp value={detail.d1_context_close_utc} newYorkPrefix="New York close" /></dd></div><div><dt>Filter / signal</dt><dd>{detail.filter_outcome} / {detail.signal_outcome}</dd></div></dl>
                     <dl><div><dt>Open</dt><dd>{price(detail.market_values.signal_open)}</dd></div><div><dt>High / low</dt><dd>{price(detail.market_values.signal_high)} / {price(detail.market_values.signal_low)}</dd></div><div><dt>MA 10 / 20</dt><dd>{price(detail.market_values.sma10)} / {price(detail.market_values.sma20)}</dd></div><div><dt>D1 ATR</dt><dd>{price(detail.market_values.atr_d1_wilder_5)}</dd></div></dl>
                   </div>
                   <div className="reason-list">{detail.reason_codes.map((reason) => <span key={reason}>{reason}</span>)}</div>

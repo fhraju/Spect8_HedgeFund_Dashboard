@@ -7,13 +7,27 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from threading import RLock
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from .domain import Bar, DomainEvent, InstrumentStatus, Timeframe, primitive
 from .observation import expansion_projections
 
 if TYPE_CHECKING:
+    from .engine.models import DailyFilterSnapshot
     from .market_data.models import ProviderHealth
+
+
+def _exact_value(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if isinstance(value, dict):
+        return {key: _exact_value(child) for key, child in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_exact_value(child) for child in value]
+    return value
 
 
 class SQLiteProjectionRepository:
@@ -80,6 +94,18 @@ class SQLiteProjectionRepository:
                     volume TEXT,
                     raw_evidence_json TEXT NOT NULL,
                     synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
+                    quality_status TEXT NOT NULL DEFAULT 'VALID',
+                    construction_profile_version TEXT NOT NULL DEFAULT 'LEGACY',
+                    provider_adapter_version TEXT NOT NULL DEFAULT 'legacy',
+                    source_timeframe TEXT,
+                    source_candle_ids_json TEXT NOT NULL DEFAULT '[]',
+                    forward_filled INTEGER NOT NULL DEFAULT 0 CHECK (forward_filled IN (0, 1)),
+                    expected_closure_before INTEGER NOT NULL DEFAULT 0 CHECK (expected_closure_before IN (0, 1)),
+                    ingestion_run_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+                    session_identifier TEXT,
+                    session_open_broker_time TEXT,
+                    session_close_broker_time TEXT,
                     PRIMARY KEY (
                         provider, instrument_id, timeframe, close_time_utc
                     )
@@ -128,11 +154,73 @@ class SQLiteProjectionRepository:
                     events_created INTEGER NOT NULL,
                     issues_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS canonical_quality_issues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    bucket_open_utc TEXT,
+                    bucket_close_utc TEXT,
+                    issue_code TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    construction_profile_version TEXT NOT NULL,
+                    ingestion_run_id TEXT,
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    UNIQUE (
+                        provider, instrument_id, timeframe,
+                        bucket_open_utc, bucket_close_utc, issue_code
+                    )
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_filter_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    strategy_version TEXT NOT NULL,
+                    canonical_profile_version TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    as_of_h1_close_time_utc TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    source_checksum TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (
+                        strategy_version, canonical_profile_version, provider,
+                        instrument_id, as_of_h1_close_time_utc
+                    )
+                );
                 """
             )
             self._migrate_synthetic_constraints(connection)
+            self._migrate_canonical_provenance(connection)
             self._migrate_status_payloads(connection)
             connection.commit()
+
+    @staticmethod
+    def _migrate_canonical_provenance(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(canonical_bars)")
+        }
+        additions = {
+            "quality_status": "TEXT NOT NULL DEFAULT 'VALID'",
+            "construction_profile_version": "TEXT NOT NULL DEFAULT 'LEGACY'",
+            "provider_adapter_version": "TEXT NOT NULL DEFAULT 'legacy'",
+            "source_timeframe": "TEXT",
+            "source_candle_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+            "forward_filled": "INTEGER NOT NULL DEFAULT 0 CHECK (forward_filled IN (0, 1))",
+            "expected_closure_before": "INTEGER NOT NULL DEFAULT 0 CHECK (expected_closure_before IN (0, 1))",
+            "ingestion_run_id": "TEXT",
+            "created_at": "TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
+            "session_identifier": "TEXT",
+            "session_open_broker_time": "TEXT",
+            "session_close_broker_time": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                connection.execute(
+                    f"ALTER TABLE canonical_bars ADD COLUMN {name} {definition}"
+                )
 
     @staticmethod
     def _migrate_synthetic_constraints(connection: sqlite3.Connection) -> None:
@@ -364,11 +452,95 @@ class SQLiteProjectionRepository:
             connection.commit()
             return True
 
+    def replace_latest_statuses_with_audit(
+        self,
+        statuses: tuple[InstrumentStatus, ...],
+    ) -> int:
+        """Atomically add evaluator-produced audit evidence to latest statuses."""
+
+        if not statuses:
+            return 0
+        if any(status.filter_audit is None for status in statuses):
+            raise ValueError("replacement statuses must contain filter audit evidence")
+
+        replacements = tuple((status, primitive(status)) for status in statuses)
+        changed = 0
+        with self._lock, closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                for status, replacement in replacements:
+                    row = connection.execute(
+                        """
+                        SELECT status_json
+                        FROM instrument_status
+                        WHERE strategy_id = ? AND provider = ?
+                          AND instrument_id = ? AND timeframe = ?
+                        """,
+                        (
+                            status.strategy_id,
+                            status.provider,
+                            status.instrument_id,
+                            status.timeframe.value,
+                        ),
+                    ).fetchone()
+                    if row is None:
+                        raise ValueError(
+                            f"{status.timeframe.value}: latest persisted status is missing"
+                        )
+                    current = json.loads(row["status_json"])
+                    if current.get("idempotency_key") != status.idempotency_key:
+                        raise ValueError(
+                            f"{status.timeframe.value}: latest persisted status changed during rebuild"
+                        )
+                    current_audit = current.get("filter_audit")
+                    if current_audit == replacement["filter_audit"]:
+                        continue
+                    if current_audit is not None:
+                        raise ValueError(
+                            f"{status.timeframe.value}: persisted audit differs from evaluator rebuild"
+                        )
+                    comparable = dict(replacement)
+                    comparable.pop("filter_audit", None)
+                    current_without_audit = dict(current)
+                    current_without_audit.pop("filter_audit", None)
+                    if current_without_audit != comparable:
+                        differing = sorted(
+                            key
+                            for key in set(current_without_audit) | set(comparable)
+                            if current_without_audit.get(key) != comparable.get(key)
+                        )
+                        raise ValueError(
+                            f"{status.timeframe.value}: rebuild would change non-audit fields: "
+                            + ", ".join(differing)
+                        )
+                    connection.execute(
+                        """
+                        UPDATE instrument_status
+                        SET status_json = ?
+                        WHERE strategy_id = ? AND provider = ?
+                          AND instrument_id = ? AND timeframe = ?
+                        """,
+                        (
+                            json.dumps(replacement, sort_keys=True),
+                            status.strategy_id,
+                            status.provider,
+                            status.instrument_id,
+                            status.timeframe.value,
+                        ),
+                    )
+                    changed += 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return changed
+
     def persist_canonical_bars(self, bars: tuple[Bar, ...]) -> int:
         inserted = 0
         with self._lock, closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             for bar in bars:
+                self._validate_forex_v1_bar(bar)
                 value = primitive(bar)
                 raw_evidence = {
                     "provider_symbol": bar.raw_provider_symbol,
@@ -385,8 +557,15 @@ class SQLiteProjectionRepository:
                         provider, instrument_id, timeframe, close_time_utc,
                         open_time_utc, raw_open_time, raw_close_time,
                         raw_provider_symbol, session_timezone, open, high, low,
-                        close, volume, raw_evidence_json, synthetic
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        close, volume, raw_evidence_json, synthetic,
+                        quality_status, construction_profile_version,
+                        provider_adapter_version, source_timeframe,
+                        source_candle_ids_json, forward_filled,
+                        expected_closure_before, ingestion_run_id, created_at,
+                        session_identifier, session_open_broker_time,
+                        session_close_broker_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         bar.provider,
@@ -405,11 +584,172 @@ class SQLiteProjectionRepository:
                         str(bar.volume) if bar.volume is not None else None,
                         json.dumps(raw_evidence, sort_keys=True),
                         int(bar.synthetic),
+                        bar.quality_status,
+                        bar.construction_profile_version,
+                        bar.provider_adapter_version,
+                        bar.source_timeframe.value if bar.source_timeframe else None,
+                        json.dumps(bar.source_candle_ids),
+                        int(bar.forward_filled),
+                        int(bar.expected_closure_before),
+                        bar.ingestion_run_id,
+                        value["created_at"] or value["close_time"],
+                        bar.session_identifier,
+                        bar.session_open_broker_time,
+                        bar.session_close_broker_time,
                     ),
                 )
                 inserted += max(cursor.rowcount, 0)
             connection.commit()
         return inserted
+
+    def persist_quality_issue(
+        self,
+        *,
+        provider: str,
+        instrument_id: str,
+        timeframe: Timeframe,
+        issue_code: str,
+        detail: str,
+        created_at: datetime,
+        bucket_open: datetime | None = None,
+        bucket_close: datetime | None = None,
+        construction_profile_version: str,
+        ingestion_run_id: str | None = None,
+    ) -> bool:
+        def iso(value: datetime | None) -> str | None:
+            return (
+                value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+                if value is not None
+                else None
+            )
+
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO canonical_quality_issues (
+                    provider, instrument_id, timeframe, bucket_open_utc,
+                    bucket_close_utc, issue_code, detail,
+                    construction_profile_version, ingestion_run_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider,
+                    instrument_id,
+                    timeframe.value,
+                    iso(bucket_open) or "",
+                    iso(bucket_close) or "",
+                    issue_code,
+                    detail,
+                    construction_profile_version,
+                    ingestion_run_id,
+                    iso(created_at),
+                ),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def quality_issues(self) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM canonical_quality_issues ORDER BY id"
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def persist_daily_filter_snapshot(self, snapshot: "DailyFilterSnapshot") -> bool:
+        payload = _exact_value(asdict(snapshot))
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO daily_filter_snapshots (
+                    snapshot_id, strategy_version, canonical_profile_version,
+                    provider, instrument_id, as_of_h1_close_time_utc,
+                    payload_json, source_checksum, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.snapshot_id,
+                    snapshot.strategy_version,
+                    snapshot.canonical_profile_version,
+                    snapshot.provider,
+                    snapshot.instrument,
+                    payload["as_of_h1_close_time_utc"],
+                    encoded,
+                    snapshot.current_partial_d1.source_checksum,
+                    payload["created_at"],
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT payload_json FROM daily_filter_snapshots WHERE snapshot_id = ?",
+                    (snapshot.snapshot_id,),
+                ).fetchone()
+                if row is None or row["payload_json"] != encoded:
+                    raise ValueError("Daily Filter snapshot identity conflict")
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def latest_daily_filter_snapshot(
+        self,
+        provider: str,
+        instrument_id: str,
+        strategy_version: str | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT payload_json FROM daily_filter_snapshots
+            WHERE provider = ? AND instrument_id = ?
+        """
+        values: list[Any] = [provider, instrument_id]
+        if strategy_version is not None:
+            query += " AND strategy_version = ?"
+            values.append(strategy_version)
+        query += " ORDER BY as_of_h1_close_time_utc DESC LIMIT 1"
+        with closing(self._connect()) as connection:
+            row = connection.execute(query, values).fetchone()
+        return json.loads(row["payload_json"]) if row is not None else None
+
+    def daily_filter_snapshot_at(
+        self,
+        provider: str,
+        instrument_id: str,
+        strategy_version: str,
+        as_of_h1_close_time_utc: str,
+    ) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM daily_filter_snapshots
+                   WHERE provider = ? AND instrument_id = ?
+                     AND strategy_version = ?
+                     AND as_of_h1_close_time_utc = ?""",
+                (provider, instrument_id, strategy_version, as_of_h1_close_time_utc),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row is not None else None
+
+    def daily_filter_evaluation_references(
+        self, snapshot_id: str
+    ) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT idempotency_key, timeframe, occurred_at
+                   FROM event_history
+                   WHERE event_type = 'FILTER_EVALUATED'
+                     AND json_extract(payload_json, '$.daily_filter_snapshot_id') = ?
+                   ORDER BY timeframe""",
+                (snapshot_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def daily_filter_snapshot_count(
+        self, provider: str, instrument_id: str, strategy_version: str
+    ) -> int:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM daily_filter_snapshots
+                   WHERE provider = ? AND instrument_id = ?
+                     AND strategy_version = ?""",
+                (provider, instrument_id, strategy_version),
+            ).fetchone()
+        return int(row["count"])
 
     def canonical_bar_objects(
         self,
@@ -425,7 +765,12 @@ class SQLiteProjectionRepository:
                 SELECT provider, instrument_id, timeframe, close_time_utc,
                        open_time_utc, raw_open_time, raw_close_time,
                        raw_provider_symbol, session_timezone, open, high, low,
-                       close, volume, synthetic
+                       close, volume, synthetic, quality_status,
+                       construction_profile_version, provider_adapter_version,
+                       source_timeframe, source_candle_ids_json, forward_filled,
+                       expected_closure_before, ingestion_run_id, created_at,
+                       session_identifier, session_open_broker_time,
+                       session_close_broker_time
                 FROM canonical_bars
                 WHERE provider = ? AND instrument_id = ? AND timeframe = ?
                 ORDER BY close_time_utc
@@ -448,11 +793,7 @@ class SQLiteProjectionRepository:
                 close=Decimal(row["close"]),
                 provider=row["provider"],
                 is_complete=True,
-                volume=(
-                    Decimal(row["volume"])
-                    if row["volume"] is not None
-                    else None
-                ),
+                volume=(Decimal(row["volume"]) if row["volume"] is not None else None),
                 session_timezone=row["session_timezone"],
                 raw_provider_symbol=row["raw_provider_symbol"],
                 raw_open_time=row["raw_open_time"],
@@ -462,6 +803,24 @@ class SQLiteProjectionRepository:
                 raw_low=row["low"],
                 raw_close=row["close"],
                 synthetic=bool(row["synthetic"]),
+                quality_status=row["quality_status"],
+                construction_profile_version=row["construction_profile_version"],
+                provider_adapter_version=row["provider_adapter_version"],
+                source_timeframe=(
+                    Timeframe(row["source_timeframe"])
+                    if row["source_timeframe"]
+                    else None
+                ),
+                source_candle_ids=tuple(json.loads(row["source_candle_ids_json"])),
+                forward_filled=bool(row["forward_filled"]),
+                expected_closure_before=bool(row["expected_closure_before"]),
+                ingestion_run_id=row["ingestion_run_id"],
+                created_at=datetime.fromisoformat(
+                    row["created_at"].replace("Z", "+00:00")
+                ),
+                session_identifier=row["session_identifier"],
+                session_open_broker_time=row["session_open_broker_time"],
+                session_close_broker_time=row["session_close_broker_time"],
             )
             for row in rows
         )
@@ -492,9 +851,7 @@ class SQLiteProjectionRepository:
         provider: str,
         instrument_id: str,
         daily_bars: tuple[Bar, ...],
-        projections: tuple[
-            tuple[InstrumentStatus, tuple[DomainEvent, ...]], ...
-        ],
+        projections: tuple[tuple[InstrumentStatus, tuple[DomainEvent, ...]], ...],
     ) -> None:
         """Atomically replace D1 bars and all dependent strategy projections."""
 
@@ -545,11 +902,63 @@ class SQLiteProjectionRepository:
                 connection.rollback()
                 raise
 
+    def replace_market_profile_and_projections(
+        self,
+        *,
+        strategy_id: str,
+        provider: str,
+        instrument_id: str,
+        h1_bars: tuple[Bar, ...],
+        h4_bars: tuple[Bar, ...],
+        daily_bars: tuple[Bar, ...],
+        projections: tuple[tuple[InstrumentStatus, tuple[DomainEvent, ...]], ...],
+    ) -> None:
+        """Atomically replace one instrument's validated Forex streams/projections."""
+
+        prefix = f"{strategy_id}:{provider}:{instrument_id}:"
+        with self._lock, closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                keys = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT idempotency_key FROM processed_bars WHERE substr(idempotency_key, 1, ?) = ?",
+                        (len(prefix), prefix),
+                    ).fetchall()
+                )
+                if keys:
+                    placeholders = ",".join("?" for _ in keys)
+                    connection.execute(
+                        f"DELETE FROM event_history WHERE idempotency_key IN ({placeholders})",
+                        keys,
+                    )
+                    connection.execute(
+                        f"DELETE FROM processed_bars WHERE idempotency_key IN ({placeholders})",
+                        keys,
+                    )
+                connection.execute(
+                    "DELETE FROM instrument_status WHERE strategy_id = ? AND provider = ? AND instrument_id = ?",
+                    (strategy_id, provider, instrument_id),
+                )
+                connection.execute(
+                    "DELETE FROM canonical_bars WHERE provider = ? AND instrument_id = ? AND timeframe IN ('H1','H4','D1')",
+                    (provider, instrument_id),
+                )
+                for bar in (*h1_bars, *h4_bars, *daily_bars):
+                    self._insert_canonical_bar(connection, bar)
+                for status, events in projections:
+                    self._insert_projection(connection, status, events)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
     @staticmethod
     def _insert_canonical_bar(
         connection: sqlite3.Connection,
         bar: Bar,
     ) -> None:
+        SQLiteProjectionRepository._validate_forex_v1_bar(bar)
         value = primitive(bar)
         raw_evidence = {
             "provider_symbol": bar.raw_provider_symbol,
@@ -566,8 +975,15 @@ class SQLiteProjectionRepository:
                 provider, instrument_id, timeframe, close_time_utc,
                 open_time_utc, raw_open_time, raw_close_time,
                 raw_provider_symbol, session_timezone, open, high, low,
-                close, volume, raw_evidence_json, synthetic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                close, volume, raw_evidence_json, synthetic,
+                quality_status, construction_profile_version,
+                provider_adapter_version, source_timeframe,
+                source_candle_ids_json, forward_filled,
+                expected_closure_before, ingestion_run_id, created_at,
+                session_identifier, session_open_broker_time,
+                session_close_broker_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 bar.provider,
@@ -586,8 +1002,47 @@ class SQLiteProjectionRepository:
                 str(bar.volume) if bar.volume is not None else None,
                 json.dumps(raw_evidence, sort_keys=True),
                 int(bar.synthetic),
+                bar.quality_status,
+                bar.construction_profile_version,
+                bar.provider_adapter_version,
+                bar.source_timeframe.value if bar.source_timeframe else None,
+                json.dumps(bar.source_candle_ids),
+                int(bar.forward_filled),
+                int(bar.expected_closure_before),
+                bar.ingestion_run_id,
+                value["created_at"] or value["close_time"],
+                bar.session_identifier,
+                bar.session_open_broker_time,
+                bar.session_close_broker_time,
             ),
         )
+
+    @staticmethod
+    def _validate_forex_v1_bar(bar: Bar) -> None:
+        from .market_data.profiles.ic_markets_ny_close_forex_v1 import (
+            PROFILE_ID,
+        )
+
+        if bar.construction_profile_version != PROFILE_ID:
+            return
+        if bar.synthetic:
+            raise ValueError("Forex V1 provider-derived candles cannot be synthetic")
+        if bar.forward_filled:
+            raise ValueError("Forex V1 candles cannot be forward-filled")
+        if bar.open_time.utcoffset() != timezone.utc.utcoffset(
+            bar.open_time
+        ) or bar.close_time.utcoffset() != timezone.utc.utcoffset(bar.close_time):
+            raise ValueError("Forex V1 canonical timestamps must be UTC")
+        if not bar.source_candle_ids:
+            raise ValueError("Forex V1 candles require source provenance")
+        if bar.timeframe is Timeframe.H4 and len(bar.source_candle_ids) != 4:
+            raise ValueError("Forex V1 H4 requires exactly four H1 source IDs")
+        if bar.timeframe is Timeframe.D1 and len(bar.source_candle_ids) not in (
+            23,
+            24,
+            25,
+        ):
+            raise ValueError("Forex V1 D1 requires complete DST-aware H1 provenance")
 
     @staticmethod
     def _insert_projection(
@@ -870,25 +1325,19 @@ class SQLiteProjectionRepository:
     def processed_count(self) -> int:
         with closing(self._connect()) as connection:
             return int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM processed_bars"
-                ).fetchone()[0]
+                connection.execute("SELECT COUNT(*) FROM processed_bars").fetchone()[0]
             )
 
     def event_count(self) -> int:
         with closing(self._connect()) as connection:
             return int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM event_history"
-                ).fetchone()[0]
+                connection.execute("SELECT COUNT(*) FROM event_history").fetchone()[0]
             )
 
     def canonical_bar_count(self) -> int:
         with closing(self._connect()) as connection:
             return int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM canonical_bars"
-                ).fetchone()[0]
+                connection.execute("SELECT COUNT(*) FROM canonical_bars").fetchone()[0]
             )
 
     def canonical_bars(self) -> list[dict[str, Any]]:
@@ -1010,9 +1459,7 @@ class SQLiteProjectionRepository:
         *,
         as_of: datetime | None = None,
     ) -> dict[str, Any]:
-        generated_at = (as_of or datetime.now(timezone.utc)).astimezone(
-            timezone.utc
-        )
+        generated_at = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with closing(self._connect()) as connection:
             sessions = connection.execute(
                 """
@@ -1066,9 +1513,7 @@ class SQLiteProjectionRepository:
                     telemetry.get("series_attempts", {}).get(timeframe, 0)
                 )
                 discoveries[timeframe] += int(
-                    telemetry.get("completed_discoveries", {}).get(
-                        timeframe, 0
-                    )
+                    telemetry.get("completed_discoveries", {}).get(timeframe, 0)
                 )
             state = str(row["health_state"])
             if state != last_state:
@@ -1082,19 +1527,13 @@ class SQLiteProjectionRepository:
             if state in unhealthy_states and unhealthy_start is None:
                 unhealthy_start = row["completed_at"]
             elif state not in unhealthy_states and unhealthy_start is not None:
-                start = datetime.fromisoformat(
-                    unhealthy_start.replace("Z", "+00:00")
-                )
-                end = datetime.fromisoformat(
-                    row["completed_at"].replace("Z", "+00:00")
-                )
+                start = datetime.fromisoformat(unhealthy_start.replace("Z", "+00:00"))
+                end = datetime.fromisoformat(row["completed_at"].replace("Z", "+00:00"))
                 unhealthy_periods.append(
                     {
                         "started_at": unhealthy_start,
                         "recovered_at": row["completed_at"],
-                        "recovery_seconds": max(
-                            0, int((end - start).total_seconds())
-                        ),
+                        "recovery_seconds": max(0, int((end - start).total_seconds())),
                     }
                 )
                 unhealthy_start = None
@@ -1110,13 +1549,9 @@ class SQLiteProjectionRepository:
 
         uptime_seconds = 0
         for session in sessions:
-            start = datetime.fromisoformat(
-                session["started_at"].replace("Z", "+00:00")
-            )
+            start = datetime.fromisoformat(session["started_at"].replace("Z", "+00:00"))
             end = (
-                datetime.fromisoformat(
-                    session["ended_at"].replace("Z", "+00:00")
-                )
+                datetime.fromisoformat(session["ended_at"].replace("Z", "+00:00"))
                 if session["ended_at"]
                 else generated_at
             )
@@ -1124,9 +1559,7 @@ class SQLiteProjectionRepository:
 
         measured_hours = uptime_seconds / 3600
         measured_requests_per_hour = (
-            totals["network_attempts"] / measured_hours
-            if measured_hours > 0
-            else None
+            totals["network_attempts"] / measured_hours if measured_hours > 0 else None
         )
 
         return {
@@ -1138,9 +1571,7 @@ class SQLiteProjectionRepository:
                 if sessions
                 else (polls[0]["attempted_at"] if polls else None)
             ),
-            "observation_end_utc": (
-                polls[-1]["completed_at"] if polls else None
-            ),
+            "observation_end_utc": (polls[-1]["completed_at"] if polls else None),
             "runtime_uptime_seconds": uptime_seconds,
             "runtime_sessions": len(sessions),
             "restarts": max(0, len(sessions) - 1),
@@ -1148,9 +1579,7 @@ class SQLiteProjectionRepository:
             "request_metrics": {
                 **totals,
                 "attempts_by_timeframe": timeframe_attempts,
-                "measured_average_requests_per_hour": (
-                    measured_requests_per_hour
-                ),
+                "measured_average_requests_per_hour": (measured_requests_per_hour),
                 "measured_projected_requests_per_day": (
                     measured_requests_per_hour * 24
                     if measured_requests_per_hour is not None
@@ -1159,9 +1588,7 @@ class SQLiteProjectionRepository:
             },
             "steady_state_request_projections": expansion_projections(),
             "completed_candle_discoveries": discoveries,
-            "evaluations_created": sum(
-                row["evaluations_created"] for row in polls
-            ),
+            "evaluations_created": sum(row["evaluations_created"] for row in polls),
             "duplicate_evaluations_prevented": sum(
                 row["duplicate_evaluations_prevented"] for row in polls
             ),

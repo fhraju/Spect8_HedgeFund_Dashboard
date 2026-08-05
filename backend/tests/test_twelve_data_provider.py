@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import json
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -167,10 +166,7 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
     triggers = provider.fetch_completed_bars(AS_OF)
     provider.fetch_required_history(triggers[-1], AS_OF)
 
-    assert {call["params"]["interval"] for call in transport.calls} == {
-        "1h",
-        "4h",
-    }
+    assert {call["params"]["interval"] for call in transport.calls} == {"1h"}
     for call in transport.calls:
         assert call["path"] == "/time_series"
         assert call["params"]["symbol"] == "EUR/USD"
@@ -180,16 +176,18 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
         assert call["read_timeout"] == 4.5
         assert "apikey" not in call["params"]
         assert call["headers"]["Authorization"].startswith("apikey ")
-    assert {call["params"]["outputsize"] for call in transport.calls} == {
-        "198",
-        "31",
-        "673",
-    }
+    assert {call["params"]["outputsize"] for call in transport.calls} == {"673"}
     telemetry = provider.telemetry()
-    assert telemetry.network_attempts == 3
-    assert telemetry.successful_requests == 3
+    assert telemetry.network_attempts == 1
+    assert telemetry.successful_requests == 1
     assert telemetry.failed_requests == 0
-    assert telemetry.series_attempts == {"H1": 2, "H4": 1, "D1": 0}
+    assert telemetry.series_attempts == {"H1": 1, "H4": 0, "D1": 0}
+    assert telemetry.requests_used_this_minute == 1
+    assert telemetry.estimated_credits_used_today == 1
+    assert telemetry.last_h1_request == AS_OF
+    assert telemetry.next_expected_h1_close == datetime(
+        2026, 7, 30, 12, tzinfo=timezone.utc
+    )
 
 
 def test_boundary_cache_avoids_requests_until_a_series_can_advance() -> None:
@@ -200,7 +198,7 @@ def test_boundary_cache_avoids_requests_until_a_series_can_advance() -> None:
     first_call_count = len(transport.calls)
     same_boundary = provider.fetch_completed_bars(AS_OF)
 
-    assert first_call_count == 3
+    assert first_call_count == 1
     assert same_boundary == ()
     assert len(transport.calls) == first_call_count
     assert provider.telemetry().cache_hits >= 1
@@ -210,9 +208,7 @@ def test_resume_cursor_returns_every_unseen_completed_h1_in_order() -> None:
     start = datetime(2026, 7, 30, tzinfo=timezone.utc)
     values = [
         {
-            "datetime": (start + timedelta(hours=index)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
+            "datetime": (start + timedelta(hours=index)).strftime("%Y-%m-%d %H:%M:%S"),
             "open": "1.10000",
             "high": "1.10100",
             "low": "1.09900",
@@ -241,9 +237,7 @@ def test_resume_cursor_returns_every_unseen_completed_h1_in_order() -> None:
         datetime(2026, 7, 31, 12, 0, 30, tzinfo=timezone.utc)
     )
 
-    assert [
-        trigger.candle.raw_close_time for trigger in triggers
-    ] == [
+    assert [trigger.candle.raw_close_time for trigger in triggers] == [
         "2026-07-31T09:00:00Z",
         "2026-07-31T10:00:00Z",
         "2026-07-31T11:00:00Z",
@@ -263,9 +257,7 @@ def test_reverse_provider_order_is_normalized_to_utc_chronological_order() -> No
     (trigger,) = provider.fetch_completed_bars(AS_OF)
     history = provider.fetch_required_history(trigger, AS_OF)
     normalized = [
-        CandleNormalizer().normalize(
-            candle, provider.discover_instruments()[0]
-        ).candle
+        CandleNormalizer().normalize(candle, provider.discover_instruments()[0]).candle
         for candle in history.signal_bars
     ]
 
@@ -275,7 +267,9 @@ def test_reverse_provider_order_is_normalized_to_utc_chronological_order() -> No
         "2026-07-30 09:00:00",
     ]
     assert all(isinstance(bar, Bar) for bar in normalized)
-    assert all(bar is not None and bar.open_time.tzinfo is timezone.utc for bar in normalized)
+    assert all(
+        bar is not None and bar.open_time.tzinfo is timezone.utc for bar in normalized
+    )
     assert provider.diagnostics(Timeframe.H1).out_of_order_count == 1
 
 
@@ -311,9 +305,10 @@ def test_completed_candle_exact_close_boundary(
 
     assert trigger.candle.raw_open_time == expected_terminal_open
     assert trigger.candle.is_complete is True
-    assert datetime.fromisoformat(
-        trigger.candle.raw_close_time.replace("Z", "+00:00")
-    ) < as_of
+    assert (
+        datetime.fromisoformat(trigger.candle.raw_close_time.replace("Z", "+00:00"))
+        < as_of
+    )
 
 
 @pytest.mark.parametrize(
@@ -328,9 +323,7 @@ def test_data_quality_failures_are_quarantined(
     fixture_name: str,
     code: ProviderErrorCode,
 ) -> None:
-    provider, _ = _provider(
-        _standard_routes(h1=_response(_fixture(fixture_name)))
-    )
+    provider, _ = _provider(_standard_routes(h1=_response(_fixture(fixture_name))))
 
     with pytest.raises(MarketDataProviderError) as captured:
         provider.fetch_completed_bars(AS_OF)
@@ -341,9 +334,7 @@ def test_data_quality_failures_are_quarantined(
 
 
 def test_empty_response_maps_to_data_unavailable_without_fake_candles() -> None:
-    provider, _ = _provider(
-        _standard_routes(h1=_empty("1h"), h4=_empty("4h"))
-    )
+    provider, _ = _provider(_standard_routes(h1=_empty("1h"), h4=_empty("4h")))
 
     assert provider.fetch_completed_bars(AS_OF) == ()
     assert provider.health(AS_OF).state is HealthState.DATA_UNAVAILABLE
@@ -406,14 +397,17 @@ def test_rate_limit_respects_retry_after_and_recovers() -> None:
 
     triggers = provider.fetch_completed_bars(AS_OF)
 
-    assert len(triggers) == 2
+    assert len(triggers) == 1
     assert sleeps == [2.0]
-    assert len([call for call in transport.calls if call["params"]["interval"] == "1h"]) == 2
+    assert (
+        len([call for call in transport.calls if call["params"]["interval"] == "1h"])
+        == 2
+    )
     assert provider.health(AS_OF).state is HealthState.HEALTHY
     telemetry = provider.telemetry()
     assert telemetry.rate_limit_responses == 1
     assert telemetry.failed_requests == 1
-    assert telemetry.successful_requests == 2
+    assert telemetry.successful_requests == 1
 
 
 @pytest.mark.parametrize(
@@ -579,9 +573,7 @@ def _golden_payload(case_id: str, filename: str, interval: str) -> HttpResponse:
 
 def _combined_h1_payload(
     *,
-    terminal_close: datetime = datetime(
-        2026, 2, 3, 11, tzinfo=timezone.utc
-    ),
+    terminal_close: datetime = datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
 ) -> HttpResponse:
     path = ROOT / "golden" / "cases" / "confirmed_buy_h1_01" / "signal_bars.csv"
     with path.open(encoding="utf-8", newline="") as handle:
@@ -615,17 +607,8 @@ def _combined_h1_payload(
     )
 
 
-@pytest.mark.parametrize(
-    ("timeframe", "interval"),
-    (
-        (Timeframe.H1, "1h"),
-        (Timeframe.H4, "4h"),
-    ),
-)
-def test_provider_supplies_h1_source_for_new_york_equal_close_context(
-    timeframe: Timeframe,
-    interval: str,
-) -> None:
+def test_provider_supplies_h1_source_for_new_york_equal_close_context() -> None:
+    timeframe = Timeframe.H1
     terminal = datetime(2026, 1, 15, 22, tzinfo=timezone.utc)
     h1 = _combined_h1_payload(terminal_close=terminal)
     h4 = _empty("4h")
@@ -670,8 +653,7 @@ def test_provider_supplies_h1_source_for_new_york_equal_close_context(
     canonical = tuple(
         result.candle
         for raw in history.daily_source_bars
-        if (result := CandleNormalizer().normalize(raw, instrument)).candle
-        is not None
+        if (result := CandleNormalizer().normalize(raw, instrument)).candle is not None
     )
     aggregation = NewYorkDailyAggregator().aggregate(canonical, as_of=as_of)
     assert aggregation.issues == ()
@@ -695,11 +677,7 @@ class RecordingEvaluator:
 
 def _integration_coordinator(
     database: Path,
-) -> tuple[
-    MarketDataCoordinator,
-    SQLiteProjectionRepository,
-    RecordingEvaluator,
-]:
+) -> tuple[MarketDataCoordinator, SQLiteProjectionRepository, RecordingEvaluator,]:
     provider, _ = _provider(
         {
             "1h": [_combined_h1_payload()],
@@ -713,22 +691,19 @@ def _integration_coordinator(
     service = WalkingSkeletonService(evaluator, None, repository)
     coordinator = MarketDataCoordinator(
         provider=provider,
-        registry=CanonicalInstrumentRegistry(
-            provider.discover_instruments()
-        ),
+        registry=CanonicalInstrumentRegistry(provider.discover_instruments()),
         normalizer=CandleNormalizer(),
         detector=ClosedBarDetector(),
         service=service,
         repository=repository,
-        clock=FixedClock(
-            datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)
-        ),
+        clock=FixedClock(datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)),
     )
     return coordinator, repository, evaluator
 
 
 def test_coordinator_catches_up_each_unseen_completed_trigger(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider, _ = _provider(
         {
@@ -746,35 +721,64 @@ def test_coordinator_catches_up_each_unseen_completed_trigger(
     evaluator = RecordingEvaluator()
     coordinator = MarketDataCoordinator(
         provider=provider,
-        registry=CanonicalInstrumentRegistry(
-            provider.discover_instruments()
-        ),
+        registry=CanonicalInstrumentRegistry(provider.discover_instruments()),
         normalizer=CandleNormalizer(),
         detector=ClosedBarDetector(),
         service=WalkingSkeletonService(evaluator, None, repository),
         repository=repository,
-        clock=FixedClock(
-            datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)
-        ),
+        clock=FixedClock(datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)),
     )
+
+    order: list[str] = []
+    original_persist_bars = repository.persist_canonical_bars
+    original_h4_aggregate = coordinator._h4_aggregator.aggregate
+    original_persist_snapshot = repository.persist_daily_filter_snapshot
+    original_evaluate = evaluator.evaluate
+
+    def persist_bars(bars: tuple[Bar, ...]) -> int:
+        for item in bars:
+            if item.close_time == datetime(2026, 2, 3, 10, tzinfo=timezone.utc):
+                order.append(f"persist_{item.timeframe.value}")
+        return original_persist_bars(bars)
+
+    def aggregate_h4(*args: Any, **kwargs: Any) -> Any:
+        order.append("aggregate_H4")
+        return original_h4_aggregate(*args, **kwargs)
+
+    def persist_snapshot(value: Any) -> bool:
+        order.append("persist_snapshot")
+        return original_persist_snapshot(value)
+
+    def evaluate(request: Any) -> Any:
+        if request.signal_bars[-1].close_time == datetime(
+            2026, 2, 3, 10, tzinfo=timezone.utc
+        ):
+            order.append(f"evaluate_{request.timeframe.value}")
+        return original_evaluate(request)
+
+    monkeypatch.setattr(repository, "persist_canonical_bars", persist_bars)
+    monkeypatch.setattr(coordinator._h4_aggregator, "aggregate", aggregate_h4)
+    monkeypatch.setattr(repository, "persist_daily_filter_snapshot", persist_snapshot)
+    monkeypatch.setattr(evaluator, "evaluate", evaluate)
 
     result = coordinator.poll_once()
 
-    assert len(result.outcomes) == 2
+    assert len(result.outcomes) == 3
     assert [
-        request.signal_bars[-1].close_time
+        (request.timeframe, request.signal_bars[-1].close_time)
         for request in evaluator.requests
     ] == [
-        datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
-        datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
+        (Timeframe.H1, datetime(2026, 2, 3, 10, tzinfo=timezone.utc)),
+        (Timeframe.H4, datetime(2026, 2, 3, 10, tzinfo=timezone.utc)),
+        (Timeframe.H1, datetime(2026, 2, 3, 11, tzinfo=timezone.utc)),
     ]
-    assert repository.processed_count() == 2
-    assert len(
-        {
-            event["idempotency_key"]
-            for event in repository.events()
-        }
-    ) == 2
+    assert repository.processed_count() == 3
+    assert order.index("persist_H1") < order.index("aggregate_H4")
+    assert order.index("aggregate_H4") < order.index("persist_snapshot")
+    assert order.index("persist_snapshot") < order.index("evaluate_H1")
+    assert order.index("evaluate_H1") < order.index("evaluate_H4")
+    assert order.count("persist_snapshot") == 2
+    assert len({event["idempotency_key"] for event in repository.events()}) == 3
 
 
 def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
@@ -785,9 +789,7 @@ def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
 
     first = coordinator.poll_once()
     second = coordinator.poll_once()
-    restarted, reopened, restarted_evaluator = _integration_coordinator(
-        database
-    )
+    restarted, reopened, restarted_evaluator = _integration_coordinator(database)
     third = restarted.poll_once()
 
     assert first.provider_health.state is HealthState.HEALTHY
@@ -816,19 +818,16 @@ def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
 
 
 def test_example_environment_has_blank_key_and_local_env_is_ignored() -> None:
-    lines = (ROOT / "backend" / ".env.example").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    lines = (ROOT / "backend" / ".env.example").read_text(encoding="utf-8").splitlines()
 
     assert "TWELVE_DATA_API_KEY=" in lines
     assert all(
-        not line.startswith("TWELVE_DATA_API_KEY=")
-        or line == "TWELVE_DATA_API_KEY="
+        not line.startswith("TWELVE_DATA_API_KEY=") or line == "TWELVE_DATA_API_KEY="
         for line in lines
     )
-    assert "backend/.env" in (
-        ROOT / ".gitignore"
-    ).read_text(encoding="utf-8").splitlines()
+    assert (
+        "backend/.env" in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    )
 
 
 def test_native_daily_fetch_and_smoke_paths_are_explicitly_blocked() -> None:
@@ -843,6 +842,21 @@ def test_native_daily_fetch_and_smoke_paths_are_explicitly_blocked() -> None:
             AS_OF,
         )
     assert transport.calls == []
+
+
+def test_common_adapter_fetch_delegates_to_historical_h1_path() -> None:
+    provider, transport = _provider(_standard_routes(h1=_empty("1h")))
+
+    result = provider.fetch_raw_candles(
+        "EUR/USD",
+        Timeframe.H1,
+        AS_OF - timedelta(hours=2),
+        AS_OF,
+    )
+
+    assert result == ()
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["params"]["interval"] == "1h"
 
 
 def test_live_smoke_is_explicitly_not_run_without_key(

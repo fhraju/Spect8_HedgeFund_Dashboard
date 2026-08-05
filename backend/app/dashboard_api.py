@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .market_data.models import CanonicalInstrument, HealthState
 from .repository import SQLiteProjectionRepository
+from .engine.models import CURRENT_D1_FILTER_V2
 
 
 class ProviderHealthView(BaseModel):
@@ -88,6 +89,142 @@ class MarketValuesView(BaseModel):
     daily_context_close_time: datetime | None
 
 
+class FilterAuditDailySessionView(BaseModel):
+    session_identifier: str
+    session_open_time: datetime
+    session_close_time: datetime
+    daily_high: str
+    daily_low: str
+
+
+class FilterAuditBuyComparisonView(BaseModel):
+    recent_low: str
+    operator: Literal["<="]
+    buy_threshold: str
+    matched: bool
+
+
+class FilterAuditSellComparisonView(BaseModel):
+    recent_high: str
+    operator: Literal[">="]
+    sell_threshold: str
+    matched: bool
+
+
+class FilterAuditBarView(BaseModel):
+    sequence: int
+    open_time: datetime
+    close_time: datetime
+    open: str
+    high: str
+    low: str
+    close: str
+    source_id: str
+    recent_low: bool
+    recent_high: bool
+    expected_market_closure_before: bool
+
+
+class FilterAuditView(BaseModel):
+    instrument_id: str
+    strategy_version: str
+    timeframe: Literal["H1", "H4"]
+    evaluation_time: datetime
+    evaluation_bar_open_time: datetime
+    evaluation_bar_close_time: datetime
+    evaluation_bar_open: str
+    evaluation_bar_high: str
+    evaluation_bar_low: str
+    evaluation_bar_close: str
+    evaluation_bar_confirmed_closed: bool
+    completed_bar_count: int
+    available_completed_bar_count: int
+    lookback_period: int
+    lookback_start_time: datetime
+    lookback_end_time: datetime
+    recent_low: str
+    recent_low_bar_open_time: datetime
+    recent_low_bar_close_time: datetime
+    recent_high: str
+    recent_high_bar_open_time: datetime
+    recent_high_bar_close_time: datetime
+    daily_session: FilterAuditDailySessionView
+    daily_reference_sessions: list[FilterAuditDailySessionView]
+    atr_sessions: list[FilterAuditDailySessionView]
+    d1_context_eligibility_time: datetime
+    atr_period: int
+    atr_value: str
+    buffer_percentage: str
+    buffer_value: str
+    daily_low: str
+    daily_high: str
+    buy_threshold: str
+    sell_threshold: str
+    buy_comparison: FilterAuditBuyComparisonView
+    sell_comparison: FilterAuditSellComparisonView
+    final_classification: str
+    source_provider: str
+    construction_profile: str
+    canonical_timezone: str
+    display_timezone: str
+    daily_session_authority: str
+    selected_bars: list[FilterAuditBarView]
+
+
+class CurrentPartialD1View(BaseModel):
+    session_identifier: str
+    session_open_utc: datetime
+    session_close_utc: datetime
+    first_h1_open_time_utc: datetime
+    last_h1_close_time_utc: datetime
+    h1_count: int
+    source_h1_ids: list[str]
+    source_checksum: str
+    open: str
+    high: str
+    low: str
+    close: str
+    quality_status: str
+
+
+class DailyFilterSnapshotView(BaseModel):
+    snapshot_id: str
+    strategy_version: str
+    canonical_profile_version: str
+    provider: str
+    instrument: str
+    evaluation_time_utc: datetime
+    as_of_h1_close_time_utc: datetime
+    current_partial_d1: CurrentPartialD1View
+    previous_d1_candle_id: str
+    previous_d1_session_id: str
+    previous_d1_open_utc: datetime
+    previous_d1_close_utc: datetime
+    previous_d1_high: str
+    previous_d1_low: str
+    previous_d1_close: str
+    atr_period: int
+    atr_value: str
+    atr_source_d1_ids: list[str]
+    atr_source_checksum: str
+    buffer_percentage: str
+    buffer_value: str
+    buy_threshold: str
+    sell_threshold: str
+    buy_left_value: str
+    buy_operator: Literal["<="]
+    buy_right_value: str
+    buy_matched: bool
+    sell_left_value: str
+    sell_operator: Literal[">="]
+    sell_right_value: str
+    sell_matched: bool
+    final_classification: Literal["NONE", "BUY", "SELL", "BUY_AND_SELL"]
+    data_quality_status: str
+    ingestion_run_id: str | None
+    created_at: datetime
+
+
 class StrategyEvaluationView(BaseModel):
     strategy_id: str
     provider: str
@@ -106,6 +243,9 @@ class StrategyEvaluationView(BaseModel):
     signal_bar_close_time: datetime
     last_update: datetime
     idempotency_key: str
+    filter_audit: FilterAuditView | None = None
+    strategy_version: str = "SPECT8_MICRO_DAILY_V1_0_3"
+    daily_filter_snapshot_id: str | None = None
 
 
 class EventView(BaseModel):
@@ -145,15 +285,14 @@ class DashboardData(BaseModel):
     instrument: InstrumentView
     latest_candles: CandleTimesView
     evaluations: list[StrategyEvaluationView]
+    daily_filter: DailyFilterSnapshotView | None = None
     recent_events: list[EventView]
     execution: ExecutionView
 
 
 class DashboardEnvelope(BaseModel):
     synthetic: bool
-    source: Literal[
-        "REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER"
-    ]
+    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER"]
     notice: str
     data: DashboardData
 
@@ -173,9 +312,17 @@ def dashboard_snapshot(
         and status["timeframe"] in {"H1", "H4"}
     ]
     statuses.sort(key=lambda item: item["timeframe"])
+    v2_statuses = [
+        status
+        for status in statuses
+        if status.get("strategy_version") == CURRENT_D1_FILTER_V2
+    ]
+    if v2_statuses:
+        statuses = v2_statuses
     for status in statuses:
         status.setdefault("reason_codes", [])
         status.setdefault("market_values", None)
+        status.setdefault("filter_audit", None)
 
     state = _data_state(health, statuses)
     return DashboardData(
@@ -197,8 +344,7 @@ def dashboard_snapshot(
             asset_class=instrument.asset_class,
             session_timezone=instrument.session_timezone,
             timeframes=[
-                timeframe.value
-                for timeframe in instrument.available_timeframes
+                timeframe.value for timeframe in instrument.available_timeframes
             ],
             price_precision=instrument.price_precision,
             synthetic=instrument.synthetic,
@@ -207,6 +353,11 @@ def dashboard_snapshot(
             instrument.provider_id, instrument.instrument_id
         ),
         evaluations=statuses,
+        daily_filter=repository.latest_daily_filter_snapshot(
+            instrument.provider_id,
+            instrument.instrument_id,
+            CURRENT_D1_FILTER_V2,
+        ),
         recent_events=repository.recent_events(),
         execution=ExecutionView(),
     )

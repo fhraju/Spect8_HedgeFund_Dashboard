@@ -6,6 +6,65 @@ from decimal import Decimal
 
 from ..domain import Bar, Direction, Timeframe
 
+CURRENT_D1_FILTER_V2 = "MICRO_DAILY_FILTER_CURRENT_D1_V2"
+LEGACY_FILTER_VERSION = "SPECT8_MICRO_DAILY_V1_0_3"
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentPartialDailyCandle:
+    session_identifier: str
+    session_open_utc: datetime
+    session_close_utc: datetime
+    first_h1_open_time_utc: datetime
+    last_h1_close_time_utc: datetime
+    h1_count: int
+    source_h1_ids: tuple[str, ...]
+    source_checksum: str
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    quality_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class DailyFilterSnapshot:
+    snapshot_id: str
+    strategy_version: str
+    canonical_profile_version: str
+    provider: str
+    instrument: str
+    evaluation_time_utc: datetime
+    as_of_h1_close_time_utc: datetime
+    current_partial_d1: CurrentPartialDailyCandle
+    previous_d1_candle_id: str
+    previous_d1_session_id: str
+    previous_d1_open_utc: datetime
+    previous_d1_close_utc: datetime
+    previous_d1_high: Decimal
+    previous_d1_low: Decimal
+    previous_d1_close: Decimal
+    atr_period: int
+    atr_value: Decimal
+    atr_source_d1_ids: tuple[str, ...]
+    atr_source_checksum: str
+    buffer_percentage: Decimal
+    buffer_value: Decimal
+    buy_threshold: Decimal
+    sell_threshold: Decimal
+    buy_left_value: Decimal
+    buy_operator: str
+    buy_right_value: Decimal
+    buy_matched: bool
+    sell_left_value: Decimal
+    sell_operator: str
+    sell_right_value: Decimal
+    sell_matched: bool
+    final_classification: str
+    data_quality_status: str
+    ingestion_run_id: str | None
+    created_at: datetime
+
 
 @dataclass(frozen=True, slots=True)
 class InstrumentMetadata:
@@ -35,6 +94,8 @@ class StrategyRequest:
     signal_bars: tuple[Bar, ...]
     daily_bars: tuple[Bar, ...]
     instrument: InstrumentMetadata
+    strategy_version: str = LEGACY_FILTER_VERSION
+    daily_filter_snapshot: DailyFilterSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +139,93 @@ class MicroDailyFilterResult:
     daily_raw_low: Decimal
     daily_raw_high: Decimal
     activation_buffer: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditDailySession:
+    session_identifier: str
+    session_open_time: datetime
+    session_close_time: datetime
+    high: Decimal
+    low: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditBuyComparison:
+    recent_low: Decimal
+    operator: str
+    buy_threshold: Decimal
+    matched: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditSellComparison:
+    recent_high: Decimal
+    operator: str
+    sell_threshold: Decimal
+    matched: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditBar:
+    sequence: int
+    open_time: datetime
+    close_time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    source_id: str
+    recent_low: bool
+    recent_high: bool
+    expected_market_closure_before: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FilterAuditResult:
+    instrument_id: str
+    strategy_version: str
+    timeframe: Timeframe
+    evaluation_time: datetime
+    evaluation_bar_open_time: datetime
+    evaluation_bar_close_time: datetime
+    evaluation_bar_open: Decimal
+    evaluation_bar_high: Decimal
+    evaluation_bar_low: Decimal
+    evaluation_bar_close: Decimal
+    evaluation_bar_confirmed_closed: bool
+    completed_bar_count: int
+    available_completed_bar_count: int
+    lookback_period: int
+    lookback_start_time: datetime
+    lookback_end_time: datetime
+    recent_low: Decimal
+    recent_low_bar_open_time: datetime
+    recent_low_bar_close_time: datetime
+    recent_high: Decimal
+    recent_high_bar_open_time: datetime
+    recent_high_bar_close_time: datetime
+    daily_session: FilterAuditDailySession
+    daily_reference_sessions: tuple[FilterAuditDailySession, ...]
+    atr_sessions: tuple[FilterAuditDailySession, ...]
+    d1_context_eligibility_time: datetime
+    atr_period: int
+    atr_value: Decimal
+    buffer_percentage: Decimal
+    buffer_value: Decimal
+    daily_low: Decimal
+    daily_high: Decimal
+    buy_threshold: Decimal
+    sell_threshold: Decimal
+    buy_comparison: FilterAuditBuyComparison
+    sell_comparison: FilterAuditSellComparison
+    final_classification: str
+    source_provider: str
+    construction_profile: str
+    canonical_timezone: str
+    display_timezone: str
+    daily_session_authority: str
+    selected_bars: tuple[FilterAuditBar, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +313,9 @@ class StrategyEvaluation:
     buy_candidate: CandidateResult | None
     sell_candidate: CandidateResult | None
     signal_bar: Bar | None
+    filter_audit: FilterAuditResult | None = None
+    strategy_version: str = LEGACY_FILTER_VERSION
+    daily_filter_snapshot_id: str | None = None
 
     @property
     def candidates(self) -> tuple[CandidateResult, ...]:

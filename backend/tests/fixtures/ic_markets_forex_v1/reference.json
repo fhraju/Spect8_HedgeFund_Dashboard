@@ -1,0 +1,471 @@
+{
+  "schema_version": "1",
+  "profile": "IC_MARKETS_NY_CLOSE_FOREX_V1",
+  "authority": "sanitized IC Markets Global MT5 export",
+  "terminal": "IC Markets Global MT5 build 5833",
+  "symbol": "EURUSD",
+  "canonical_instrument": "EUR/USD",
+  "range_utc": [
+    "2026-07-30T21:00:00Z",
+    "2026-08-03T21:00:00Z"
+  ],
+  "timestamp_semantics": "INTERVAL_START",
+  "timezone_convention": "canonical UTC; broker wall follows America/New_York plus seven hours",
+  "anonymization": [
+    "account number omitted",
+    "login omitted",
+    "credentials omitted",
+    "server secret omitted",
+    "personal terminal path omitted"
+  ],
+  "expected_weekend_closure": {
+    "previous_close": "2026-07-31T21:00:00Z",
+    "next_open": "2026-08-02T21:00:00Z"
+  },
+  "dst_examples": [
+    {
+      "instant_utc": "2026-01-15T12:00:00Z",
+      "broker_utc_offset_hours": 2
+    },
+    {
+      "instant_utc": "2026-07-15T12:00:00Z",
+      "broker_utc_offset_hours": 3
+    }
+  ],
+  "recent_low_source_close": "2026-07-31T14:00:00Z",
+  "recent_high_source_close": "2026-08-02T23:00:00Z",
+  "bars": [
+    {
+      "utc_open_time": "2026-07-30T21:00:00Z",
+      "utc_close_time": "2026-07-30T22:00:00Z",
+      "open": "1.1527",
+      "high": "1.1527",
+      "low": "1.1522999999999999",
+      "close": "1.1524",
+      "tick_volume": "138"
+    },
+    {
+      "utc_open_time": "2026-07-30T22:00:00Z",
+      "utc_close_time": "2026-07-30T23:00:00Z",
+      "open": "1.15253",
+      "high": "1.15313",
+      "low": "1.15252",
+      "close": "1.15288",
+      "tick_volume": "1184"
+    },
+    {
+      "utc_open_time": "2026-07-30T23:00:00Z",
+      "utc_close_time": "2026-07-31T00:00:00Z",
+      "open": "1.15288",
+      "high": "1.15307",
+      "low": "1.15223",
+      "close": "1.1522999999999999",
+      "tick_volume": "1694"
+    },
+    {
+      "utc_open_time": "2026-07-31T00:00:00Z",
+      "utc_close_time": "2026-07-31T01:00:00Z",
+      "open": "1.15234",
+      "high": "1.15266",
+      "low": "1.15152",
+      "close": "1.15179",
+      "tick_volume": "3059"
+    },
+    {
+      "utc_open_time": "2026-07-31T01:00:00Z",
+      "utc_close_time": "2026-07-31T02:00:00Z",
+      "open": "1.15179",
+      "high": "1.15212",
+      "low": "1.15099",
+      "close": "1.15099",
+      "tick_volume": "2526"
+    },
+    {
+      "utc_open_time": "2026-07-31T02:00:00Z",
+      "utc_close_time": "2026-07-31T03:00:00Z",
+      "open": "1.151",
+      "high": "1.15164",
+      "low": "1.151",
+      "close": "1.1512",
+      "tick_volume": "1781"
+    },
+    {
+      "utc_open_time": "2026-07-31T03:00:00Z",
+      "utc_close_time": "2026-07-31T04:00:00Z",
+      "open": "1.1512",
+      "high": "1.15137",
+      "low": "1.15063",
+      "close": "1.15134",
+      "tick_volume": "1731"
+    },
+    {
+      "utc_open_time": "2026-07-31T04:00:00Z",
+      "utc_close_time": "2026-07-31T05:00:00Z",
+      "open": "1.15134",
+      "high": "1.15141",
+      "low": "1.15044",
+      "close": "1.15082",
+      "tick_volume": "1408"
+    },
+    {
+      "utc_open_time": "2026-07-31T05:00:00Z",
+      "utc_close_time": "2026-07-31T06:00:00Z",
+      "open": "1.15082",
+      "high": "1.15096",
+      "low": "1.1504699999999999",
+      "close": "1.15063",
+      "tick_volume": "1920"
+    },
+    {
+      "utc_open_time": "2026-07-31T06:00:00Z",
+      "utc_close_time": "2026-07-31T07:00:00Z",
+      "open": "1.15063",
+      "high": "1.15222",
+      "low": "1.15054",
+      "close": "1.1517",
+      "tick_volume": "3748"
+    },
+    {
+      "utc_open_time": "2026-07-31T07:00:00Z",
+      "utc_close_time": "2026-07-31T08:00:00Z",
+      "open": "1.1517",
+      "high": "1.15247",
+      "low": "1.15115",
+      "close": "1.15144",
+      "tick_volume": "2852"
+    },
+    {
+      "utc_open_time": "2026-07-31T08:00:00Z",
+      "utc_close_time": "2026-07-31T09:00:00Z",
+      "open": "1.15144",
+      "high": "1.15262",
+      "low": "1.15044",
+      "close": "1.15219",
+      "tick_volume": "3467"
+    },
+    {
+      "utc_open_time": "2026-07-31T09:00:00Z",
+      "utc_close_time": "2026-07-31T10:00:00Z",
+      "open": "1.15219",
+      "high": "1.15249",
+      "low": "1.15031",
+      "close": "1.15054",
+      "tick_volume": "4174"
+    },
+    {
+      "utc_open_time": "2026-07-31T10:00:00Z",
+      "utc_close_time": "2026-07-31T11:00:00Z",
+      "open": "1.15054",
+      "high": "1.15082",
+      "low": "1.1501000000000001",
+      "close": "1.15018",
+      "tick_volume": "2396"
+    },
+    {
+      "utc_open_time": "2026-07-31T11:00:00Z",
+      "utc_close_time": "2026-07-31T12:00:00Z",
+      "open": "1.15018",
+      "high": "1.15021",
+      "low": "1.14848",
+      "close": "1.14852",
+      "tick_volume": "2667"
+    },
+    {
+      "utc_open_time": "2026-07-31T12:00:00Z",
+      "utc_close_time": "2026-07-31T13:00:00Z",
+      "open": "1.14852",
+      "high": "1.14908",
+      "low": "1.14814",
+      "close": "1.14881",
+      "tick_volume": "3141"
+    },
+    {
+      "utc_open_time": "2026-07-31T13:00:00Z",
+      "utc_close_time": "2026-07-31T14:00:00Z",
+      "open": "1.14881",
+      "high": "1.15035",
+      "low": "1.14552",
+      "close": "1.14667",
+      "tick_volume": "6063"
+    },
+    {
+      "utc_open_time": "2026-07-31T14:00:00Z",
+      "utc_close_time": "2026-07-31T15:00:00Z",
+      "open": "1.14665",
+      "high": "1.15064",
+      "low": "1.14625",
+      "close": "1.15046",
+      "tick_volume": "6116"
+    },
+    {
+      "utc_open_time": "2026-07-31T15:00:00Z",
+      "utc_close_time": "2026-07-31T16:00:00Z",
+      "open": "1.15046",
+      "high": "1.15186",
+      "low": "1.14971",
+      "close": "1.15181",
+      "tick_volume": "4796"
+    },
+    {
+      "utc_open_time": "2026-07-31T16:00:00Z",
+      "utc_close_time": "2026-07-31T17:00:00Z",
+      "open": "1.15181",
+      "high": "1.15191",
+      "low": "1.15123",
+      "close": "1.15172",
+      "tick_volume": "2949"
+    },
+    {
+      "utc_open_time": "2026-07-31T17:00:00Z",
+      "utc_close_time": "2026-07-31T18:00:00Z",
+      "open": "1.15172",
+      "high": "1.15375",
+      "low": "1.1517",
+      "close": "1.15333",
+      "tick_volume": "4352"
+    },
+    {
+      "utc_open_time": "2026-07-31T18:00:00Z",
+      "utc_close_time": "2026-07-31T19:00:00Z",
+      "open": "1.15333",
+      "high": "1.15363",
+      "low": "1.15244",
+      "close": "1.15307",
+      "tick_volume": "2751"
+    },
+    {
+      "utc_open_time": "2026-07-31T19:00:00Z",
+      "utc_close_time": "2026-07-31T20:00:00Z",
+      "open": "1.1531",
+      "high": "1.15361",
+      "low": "1.1527",
+      "close": "1.15314",
+      "tick_volume": "2556"
+    },
+    {
+      "utc_open_time": "2026-07-31T20:00:00Z",
+      "utc_close_time": "2026-07-31T21:00:00Z",
+      "open": "1.15313",
+      "high": "1.1547",
+      "low": "1.15238",
+      "close": "1.15308",
+      "tick_volume": "4382"
+    },
+    {
+      "utc_open_time": "2026-08-02T21:00:00Z",
+      "utc_close_time": "2026-08-02T22:00:00Z",
+      "open": "1.15448",
+      "high": "1.15477",
+      "low": "1.15428",
+      "close": "1.15469",
+      "tick_volume": "360"
+    },
+    {
+      "utc_open_time": "2026-08-02T22:00:00Z",
+      "utc_close_time": "2026-08-02T23:00:00Z",
+      "open": "1.15487",
+      "high": "1.15589",
+      "low": "1.15477",
+      "close": "1.15484",
+      "tick_volume": "2205"
+    },
+    {
+      "utc_open_time": "2026-08-02T23:00:00Z",
+      "utc_close_time": "2026-08-03T00:00:00Z",
+      "open": "1.15483",
+      "high": "1.1551",
+      "low": "1.15421",
+      "close": "1.15436",
+      "tick_volume": "2064"
+    },
+    {
+      "utc_open_time": "2026-08-03T00:00:00Z",
+      "utc_close_time": "2026-08-03T01:00:00Z",
+      "open": "1.1543700000000001",
+      "high": "1.1556",
+      "low": "1.1535",
+      "close": "1.15424",
+      "tick_volume": "5155"
+    },
+    {
+      "utc_open_time": "2026-08-03T01:00:00Z",
+      "utc_close_time": "2026-08-03T02:00:00Z",
+      "open": "1.15424",
+      "high": "1.1546",
+      "low": "1.15299",
+      "close": "1.15322",
+      "tick_volume": "3224"
+    },
+    {
+      "utc_open_time": "2026-08-03T02:00:00Z",
+      "utc_close_time": "2026-08-03T03:00:00Z",
+      "open": "1.15323",
+      "high": "1.15354",
+      "low": "1.15284",
+      "close": "1.1531",
+      "tick_volume": "1782"
+    },
+    {
+      "utc_open_time": "2026-08-03T03:00:00Z",
+      "utc_close_time": "2026-08-03T04:00:00Z",
+      "open": "1.1531",
+      "high": "1.15311",
+      "low": "1.15269",
+      "close": "1.15298",
+      "tick_volume": "1604"
+    },
+    {
+      "utc_open_time": "2026-08-03T04:00:00Z",
+      "utc_close_time": "2026-08-03T05:00:00Z",
+      "open": "1.15298",
+      "high": "1.1536",
+      "low": "1.1529",
+      "close": "1.1534200000000001",
+      "tick_volume": "1391"
+    },
+    {
+      "utc_open_time": "2026-08-03T05:00:00Z",
+      "utc_close_time": "2026-08-03T06:00:00Z",
+      "open": "1.1534200000000001",
+      "high": "1.1537600000000001",
+      "low": "1.15317",
+      "close": "1.15372",
+      "tick_volume": "1425"
+    },
+    {
+      "utc_open_time": "2026-08-03T06:00:00Z",
+      "utc_close_time": "2026-08-03T07:00:00Z",
+      "open": "1.15372",
+      "high": "1.15389",
+      "low": "1.15237",
+      "close": "1.1527",
+      "tick_volume": "2835"
+    },
+    {
+      "utc_open_time": "2026-08-03T07:00:00Z",
+      "utc_close_time": "2026-08-03T08:00:00Z",
+      "open": "1.15269",
+      "high": "1.15322",
+      "low": "1.15208",
+      "close": "1.15262",
+      "tick_volume": "3005"
+    },
+    {
+      "utc_open_time": "2026-08-03T08:00:00Z",
+      "utc_close_time": "2026-08-03T09:00:00Z",
+      "open": "1.15262",
+      "high": "1.15276",
+      "low": "1.1521",
+      "close": "1.15228",
+      "tick_volume": "2225"
+    },
+    {
+      "utc_open_time": "2026-08-03T09:00:00Z",
+      "utc_close_time": "2026-08-03T10:00:00Z",
+      "open": "1.15227",
+      "high": "1.15302",
+      "low": "1.152",
+      "close": "1.15221",
+      "tick_volume": "2655"
+    },
+    {
+      "utc_open_time": "2026-08-03T10:00:00Z",
+      "utc_close_time": "2026-08-03T11:00:00Z",
+      "open": "1.15221",
+      "high": "1.15246",
+      "low": "1.15171",
+      "close": "1.15221",
+      "tick_volume": "2174"
+    },
+    {
+      "utc_open_time": "2026-08-03T11:00:00Z",
+      "utc_close_time": "2026-08-03T12:00:00Z",
+      "open": "1.15221",
+      "high": "1.1532499999999999",
+      "low": "1.15207",
+      "close": "1.1532499999999999",
+      "tick_volume": "2177"
+    },
+    {
+      "utc_open_time": "2026-08-03T12:00:00Z",
+      "utc_close_time": "2026-08-03T13:00:00Z",
+      "open": "1.15323",
+      "high": "1.15351",
+      "low": "1.15227",
+      "close": "1.1528",
+      "tick_volume": "3073"
+    },
+    {
+      "utc_open_time": "2026-08-03T13:00:00Z",
+      "utc_close_time": "2026-08-03T14:00:00Z",
+      "open": "1.1528",
+      "high": "1.1535",
+      "low": "1.15217",
+      "close": "1.15269",
+      "tick_volume": "4197"
+    },
+    {
+      "utc_open_time": "2026-08-03T14:00:00Z",
+      "utc_close_time": "2026-08-03T15:00:00Z",
+      "open": "1.15277",
+      "high": "1.15277",
+      "low": "1.15101",
+      "close": "1.15139",
+      "tick_volume": "4776"
+    },
+    {
+      "utc_open_time": "2026-08-03T15:00:00Z",
+      "utc_close_time": "2026-08-03T16:00:00Z",
+      "open": "1.15139",
+      "high": "1.15141",
+      "low": "1.15004",
+      "close": "1.15095",
+      "tick_volume": "3592"
+    },
+    {
+      "utc_open_time": "2026-08-03T16:00:00Z",
+      "utc_close_time": "2026-08-03T17:00:00Z",
+      "open": "1.15095",
+      "high": "1.15104",
+      "low": "1.15044",
+      "close": "1.15069",
+      "tick_volume": "2257"
+    },
+    {
+      "utc_open_time": "2026-08-03T17:00:00Z",
+      "utc_close_time": "2026-08-03T18:00:00Z",
+      "open": "1.15067",
+      "high": "1.15069",
+      "low": "1.15013",
+      "close": "1.1502",
+      "tick_volume": "1701"
+    },
+    {
+      "utc_open_time": "2026-08-03T18:00:00Z",
+      "utc_close_time": "2026-08-03T19:00:00Z",
+      "open": "1.15021",
+      "high": "1.15147",
+      "low": "1.15015",
+      "close": "1.15135",
+      "tick_volume": "1790"
+    },
+    {
+      "utc_open_time": "2026-08-03T19:00:00Z",
+      "utc_close_time": "2026-08-03T20:00:00Z",
+      "open": "1.15136",
+      "high": "1.15147",
+      "low": "1.15095",
+      "close": "1.15103",
+      "tick_volume": "1550"
+    },
+    {
+      "utc_open_time": "2026-08-03T20:00:00Z",
+      "utc_close_time": "2026-08-03T21:00:00Z",
+      "open": "1.15103",
+      "high": "1.1510799999999999",
+      "low": "1.15063",
+      "close": "1.1508099999999999",
+      "tick_volume": "923"
+    }
+  ]
+}

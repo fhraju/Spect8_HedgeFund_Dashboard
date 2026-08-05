@@ -1,0 +1,55 @@
+{
+  "schema_version": "1",
+  "strategy_version": "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+  "canonical_profile": "IC_MARKETS_NY_CLOSE_FOREX_V1",
+  "instrument": "EUR/USD",
+  "provenance": "sanitized deterministic derivative of the approved IC Markets Forex V1 structural reference",
+  "canonical_timezone": "UTC",
+  "daily_authority": "17:00 America/New_York",
+  "previous_completed_d1": {
+    "open_time_utc": "2026-08-03T21:00:00Z",
+    "close_time_utc": "2026-08-04T21:00:00Z",
+    "high": "1.1080",
+    "low": "1.0920",
+    "close": "1.1000"
+  },
+  "atr_source_d1": [
+    ["2026-07-27T21:00:00Z", "2026-07-28T21:00:00Z", "1.1100", "1.0900", "1.1000"],
+    ["2026-07-28T21:00:00Z", "2026-07-29T21:00:00Z", "1.1100", "1.0900", "1.1000"],
+    ["2026-07-29T21:00:00Z", "2026-07-30T21:00:00Z", "1.1100", "1.0900", "1.1000"],
+    ["2026-07-30T21:00:00Z", "2026-07-31T21:00:00Z", "1.1100", "1.0900", "1.1000"],
+    ["2026-08-02T21:00:00Z", "2026-08-03T21:00:00Z", "1.1100", "1.0900", "1.1000"],
+    ["2026-08-03T21:00:00Z", "2026-08-04T21:00:00Z", "1.1080", "1.0920", "1.1000"]
+  ],
+  "expected": {
+    "wilder_atr_5": "0.0192",
+    "buffer_percentage": "0.05",
+    "buffer": "0.000960",
+    "buy_threshold": "1.092960",
+    "sell_threshold": "1.107040"
+  },
+  "current_session": {
+    "session_id": "2026-08-05",
+    "open_utc": "2026-08-04T21:00:00Z",
+    "scheduled_close_utc": "2026-08-05T21:00:00Z",
+    "as_of_completed_h1_close_utc": "2026-08-05T10:00:00Z",
+    "completed_h1_count": 13,
+    "h4_completion_example_utc": "2026-08-05T09:00:00Z"
+  },
+  "classification_cases": [
+    {"id": "BUY_ONLY", "partial_low": "1.092500", "partial_high": "1.107000", "buy": true, "sell": false, "classification": "BUY"},
+    {"id": "SELL_ONLY", "partial_low": "1.093000", "partial_high": "1.107040", "buy": false, "sell": true, "classification": "SELL"},
+    {"id": "BOTH_EQUALITY", "partial_low": "1.092960", "partial_high": "1.107040", "buy": true, "sell": true, "classification": "BUY_AND_SELL"},
+    {"id": "NONE", "partial_low": "1.093000", "partial_high": "1.107000", "buy": false, "sell": false, "classification": "NONE"}
+  ],
+  "calendar_cases": {
+    "weekend": {"friday_close_utc": "2026-07-31T21:00:00Z", "monday_session_open_utc": "2026-08-02T21:00:00Z", "price_gap_preserved": true},
+    "new_york_standard_time_close_utc": "2026-01-15T22:00:00Z",
+    "new_york_daylight_time_close_utc": "2026-07-15T21:00:00Z"
+  },
+  "quality_case": {
+    "missing_h1_close_utc": "2026-08-05T05:00:00Z",
+    "expected_status": "CURRENT_D1_UNEXPECTED_H1_GAP",
+    "synthetic_repair_allowed": false
+  }
+}
