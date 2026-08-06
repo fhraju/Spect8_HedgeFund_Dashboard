@@ -79,6 +79,13 @@ describe("multi-instrument market scanner", () => {
     expect(html).toContain("NO SIGNAL");
     expect(html).toContain("STALE");
     expect(html).toContain("Provider rejected GBP/USD.");
+    expect(html).toContain('<b>12</b><small>Markets Monitored</small>');
+    expect(html).toContain('<b>1</b><small>Filtered Candidates</small>');
+    expect(html).toContain('<b>1</b><small>Confirmed Signals</small>');
+    expect(html).toContain('<b>10/12</b><small>Healthy Feeds</small>');
+    expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
+    expect(html).not.toContain(">Home</a>");
+    expect(html).not.toContain("Historical Replay");
   });
 
   it("filters by asset, timeframe direction, confirmed signal, and health", () => {

@@ -154,6 +154,18 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const unhealthy = snapshot.data.instruments.filter(
     (row) => !["HEALTHY", "RECOVERED"].includes(row.data_status),
   ).length;
+  const monitored = snapshot.data.instruments.length;
+  const filteredCandidates = snapshot.data.instruments.filter((row) =>
+    [row.H1.filter_status, row.H4.filter_status].some(
+      (status) => !["NONE", "WAITING"].includes(status),
+    ),
+  ).length;
+  const confirmedSignals = snapshot.data.instruments.filter((row) =>
+    [row.H1.signal_status, row.H4.signal_status].some(
+      (status) => !["NONE", "WAITING"].includes(status),
+    ),
+  ).length;
+  const healthy = monitored - unhealthy;
   const assetClasses = Array.from(
     new Set(snapshot.data.instruments.map((row) => row.asset_class)),
   );
@@ -167,13 +179,12 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   return (
     <main className="app-shell scanner-shell">
       <aside className="sidebar">
-        <div className="brand-lockup">
+        <Link className="brand-lockup" href="/" aria-label="Home — Spect8 Strategy Intelligence">
           <span className="brand-symbol">S8</span>
           <div><strong>Spect8</strong><span>Strategy Intelligence</span></div>
-        </div>
+        </Link>
         <nav className="primary-nav" aria-label="Primary navigation">
           <span className="active"><i>⌕</i>Market Scanner</span>
-          <Link className="nav-link" href="/historical-replay"><i>▷</i>Historical Replay</Link>
         </nav>
       </aside>
 
@@ -186,6 +197,29 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           </div>
           <RefreshButton />
         </header>
+
+        <section className="kpi-grid scanner-kpis" aria-label="Market scanner summary">
+          <article className="kpi active">
+            <span className="kpi-icon blue">◎</span>
+            <span><b>{monitored}</b><small>Markets Monitored</small></span>
+            <em>Live enabled universe</em>
+          </article>
+          <article className="kpi">
+            <span className="kpi-icon amber">▽</span>
+            <span><b>{filteredCandidates}</b><small>Filtered Candidates</small></span>
+            <em>Eligible on H1 or H4</em>
+          </article>
+          <article className="kpi">
+            <span className="kpi-icon green">◉</span>
+            <span><b>{confirmedSignals}</b><small>Confirmed Signals</small></span>
+            <em>Confirmed on H1 or H4</em>
+          </article>
+          <article className="kpi">
+            <span className="kpi-icon cyan">◇</span>
+            <span><b>{healthy}/{monitored}</b><small>Healthy Feeds</small></span>
+            <em>{unhealthy === 0 ? "All markets current" : `${unhealthy} require attention`}</em>
+          </article>
+        </section>
 
         <section className="scanner-filters" aria-label="Scanner filters">
           <label>Asset class<select aria-label="Asset class" value={asset} onChange={(event) => setAsset(event.target.value)}><option value="ALL">All</option>{assetClasses.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>

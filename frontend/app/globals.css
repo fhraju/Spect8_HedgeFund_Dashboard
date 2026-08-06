@@ -74,6 +74,13 @@ button {
   gap: 11px;
   padding: 0 18px;
   border-bottom: 1px solid var(--border-soft);
+  color: inherit;
+  text-decoration: none;
+}
+
+.brand-lockup:hover strong,
+.login-brand:hover strong {
+  color: var(--cyan);
 }
 
 .brand-symbol {
@@ -944,6 +951,8 @@ td:first-child span,
   align-items: center;
   gap: 12px;
   margin-bottom: 36px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .login-brand > div {

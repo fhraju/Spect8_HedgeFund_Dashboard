@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 import { hasDashboardSession } from "@/lib/server-auth";
 
@@ -14,13 +15,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   return (
     <main className="login-shell">
       <section className="login-panel">
-        <div className="login-brand">
+        <Link className="login-brand" href="/" aria-label="Home — Spect8 Strategy Intelligence">
           <span className="brand-symbol">S8</span>
           <div>
             <strong>Spect8</strong>
             <small>Strategy Intelligence</small>
           </div>
-        </div>
+        </Link>
         <p className="section-kicker">Protected client workspace</p>
         <h1>Market Scanner</h1>
         <p className="login-copy">

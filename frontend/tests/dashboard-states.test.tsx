@@ -276,6 +276,7 @@ describe("dashboard data states", () => {
     const html = renderToStaticMarkup(
       <Dashboard snapshot={snapshot("HEALTHY", [status])} />,
     );
+    expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
     expect(html).toContain("Recent-high source candle");
     expect(html).toContain("05 Aug 2026, 10:00 IC Markets Broker Time");
     expect(html).toContain("05 Aug 2026, 11:00 IC Markets Broker Time");

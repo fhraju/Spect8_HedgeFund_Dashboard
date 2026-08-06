@@ -112,6 +112,7 @@ const detail: HistoricalReplayEvaluationDetail = {
 describe("historical replay dashboard", () => {
   it("renders the explicit empty and not-live states", () => {
     const html = renderToStaticMarkup(<HistoricalReplayDashboard runs={[]} summary={null} evaluations={null} detail={null} filters={{}} createError={false} />);
+    expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
     expect(html).toContain("REPLAY — NOT LIVE");
     expect(html).toContain("No historical replay exists");
     expect(html).toContain("Orders 0 · fills 0");

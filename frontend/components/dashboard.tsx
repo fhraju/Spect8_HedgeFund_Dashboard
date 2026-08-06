@@ -404,10 +404,10 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand-lockup">
+        <Link className="brand-lockup" href="/" aria-label="Home — Spect8 Strategy Intelligence">
           <span className="brand-symbol">S8</span>
           <div><strong>Spect8</strong><span>Strategy Intelligence</span></div>
-        </div>
+        </Link>
         <nav className="primary-nav" aria-label="Primary navigation">
           <span className="active"><i>⌕</i>Market Scanner</span>
           <span><i>↗</i>Signals <em>{confirmed}</em></span>

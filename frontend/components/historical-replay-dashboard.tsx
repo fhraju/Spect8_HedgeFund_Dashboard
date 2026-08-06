@@ -54,10 +54,10 @@ export function HistoricalReplayDashboard({
   return (
     <main className="app-shell replay-shell">
       <aside className="sidebar">
-        <div className="brand-lockup">
+        <Link className="brand-lockup" href="/" aria-label="Home — Spect8 Strategy Intelligence">
           <span className="brand-symbol">S8</span>
           <div><strong>Spect8</strong><span>Strategy Intelligence</span></div>
-        </div>
+        </Link>
         <nav className="primary-nav" aria-label="Primary navigation">
           <Link className="nav-link" href="/dashboard"><i>⌕</i>Live Scanner</Link>
           <span className="active"><i>◷</i>Historical Replay</span>
