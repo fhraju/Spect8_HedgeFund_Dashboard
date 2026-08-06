@@ -1,2 +1,5 @@
 Spect8_Micro_Daily_v*_FROZEN.md text eol=lf
 golden/** text eol=lf
+backend/tests/fixtures/current_daily_filter_v2/reference.json text eol=lf
+backend/tests/fixtures/ic_markets_forex_v1/reference.json text eol=lf
+backend/tests/fixtures/reproducibility/** text eol=crlf
