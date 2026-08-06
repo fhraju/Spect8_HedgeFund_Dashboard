@@ -16,7 +16,12 @@ from fastapi import (
 )
 
 from .config import Settings
-from .dashboard_api import DashboardEnvelope, dashboard_snapshot
+from .dashboard_api import (
+    DashboardEnvelope,
+    ScannerEnvelope,
+    dashboard_snapshot,
+    scanner_snapshot,
+)
 from .domain import primitive
 from .engine.strategy import Spect8StrategyEvaluator
 from .historical_replay import (
@@ -38,9 +43,14 @@ from .historical_replay_api import (
 )
 from .market_data.clock import FixedClock, SystemClock
 from .market_data.closed_bar import ClosedBarDetector
+from .market_data.credit_budget import DailyCreditBudgetGuard
 from .market_data.coordinator import MarketDataCoordinator
 from .market_data.normalizer import CandleNormalizer
-from .market_data.registry import CanonicalInstrumentRegistry
+from .market_data.multi_provider import MultiInstrumentTwelveDataProvider
+from .market_data.registry import (
+    CanonicalInstrumentRegistry,
+    twelve_data_instruments,
+)
 from .market_data.replay_provider import ReplayMarketDataProvider
 from .market_data.runtime import MarketDataRuntime
 from .market_data.runtime_support import configure_runtime_logging
@@ -48,9 +58,7 @@ from .market_data.twelve_data_provider import TwelveDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
 
-SYNTHETIC_NOTICE = (
-    "SYNTHETIC REPLAY MARKET DATA — no live provider is connected."
-)
+SYNTHETIC_NOTICE = "SYNTHETIC REPLAY MARKET DATA — no live provider is connected."
 
 
 def create_app(
@@ -60,12 +68,25 @@ def create_app(
     configured = settings or Settings.from_environment()
     configured.validate()
     repository = SQLiteProjectionRepository(configured.database_path)
+    credit_budget = DailyCreditBudgetGuard(
+        repository,
+        daily_limit=configured.twelve_data_daily_credit_limit,
+        operational_budget=configured.market_data_daily_operational_budget,
+        reserve=configured.market_data_credit_reserve,
+    )
     if configured.market_data_provider == "twelve_data":
         assert configured.twelve_data_api_key is not None
-        provider = TwelveDataProvider(
+        provider = MultiInstrumentTwelveDataProvider(
             configured.twelve_data_api_key,
-            instrument=configured.instrument,
-            timeframes=configured.timeframes,
+            twelve_data_instruments(configured.enabled_instrument_ids),
+            max_requests_per_minute=(configured.market_data_max_requests_per_minute),
+            min_interval_seconds=(configured.market_data_request_min_interval_seconds),
+            max_retries_per_instrument=(
+                configured.market_data_max_retries_per_instrument
+            ),
+            stale_after_seconds=configured.market_data_stale_after_seconds,
+            credit_budget=credit_budget,
+            repository=repository,
         )
         clock = SystemClock()
     else:
@@ -95,7 +116,9 @@ def create_app(
         )
         if (
             not provider.identity.synthetic
-            and configured.market_data_runtime_enabled
+            and (
+                configured.market_scan_enabled or configured.market_data_runtime_enabled
+            )
         )
         else None
     )
@@ -104,14 +127,16 @@ def create_app(
         repository,
         clock,
         poll_seconds=configured.market_data_poll_seconds,
-        safety_delay_seconds=configured.market_data_safety_delay_seconds,
+        safety_delay_seconds=(
+            configured.market_scan_after_hour_seconds
+            if configured.market_scan_enabled
+            else configured.market_data_safety_delay_seconds
+        ),
         logger=runtime_logger,
     )
     replay_database_path = (
         configured.historical_replay_database_path
-        or configured.repository_root
-        / "var"
-        / "spect8_historical_replay.sqlite3"
+        or configured.repository_root / "var" / "spect8_historical_replay.sqlite3"
     )
     replay_repository = HistoricalReplayRepository(
         replay_database_path, configured.database_path
@@ -120,13 +145,9 @@ def create_app(
         replay_repository,
         (
             TwelveDataHistoricalSource(
-                TwelveDataProvider(
-                    configured.twelve_data_api_key or "",
-                    instrument=configured.instrument,
-                    timeframes=configured.timeframes,
-                )
+                TwelveDataProvider(configured.twelve_data_api_key or "")
             )
-            if isinstance(provider, TwelveDataProvider)
+            if configured.market_data_provider == "twelve_data"
             else None
         ),
     )
@@ -138,9 +159,8 @@ def create_app(
         runtime_task: asyncio.Task[None] | None = None
         if configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
-        elif (
-            not provider.identity.synthetic
-            and configured.market_data_runtime_enabled
+        elif not provider.identity.synthetic and (
+            configured.market_scan_enabled or configured.market_data_runtime_enabled
         ):
             runtime_task = asyncio.create_task(
                 runtime.run(), name="spect8-market-data-runtime"
@@ -153,12 +173,12 @@ def create_app(
                 await runtime_task
 
     app = FastAPI(
-        title="Spect8 HedgeFund Dashboard — Phase 3B",
-        version="0.6.0",
+        title="Spect8 HedgeFund Market Scanner",
+        version="0.7.0",
         description=(
             SYNTHETIC_NOTICE
             if provider.identity.synthetic
-            else "READ-ONLY Twelve Data EUR/USD market-data scanner."
+            else "READ-ONLY Twelve Data multi-instrument market scanner."
         ),
         lifespan=lifespan,
     )
@@ -170,6 +190,7 @@ def create_app(
     app.state.clock = clock
     app.state.coordinator = coordinator
     app.state.market_data_runtime = runtime
+    app.state.credit_budget = credit_budget
     app.state.historical_replay_service = replay_service
 
     def require_internal_key(
@@ -193,7 +214,7 @@ def create_app(
             "notice": (
                 SYNTHETIC_NOTICE
                 if provider.identity.synthetic
-                else "READ-ONLY Twelve Data EUR/USD market data."
+                else "READ-ONLY Twelve Data multi-instrument market data."
             ),
             "data": data,
         }
@@ -208,9 +229,7 @@ def create_app(
                 "state": current["state"],
                 "previous_state": None,
                 "checked_at": current["checked_at"],
-                "latest_completed_close": current[
-                    "latest_completed_close"
-                ],
+                "latest_completed_close": current["latest_completed_close"],
                 "freshness_seconds": current["freshness_seconds"],
                 "detail": current["detail"],
                 "synthetic": provider.identity.synthetic,
@@ -226,11 +245,12 @@ def create_app(
                 "market_data": (
                     "REPLAY_ONLY"
                     if provider.identity.synthetic
-                    else "TWELVE_DATA_EUR_USD"
+                    else "TWELVE_DATA_MARKET_SCANNER"
                 ),
                 "database": "sqlite",
                 "provider": primitive(provider.identity),
                 "provider_health": provider_health,
+                "credit_budget": primitive(credit_budget.status(as_of=clock.now())),
             }
         )
 
@@ -242,12 +262,23 @@ def create_app(
                     "instrument_id": instrument.instrument_id,
                     "provider": instrument.provider_id,
                     "provider_symbol": instrument.provider_symbol,
+                    "display_symbol": (
+                        instrument.display_symbol or instrument.provider_symbol
+                    ),
+                    "display_name": instrument.display_name,
                     "asset_class": instrument.asset_class,
+                    "instrument_kind": instrument.instrument_kind.value,
+                    "exposure_category": instrument.exposure_category.value,
+                    "underlying_description": instrument.underlying_description,
+                    "is_proxy": instrument.is_proxy,
+                    "proxy_for": instrument.proxy_for,
+                    "provider_exchange": instrument.exchange,
+                    "session_profile": instrument.session_profile.value,
+                    "enabled": instrument.enabled,
                     "quote_currency": instrument.quote_currency,
                     "profit_currency": instrument.profit_currency,
                     "timeframes": [
-                        timeframe.value
-                        for timeframe in instrument.available_timeframes
+                        timeframe.value for timeframe in instrument.available_timeframes
                     ],
                     "session_timezone": instrument.session_timezone,
                     "point_size": float(instrument.point_size),
@@ -309,8 +340,35 @@ def create_app(
         response_model=DashboardEnvelope,
     )
     def dashboard() -> dict[str, Any]:
+        return envelope(dashboard_snapshot(repository, registry.all()[0], clock.now()))
+
+    @app.get(
+        "/dashboard/{instrument_id}",
+        dependencies=[protected],
+        response_model=DashboardEnvelope,
+    )
+    def instrument_dashboard(instrument_id: str) -> dict[str, Any]:
+        try:
+            instrument = registry.by_id(instrument_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail="Instrument not found."
+            ) from None
+        return envelope(dashboard_snapshot(repository, instrument, clock.now()))
+
+    @app.get(
+        "/scanner",
+        dependencies=[protected],
+        response_model=ScannerEnvelope,
+    )
+    def scanner() -> dict[str, Any]:
         return envelope(
-            dashboard_snapshot(repository, registry.all()[0], clock.now())
+            scanner_snapshot(
+                repository,
+                registry.all(),
+                clock.now(),
+                credit_budget=primitive(credit_budget.status(as_of=clock.now())),
+            )
         )
 
     def historical_envelope(data: Any) -> dict[str, Any]:
@@ -399,13 +457,10 @@ def create_app(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=50, ge=1, le=200),
         timeframe: str | None = Query(default=None, pattern="^(H1|H4)$"),
-        outcome: str | None = Query(
-            default=None, pattern="^(SIGNAL|NO_SIGNAL)$"
-        ),
-        filter_outcome: str | None = Query(
-            default=None, pattern="^(PASS|FAIL)$"
-        ),
-        reason_code: str | None = Query(
+        outcome: str | None = Query(default=None, pattern="^(SIGNAL|NO_SIGNAL)$"),
+        filter_outcome: str | None = Query(default=None, pattern="^(PASS|FAIL)$"),
+        reason_code: str
+        | None = Query(
             default=None, min_length=1, max_length=80, pattern="^[A-Z0-9_]+$"
         ),
     ) -> dict[str, Any]:
@@ -428,13 +483,9 @@ def create_app(
         dependencies=[protected],
         response_model=HistoricalReplayEnvelope[ReplayEvaluationDetail],
     )
-    def historical_replay_evaluation(
-        run_id: str, evaluation_id: int
-    ) -> dict[str, Any]:
+    def historical_replay_evaluation(run_id: str, evaluation_id: int) -> dict[str, Any]:
         try:
-            value = replay_service.repository.evaluation(
-                run_id, evaluation_id
-            )
+            value = replay_service.repository.evaluation(run_id, evaluation_id)
         except ReplayNotFoundError:
             raise replay_not_found() from None
         return historical_envelope(value)

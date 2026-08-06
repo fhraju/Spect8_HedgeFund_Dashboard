@@ -25,7 +25,10 @@ from backend.app.market_data.models import (
     ProviderErrorCode,
 )
 from backend.app.market_data.normalizer import CandleNormalizer
-from backend.app.market_data.registry import CanonicalInstrumentRegistry
+from backend.app.market_data.registry import (
+    CanonicalInstrumentRegistry,
+    twelve_data_instruments,
+)
 from backend.app.market_data.twelve_data_provider import (
     HttpResponse,
     TransportTimeoutError,
@@ -188,6 +191,47 @@ def test_symbol_interval_outputsize_timeouts_and_header_auth_mapping() -> None:
     assert telemetry.next_expected_h1_close == datetime(
         2026, 7, 30, 12, tzinfo=timezone.utc
     )
+
+
+def test_crypto_provider_request_and_response_are_bound_to_selected_exchange() -> None:
+    instrument = CanonicalInstrumentRegistry(twelve_data_instruments()).by_id("BTC_USD")
+    response = _response(
+        {
+            "meta": {
+                "symbol": "BTC/USD",
+                "interval": "1h",
+                "exchange": "Binance",
+                "exchange_timezone": "UTC",
+            },
+            "values": [],
+            "status": "ok",
+        }
+    )
+    provider, transport = _provider(
+        _standard_routes(h1=response),
+        canonical_instrument=instrument,
+    )
+    assert provider.fetch_completed_bars(AS_OF) == ()
+    assert transport.calls[0]["params"]["symbol"] == "BTC/USD"
+    assert transport.calls[0]["params"]["exchange"] == "Binance"
+
+
+def test_bootstrap_derives_latest_h4_trigger_from_one_h1_request() -> None:
+    provider, transport = _provider(_standard_routes(), bootstrap_latest_h4=True)
+
+    triggers = provider.fetch_completed_bars(AS_OF)
+    assert [item.candle.timeframe for item in triggers] == [
+        Timeframe.H4,
+        Timeframe.H1,
+    ]
+    h4 = triggers[0]
+    assert h4.candle.source_timeframe is Timeframe.H1
+    assert h4.candle.raw_close_time == "2026-07-30T09:00:00Z"
+    assert h4.candle.open_time_utc == datetime(2026, 7, 30, 5, tzinfo=timezone.utc)
+    assert h4.candle.close_time_utc == datetime(2026, 7, 30, 9, tzinfo=timezone.utc)
+    provider.fetch_required_history(h4, AS_OF)
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["params"]["interval"] == "1h"
 
 
 def test_boundary_cache_avoids_requests_until_a_series_can_advance() -> None:

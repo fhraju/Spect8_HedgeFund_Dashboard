@@ -242,8 +242,10 @@ export type DashboardData = {
     instrument_id: string;
     provider: string;
     provider_symbol: string;
+    display_symbol: string;
     display_name: string;
     asset_class: string;
+    enabled: boolean;
     session_timezone: string;
     timeframes: string[];
     price_precision: number;
@@ -270,6 +272,66 @@ export type DashboardSnapshot = {
   source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
   notice: string;
   data: DashboardData;
+};
+
+export type ScannerTimeframe = {
+  filter_status: string;
+  signal_status: string;
+  evaluation_timestamp: string | null;
+  latest_filter_snapshot_id: string | null;
+};
+
+export type ScannerInstrument = {
+  instrument_id: string;
+  display_symbol: string;
+  display_name: string;
+  asset_class: string;
+  enabled: boolean;
+  provider_symbol: string;
+  provider?: string;
+  exchange?: string | null;
+  mic_code?: string | null;
+  provider_instrument_type?: string | null;
+  provider_timezone?: string | null;
+  validation_status?: string;
+  instrument_kind?: "FOREX" | "SPOT_METAL" | "CRYPTO" | "ETF" | "DIRECT_MARKET";
+  exposure_category?: string;
+  underlying_description?: string | null;
+  is_proxy?: boolean;
+  proxy_for?: string | null;
+  provider_exchange?: string | null;
+  credit_budget_status?: string;
+  provider_health: string;
+  stale: boolean;
+  data_status: string;
+  latest_completed_h1_timestamp: string | null;
+  latest_completed_h4_timestamp: string | null;
+  H1: ScannerTimeframe;
+  H4: ScannerTimeframe;
+  latest_error_summary: string | null;
+  last_successful_provider_update: string | null;
+};
+
+export type ScannerSnapshot = {
+  synthetic: boolean;
+  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
+  notice: string;
+  data: {
+    generated_at: string;
+    instruments: ScannerInstrument[];
+    credit_budget?: {
+      state: string;
+      window: string;
+      daily_limit: number;
+      operational_budget: number;
+      reserve: number;
+      estimated_credits_used: number;
+      estimated_operational_remaining: number;
+      estimated_total_remaining: number;
+      reserve_preserved: boolean;
+      request_count: number;
+    } | null;
+  };
 };
 
 export type SyntheticEnvelope<T> = {

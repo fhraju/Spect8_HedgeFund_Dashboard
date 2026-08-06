@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   DashboardSnapshot,
+  ScannerSnapshot,
   HistoricalReplayEnvelope,
   HistoricalReplayEvaluationDetail,
   HistoricalReplayEvaluationPage,
@@ -40,6 +41,18 @@ async function backendFetch<T>(
 
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   return backendFetch<DashboardSnapshot>("/dashboard");
+}
+
+export async function getInstrumentDashboardSnapshot(
+  instrumentId: string,
+): Promise<DashboardSnapshot> {
+  return backendFetch<DashboardSnapshot>(
+    `/dashboard/${encodeURIComponent(instrumentId)}`,
+  );
+}
+
+export async function getScannerSnapshot(): Promise<ScannerSnapshot> {
+  return backendFetch<ScannerSnapshot>("/scanner");
 }
 
 export async function replaySyntheticCases(): Promise<

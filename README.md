@@ -4,15 +4,20 @@ Protected read-only Market Scanner for the frozen
 `SPECT8_MICRO_DAILY_V1_0` calculation strategy under the active frozen
 `SPECT8_MICRO_DAILY_V1_0_3` specification.
 
-Phase 3B hardens the Phase 3A EUR/USD vertical slice for client UAT and
-sustained private observation. It adds single-runtime ownership,
-boundary-aware polling/catch-up, request accounting, sanitized rotating logs,
-runtime observation reports, and client/runbook checklists. H1 and H4 remain
-independent signal timeframes and D1 remains context only. Golden expected
-results remain a test-only oracle. The scanner contains no trading,
-profitability backtesting, optimization, WebSockets, or multi-instrument
-expansion. The isolated Historical Replay page validates scanner/dashboard
-function over bounded history without contaminating live state.
+The Phase 3C registry contains 25 target markets. The original ten and the
+Phase 3C-1 `BTC/USD` and `ETH/USD` Binance listings remain enabled. Phase 3C-2
+adds 12 live-validated US-listed ETF price series as explicitly labelled
+proxies. TLT remains disabled after one provider H1 row failed OHLC validation,
+so the authoritative enabled count is 24.
+One
+canonical H1 request per enabled instrument feeds local H4 and New-York-close
+D1 construction. A provider-wide rolling limiter serializes startup, polling,
+validation, and retry starts at no more than eight per rolling minute and at
+least eight seconds apart. H1 and H4 remain independent signal timeframes and
+D1 remains context only. Golden expected results remain a test-only oracle.
+The scanner contains no trading, profitability backtesting, optimization, or
+WebSockets. Historical Replay remains only as an isolated regression feature;
+no additional replay product development is planned.
 
 The frozen v1.0.1 clarification adds `CONFIRMED_BOTH` for simultaneous BUY and
 SELL confirmations and preserves both directional calculations independently.
@@ -70,19 +75,42 @@ $env:SPECT8_INTERNAL_API_KEY = "<same-long-random-key>"
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
-For the live EUR/USD slice, keep `TWELVE_DATA_API_KEY` only in the ignored
+For the live scanner, keep `TWELVE_DATA_API_KEY` only in the ignored
 `backend/.env` or the process environment and configure:
 
 ```text
 SPECT8_MARKET_DATA_PROVIDER=twelve_data
-SPECT8_MARKET_DATA_RUNTIME_ENABLED=true
-SPECT8_MARKET_DATA_POLL_SECONDS=300
+SPECT8_MARKET_SCAN_ENABLED=true
+SPECT8_MARKET_SCAN_AFTER_HOUR_SECONDS=60
+SPECT8_MARKET_DATA_REQUEST_MIN_INTERVAL_SECONDS=8
+SPECT8_MARKET_DATA_MAX_REQUESTS_PER_MINUTE=8
+TWELVE_DATA_DAILY_CREDIT_LIMIT=800
+MARKET_DATA_DAILY_OPERATIONAL_BUDGET=700
+MARKET_DATA_CREDIT_RESERVE=100
 SPECT8_AUTO_SEED_SYNTHETIC=false
 ```
 
-The polling interval is validated between 60 and 900 seconds. Provider
-timeouts, retry bounds, candle completion rules, and H4/D1 boundaries remain
-owned by the Phase 2C adapter.
+The runtime performs a rate-limited catch-up at startup, then scans shortly
+after each H1 close. The cycle start rotates through registry order and a new
+cycle cannot overlap the active one. Retries are requeued behind other
+instruments and consume the same global limiter capacity.
+
+Capture and reproduce the verified ten-instrument baseline without network
+access or the developer database:
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.app.tools.capture_reproducibility_checkpoint `
+  --name phase_3b_10_instruments --evaluation-time 2026-08-05T14:00:00Z
+.\.venv\Scripts\python.exe -m backend.app.tools.reproduce_reproducibility_checkpoint `
+  --name phase_3b_10_instruments
+```
+
+Discover and validate Phase 3C candidates using the ignored provider key and
+the same global request limiter:
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.app.market_data.validate_instrument_universe
+```
 
 For a sustained private Phase 3B observation:
 
@@ -130,3 +158,12 @@ operation and UAT. See
 for the isolated July 2026 functional replay evidence. The historical replay
 track passed; the separate live-observation gate remains conditional until the
 required multi-day observation and explicit client approval are complete.
+See [Phase 3C reproducibility checkpoint](docs/reproducibility/phase_3b_10_instruments/README.md)
+and the sanitized provider report under `docs/validation` for the controlled
+25-market provisioning result. See
+[Phase 3C-1 corrective validation](docs/PHASE3C1_CORRECTIVE_VALIDATION.md) for
+the asset-aware discovery correction, exact plan results, and the validated
+12-instrument runtime evidence.
+See [Phase 3C-2 ETF expansion](docs/PHASE3C2_TWELVE_DATA_BASIC_ETF_EXPANSION.md)
+for exact ETF listings, exchange-session handling, credit evidence, the TLT
+quality failure, and the offline 24-instrument checkpoint.

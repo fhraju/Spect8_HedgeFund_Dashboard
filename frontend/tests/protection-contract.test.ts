@@ -58,6 +58,9 @@ describe("server-only protection and strategy boundary", () => {
     expect(source("app/api/dashboard/replay/route.ts")).toContain(
       "requestHasDashboardSession",
     );
+    expect(source("app/api/scanner/route.ts")).toContain(
+      "requestHasDashboardSession",
+    );
     expect(source("app/historical-replay/page.tsx")).toContain(
       "requireDashboardSession",
     );

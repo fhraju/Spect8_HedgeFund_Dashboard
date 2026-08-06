@@ -33,8 +33,10 @@ class InstrumentView(BaseModel):
     instrument_id: str
     provider: str
     provider_symbol: str
+    display_symbol: str
     display_name: str
     asset_class: str
+    enabled: bool
     session_timezone: str
     timeframes: list[str]
     price_precision: int
@@ -297,12 +299,186 @@ class DashboardEnvelope(BaseModel):
     data: DashboardData
 
 
+class ScannerTimeframeView(BaseModel):
+    filter_status: str
+    signal_status: str
+    evaluation_timestamp: datetime | None
+    latest_filter_snapshot_id: str | None
+
+
+class ScannerInstrumentView(BaseModel):
+    instrument_id: str
+    display_symbol: str
+    display_name: str
+    asset_class: str
+    enabled: bool
+    provider_symbol: str
+    provider: str
+    exchange: str | None
+    mic_code: str | None
+    provider_instrument_type: str | None
+    provider_timezone: str | None
+    validation_status: str
+    instrument_kind: str
+    exposure_category: str
+    underlying_description: str | None
+    is_proxy: bool
+    proxy_for: str | None
+    provider_exchange: str | None
+    credit_budget_status: str
+    provider_health: str
+    stale: bool
+    data_status: str
+    latest_completed_h1_timestamp: datetime | None
+    latest_completed_h4_timestamp: datetime | None
+    H1: ScannerTimeframeView
+    H4: ScannerTimeframeView
+    latest_error_summary: str | None
+    last_successful_provider_update: datetime | None
+
+
+class ScannerData(BaseModel):
+    generated_at: datetime
+    instruments: list[ScannerInstrumentView]
+    credit_budget: dict[str, Any] | None = None
+
+
+class ScannerEnvelope(BaseModel):
+    synthetic: bool
+    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER"]
+    notice: str
+    data: ScannerData
+
+
+def scanner_snapshot(
+    repository: SQLiteProjectionRepository,
+    instruments: tuple[CanonicalInstrument, ...],
+    generated_at: datetime,
+    *,
+    credit_budget: dict[str, Any] | None = None,
+) -> ScannerData:
+    statuses = repository.statuses()
+    rows: list[ScannerInstrumentView] = []
+    for instrument in instruments:
+        if not instrument.enabled:
+            continue
+        health = repository.instrument_health(
+            instrument.provider_id, instrument.instrument_id
+        )
+        latest = repository.latest_candle_timestamps(
+            instrument.provider_id, instrument.instrument_id
+        )
+        instrument_statuses = {
+            item["timeframe"]: item
+            for item in statuses
+            if item["provider"] == instrument.provider_id
+            and item["instrument_id"] == instrument.instrument_id
+            and item["timeframe"] in {"H1", "H4"}
+            and item.get("strategy_version") == CURRENT_D1_FILTER_V2
+        }
+
+        def timeframe(value: str) -> ScannerTimeframeView:
+            status = instrument_statuses.get(value)
+            if status is None:
+                return ScannerTimeframeView(
+                    filter_status="WAITING",
+                    signal_status="WAITING",
+                    evaluation_timestamp=None,
+                    latest_filter_snapshot_id=None,
+                )
+            filters = status["filter_result"]
+            signals = status["signal_result"]
+            return ScannerTimeframeView(
+                filter_status=_direction_status(
+                    filters["buy_matched"], filters["sell_matched"]
+                ),
+                signal_status=_direction_status(
+                    signals["confirmed_buy"], signals["confirmed_sell"]
+                ),
+                evaluation_timestamp=status["signal_bar_close_time"],
+                latest_filter_snapshot_id=status.get("daily_filter_snapshot_id"),
+            )
+
+        state = str(health["state"]) if health else "BOOTSTRAPPING"
+        rows.append(
+            ScannerInstrumentView(
+                instrument_id=instrument.instrument_id,
+                display_symbol=(
+                    instrument.display_symbol or instrument.provider_symbol
+                ),
+                display_name=instrument.display_name,
+                asset_class=instrument.asset_class,
+                enabled=instrument.enabled,
+                provider_symbol=instrument.provider_symbol,
+                provider=instrument.provider_id,
+                exchange=instrument.exchange,
+                mic_code=instrument.mic_code,
+                provider_instrument_type=instrument.provider_instrument_type,
+                provider_timezone=instrument.provider_timezone,
+                validation_status=instrument.validation_status,
+                instrument_kind=instrument.instrument_kind.value,
+                exposure_category=instrument.exposure_category.value,
+                underlying_description=instrument.underlying_description,
+                is_proxy=instrument.is_proxy,
+                proxy_for=instrument.proxy_for,
+                provider_exchange=instrument.exchange,
+                credit_budget_status=str(
+                    (credit_budget or {}).get("state", "NOT_CONFIGURED")
+                ),
+                provider_health=state,
+                stale=state == HealthState.STALE.value,
+                data_status=state,
+                latest_completed_h1_timestamp=latest.get("H1"),
+                latest_completed_h4_timestamp=latest.get("H4"),
+                H1=timeframe("H1"),
+                H4=timeframe("H4"),
+                latest_error_summary=(
+                    health["latest_error_summary"] if health else None
+                ),
+                last_successful_provider_update=(
+                    health["last_success_at"] if health else None
+                ),
+            )
+        )
+    return ScannerData(
+        generated_at=generated_at,
+        instruments=rows,
+        credit_budget=credit_budget,
+    )
+
+
+def _direction_status(buy: bool, sell: bool) -> str:
+    if buy and sell:
+        return "BUY_AND_SELL"
+    if buy:
+        return "BUY"
+    if sell:
+        return "SELL"
+    return "NONE"
+
+
 def dashboard_snapshot(
     repository: SQLiteProjectionRepository,
     instrument: CanonicalInstrument,
     generated_at: datetime,
 ) -> DashboardData:
-    health = repository.provider_health(instrument.provider_id)
+    instrument_health = repository.instrument_health(
+        instrument.provider_id, instrument.instrument_id
+    )
+    health = (
+        {
+            "provider": instrument_health["provider"],
+            "state": instrument_health["state"],
+            "previous_state": None,
+            "checked_at": instrument_health["checked_at"],
+            "latest_completed_close": instrument_health["latest_completed_close"],
+            "freshness_seconds": instrument_health["freshness_seconds"],
+            "detail": instrument_health["detail"],
+            "synthetic": instrument_health["synthetic"],
+        }
+        if instrument_health is not None
+        else repository.provider_health(instrument.provider_id)
+    )
     sync = repository.provider_sync(instrument.provider_id)
     statuses = [
         status
@@ -340,8 +516,10 @@ def dashboard_snapshot(
             instrument_id=instrument.instrument_id,
             provider=instrument.provider_id,
             provider_symbol=instrument.provider_symbol,
+            display_symbol=(instrument.display_symbol or instrument.provider_symbol),
             display_name=instrument.display_name,
             asset_class=instrument.asset_class,
+            enabled=instrument.enabled,
             session_timezone=instrument.session_timezone,
             timeframes=[
                 timeframe.value for timeframe in instrument.available_timeframes
@@ -358,7 +536,7 @@ def dashboard_snapshot(
             instrument.instrument_id,
             CURRENT_D1_FILTER_V2,
         ),
-        recent_events=repository.recent_events(),
+        recent_events=repository.recent_events(instrument_id=instrument.instrument_id),
         execution=ExecutionView(),
     )
 

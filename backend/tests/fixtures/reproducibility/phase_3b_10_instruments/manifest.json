@@ -1,0 +1,65 @@
+{
+  "atr_specification": "Wilder ATR(5), completed D1 sessions only; current partial D1 excluded",
+  "broker_presentation_timestamp": "2026-08-05 17:00",
+  "buffer_specification": "Wilder ATR(5) * 0.05",
+  "canonical_instrument_ids": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "AUD_USD",
+    "USD_CAD",
+    "NZD_USD",
+    "EUR_GBP",
+    "EUR_JPY",
+    "GBP_JPY",
+    "XAU_USD"
+  ],
+  "canonical_profile_version": "IC_MARKETS_NY_CLOSE_FOREX_V1",
+  "canonical_utc_evaluation_timestamp": "2026-08-05T14:00:00Z",
+  "checkpoint_name": "phase_3b_10_instruments",
+  "creation_timestamp": "2026-08-05T14:00:00Z",
+  "d1_session_authority": "17:00 America/New_York",
+  "database_schema_revision": {
+    "schema_sha256": "66d66bef508f9ed896ffe1b33db5a88d8126c194010d8ba59182a2d31ae06706",
+    "sqlite_user_version": 0
+  },
+  "export_command": "python -m backend.app.tools.capture_reproducibility_checkpoint --name phase_3b_10_instruments --evaluation-time 2026-08-05T14:00:00Z",
+  "fixture_checksums": {
+    "canonical_h1.jsonl": "2e75ca7552d642226f59e4945cd3cc1b606b40cab14df9dee94ae57f63ba9c6b",
+    "canonical_h4.jsonl": "5562838c9332bcebc593a802cb27af4d4ba8bb069b21e4950f2e244787d1db12",
+    "completed_d1.jsonl": "d42d6be8ced15c197225d7d5f5e468571f7b8af3eb830ee34ca721f6f4c56b1a",
+    "expected_evaluations.jsonl": "610c8fd5cd276b109ca7d197c9fc5e2c046e1649abd7495fb66de8e93e96fe00",
+    "expected_event_order.jsonl": "43085ab1b070328016ed8aaee2de6f88c6dd2fbe9ed8ce71554a84c3278d1895",
+    "expected_scanner_response.json": "47db444ee8e4301ffa1969283a715a6527143b3a76582cff6015986f417461c8",
+    "filter_snapshots.jsonl": "e559f7f8c8d9c91436df2cf48c9dc67b7dd97e50b66aac23431fe66d538555cf",
+    "instrument_registry.json": "1e765c09292cda984d0f0b14b6c78e6c4b2f06151b26f5a5f4cfbaba15a3fe7c"
+  },
+  "h4_evaluation_timestamp": "2026-08-05T13:00:00Z",
+  "provider_symbol_mappings": {
+    "AUD_USD": "AUD/USD",
+    "EUR_GBP": "EUR/GBP",
+    "EUR_JPY": "EUR/JPY",
+    "EUR_USD": "EUR/USD",
+    "GBP_JPY": "GBP/JPY",
+    "GBP_USD": "GBP/USD",
+    "NZD_USD": "NZD/USD",
+    "USD_CAD": "USD/CAD",
+    "USD_JPY": "USD/JPY",
+    "XAU_USD": "XAU/USD"
+  },
+  "reproduction_command": "python -m backend.app.tools.reproduce_reproducibility_checkpoint --name phase_3b_10_instruments",
+  "source_git_commit_sha": "dfbfd63246023f0d04dba5748b08e14840b006fa",
+  "source_worktree_note": "Checkpoint captured from the verified Phase 3B ten-instrument worktree.",
+  "strategy_version": "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+  "typed_settings": {
+    "canonical_timeframes": [
+      "H1",
+      "H4",
+      "D1"
+    ],
+    "completed_d1_history": 10,
+    "minimum_signal_history": 30,
+    "provider": "TWELVE_DATA"
+  },
+  "validation_command": "python -m pytest -q backend/tests/test_phase_3b_10_instrument_reproducibility.py"
+}

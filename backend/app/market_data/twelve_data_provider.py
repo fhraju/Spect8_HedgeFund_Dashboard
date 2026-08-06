@@ -4,7 +4,7 @@ import http.client
 import json
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
@@ -19,6 +19,7 @@ from .closed_bar import (
     MIN_SIGNAL_HISTORY,
     TIMEFRAME_STEP,
 )
+from .credit_budget import CreditBudgetExhausted, DailyCreditBudgetGuard
 from .models import (
     CanonicalInstrument,
     HealthState,
@@ -31,8 +32,17 @@ from .models import (
     ProviderProfile,
     RawProviderCandle,
     TimestampSemantics,
+    InstrumentKind,
 )
+from .rate_limiter import SlidingWindowRateLimiter
 from .session_boundaries import is_expected_forex_weekend_gap
+from .us_equity_calendar import (
+    EquityH1Disposition,
+    classify_etf_h1_open,
+    is_expected_us_equity_gap,
+    latest_expected_etf_h1_close,
+    session_for_instant,
+)
 
 PROVIDER_ID = "TWELVE_DATA"
 PROVIDER_SYMBOL = "EUR/USD"
@@ -122,6 +132,8 @@ class ProviderDiagnostics:
     duplicate_count: int = 0
     gap_count: int = 0
     out_of_order_count: int = 0
+    structurally_partial_count: int = 0
+    outside_regular_session_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +156,13 @@ class ProviderTelemetry:
     provider_errors_or_retries: int
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderRequestObservation:
+    started_at_utc: datetime
+    finished_at_utc: datetime
+    status: str
+
+
 class TwelveDataProvider:
     """Twelve Data REST adapter for the Phase 2C EUR/USD pilot."""
 
@@ -161,13 +180,22 @@ class TwelveDataProvider:
         max_retry_after_seconds: float = 60.0,
         max_catchup_bars: int = MAX_CATCHUP_BARS,
         sleep: Callable[[float], None] = time.sleep,
+        canonical_instrument: CanonicalInstrument | None = None,
+        rate_limiter: SlidingWindowRateLimiter | None = None,
+        bootstrap_latest_h4: bool = False,
+        credit_budget: DailyCreditBudgetGuard | None = None,
+        request_category: str = "runtime",
     ) -> None:
         if not api_key or not api_key.strip():
             raise ValueError(
                 "TWELVE_DATA_API_KEY is required for the twelve_data provider."
             )
-        if instrument != PROVIDER_SYMBOL:
-            raise ValueError("Phase 2C supports only EUR/USD.")
+        if canonical_instrument is not None:
+            if canonical_instrument.provider_id != PROVIDER_ID:
+                raise ValueError("canonical instrument provider must be TWELVE_DATA")
+            instrument = canonical_instrument.provider_symbol
+        elif instrument != PROVIDER_SYMBOL:
+            raise ValueError("Use canonical_instrument for scanner symbols.")
         if set(timeframes) != set(SUPPORTED_TIMEFRAMES):
             raise ValueError("Phase 2C requires exactly H1, H4 and D1.")
         if connect_timeout <= 0 or read_timeout <= 0:
@@ -187,6 +215,11 @@ class TwelveDataProvider:
         self._backoff_seconds = backoff_seconds
         self._max_retry_after_seconds = max_retry_after_seconds
         self._sleep = sleep
+        self._rate_limiter = rate_limiter
+        self._request_observations: list[ProviderRequestObservation] = []
+        self._bootstrap_latest_h4 = bootstrap_latest_h4
+        self._credit_budget = credit_budget
+        self._request_category = request_category
         self._max_catchup_bars = max_catchup_bars
         self._identity = ProviderIdentity(
             provider_id=PROVIDER_ID,
@@ -194,7 +227,7 @@ class TwelveDataProvider:
             adapter_version=ADAPTER_VERSION,
             synthetic=False,
         )
-        self._instrument = CanonicalInstrument(
+        self._instrument = canonical_instrument or CanonicalInstrument(
             instrument_id=PROVIDER_SYMBOL,
             provider_id=PROVIDER_ID,
             provider_symbol=PROVIDER_SYMBOL,
@@ -217,6 +250,8 @@ class TwelveDataProvider:
             ),
             available_timeframes=SUPPORTED_TIMEFRAMES,
             strategy_id=STRATEGY_ID,
+            display_symbol=PROVIDER_SYMBOL,
+            enabled=True,
             synthetic=False,
         )
         self._cache: dict[
@@ -260,11 +295,16 @@ class TwelveDataProvider:
             native_timeframes=(Timeframe.H1, Timeframe.H4),
         )
 
-    @staticmethod
-    def map_symbol(canonical_instrument: str) -> str:
-        if canonical_instrument != PROVIDER_SYMBOL:
-            raise ValueError("Twelve Data adapter supports only EUR/USD")
-        return PROVIDER_SYMBOL
+    def map_symbol(self, canonical_instrument: str) -> str:
+        if canonical_instrument not in {
+            self._instrument.instrument_id,
+            self._instrument.provider_symbol,
+            self._instrument.display_symbol,
+        }:
+            raise ValueError(
+                f"Twelve Data adapter does not support {canonical_instrument}"
+            )
+        return self._instrument.provider_symbol
 
     def fetch_raw_candles(
         self,
@@ -351,6 +391,9 @@ class TwelveDataProvider:
             return
         self._last_trigger_close[timeframe] = self._aware_utc(close_time)
 
+    def set_request_category(self, category: str) -> None:
+        self._request_category = category
+
     def fetch_smoke_bars(
         self,
         timeframe: Timeframe,
@@ -396,9 +439,8 @@ class TwelveDataProvider:
         expected = int((end - start) / step) + 2
         if expected > 5_000:
             raise ValueError("historical request exceeds 5000 candles")
-        payload = self._request_json(
-            {
-                "symbol": PROVIDER_SYMBOL,
+        params = {
+                "symbol": self._instrument.provider_symbol,
                 "interval": INTERVALS[timeframe],
                 "start_date": self._provider_datetime(start - step),
                 "end_date": self._provider_datetime(end),
@@ -406,9 +448,9 @@ class TwelveDataProvider:
                 "order": "desc",
                 "timezone": "UTC",
                 "format": "JSON",
-            },
-            end,
-        )
+            }
+        self._add_market_identity(params)
+        payload = self._request_json(params, end)
         candles = self._parse_payload(payload, timeframe, end)
         return tuple(
             candle
@@ -451,7 +493,16 @@ class TwelveDataProvider:
                 )
                 if candidates:
                     first_close = self._parse_utc(candidates[0].raw_close_time)
-                    if first_close > cursor + TIMEFRAME_STEP[timeframe]:
+                    if (
+                        first_close > cursor + TIMEFRAME_STEP[timeframe]
+                        and not (
+                            self._instrument.instrument_kind is InstrumentKind.ETF
+                            and is_expected_us_equity_gap(
+                                cursor - TIMEFRAME_STEP[timeframe],
+                                first_close - TIMEFRAME_STEP[timeframe],
+                            )
+                        )
+                    ):
                         error = MarketDataProviderError(
                             ProviderErrorCode.MISSING_CANDLE,
                             HealthState.INSUFFICIENT_HISTORY,
@@ -467,12 +518,105 @@ class TwelveDataProvider:
                 triggers.append(
                     ProviderClosedBar(
                         source_id=self._source_id(terminal),
-                        instrument_id=PROVIDER_SYMBOL,
+                        instrument_id=self._instrument.instrument_id,
                         evaluation_time=checked_at,
                         candle=terminal,
                     )
                 )
             self._completed_discoveries[timeframe.value] += len(candidates)
+        if (
+            self._bootstrap_latest_h4
+            and self._instrument.instrument_kind is not InstrumentKind.ETF
+        ):
+            expected_h4 = self._expected_completed_close(Timeframe.H4, checked_at)
+            h4_cursor = self._last_trigger_close.get(Timeframe.H4)
+            h1_series = self._latest_series.get(Timeframe.H1, ())
+            source = next(
+                (
+                    candle
+                    for candle in reversed(h1_series)
+                    if self._parse_utc(candle.raw_close_time) == expected_h4
+                ),
+                None,
+            )
+            if source is not None and (h4_cursor is None or expected_h4 > h4_cursor):
+                h4_open = expected_h4 - TIMEFRAME_STEP[Timeframe.H4]
+                h4_candle = replace(
+                    source,
+                    timeframe=Timeframe.H4,
+                    raw_open_time=self._iso_utc(h4_open),
+                    open_time_utc=h4_open,
+                    close_time_utc=expected_h4,
+                    source_timeframe=Timeframe.H1,
+                    source_id=(
+                        f"twelve_data:{self._instrument.instrument_id}:H4:"
+                        f"{self._iso_utc(expected_h4)}"
+                    ),
+                )
+                self._last_trigger_close[Timeframe.H4] = expected_h4
+                triggers.append(
+                    ProviderClosedBar(
+                        source_id=h4_candle.source_id or self._source_id(h4_candle),
+                        instrument_id=self._instrument.instrument_id,
+                        evaluation_time=checked_at,
+                        candle=h4_candle,
+                    )
+                )
+                self._completed_discoveries[Timeframe.H4.value] += 1
+        if (
+            self._bootstrap_latest_h4
+            and self._instrument.instrument_kind is InstrumentKind.ETF
+        ):
+            h4_cursor = self._last_trigger_close.get(Timeframe.H4)
+            h1_series = self._latest_series.get(Timeframe.H1, ())
+            source = next(
+                (
+                    candle
+                    for candle in reversed(h1_series)
+                    if (
+                        (session := session_for_instant(candle.open_time_utc or self._parse_utc(candle.raw_open_time)))
+                        is not None
+                        and (candle.open_time_utc or self._parse_utc(candle.raw_open_time))
+                        in session.valid_h1_opens
+                        and (
+                            session.valid_h1_opens.index(
+                                candle.open_time_utc
+                                or self._parse_utc(candle.raw_open_time)
+                            )
+                            + 1
+                        )
+                        % 4
+                        == 0
+                    )
+                ),
+                None,
+            )
+            if source is not None:
+                expected_h4 = self._parse_utc(source.raw_close_time)
+                if h4_cursor is None or expected_h4 > h4_cursor:
+                    h4_open = expected_h4 - TIMEFRAME_STEP[Timeframe.H4]
+                    h4_candle = replace(
+                        source,
+                        timeframe=Timeframe.H4,
+                        raw_open_time=self._iso_utc(h4_open),
+                        open_time_utc=h4_open,
+                        close_time_utc=expected_h4,
+                        source_timeframe=Timeframe.H1,
+                        source_id=(
+                            f"twelve_data:{self._instrument.instrument_id}:H4:"
+                            f"{self._iso_utc(expected_h4)}"
+                        ),
+                    )
+                    self._last_trigger_close[Timeframe.H4] = expected_h4
+                    triggers.append(
+                        ProviderClosedBar(
+                            source_id=h4_candle.source_id or self._source_id(h4_candle),
+                            instrument_id=self._instrument.instrument_id,
+                            evaluation_time=checked_at,
+                            candle=h4_candle,
+                        )
+                    )
+                    self._completed_discoveries[Timeframe.H4.value] += 1
         return tuple(
             sorted(
                 triggers,
@@ -505,19 +649,11 @@ class TwelveDataProvider:
         signal = (
             daily_source[-MIN_SIGNAL_HISTORY:]
             if closed_bar.candle.timeframe is Timeframe.H1
-            else tuple(
-                candle
-                for candle in self._fetch_series(
-                    closed_bar.candle.timeframe,
-                    checked_at,
-                    MIN_SIGNAL_HISTORY + 1,
-                )
-                if self._parse_utc(candle.raw_close_time) <= trigger_close
-            )[-MIN_SIGNAL_HISTORY:]
+            else ()
         )
         return ProviderHistory(
             source_id=closed_bar.source_id,
-            instrument_id=PROVIDER_SYMBOL,
+            instrument_id=self._instrument.instrument_id,
             timeframe=closed_bar.candle.timeframe,
             evaluation_time=checked_at,
             signal_bars=signal,
@@ -535,11 +671,12 @@ class TwelveDataProvider:
             if latest is not None
             else None
         )
-        if (
-            latest is not None
-            and state is HealthState.HEALTHY
-            and checked_at - latest > timedelta(hours=2)
-        ):
+        if self._instrument.instrument_kind is InstrumentKind.ETF:
+            expected_latest = latest_expected_etf_h1_close(checked_at)
+            stale = expected_latest is not None and latest is not None and latest < expected_latest
+        else:
+            stale = latest is not None and checked_at - latest > timedelta(hours=2)
+        if latest is not None and state is HealthState.HEALTHY and stale:
             state = HealthState.STALE
             detail = "Latest completed Twelve Data candle is stale."
         return ProviderHealth(
@@ -579,17 +716,16 @@ class TwelveDataProvider:
             self._cache_hits += 1
             return latest_series[-outputsize:]
         self._series_attempts[timeframe.value] += 1
-        payload = self._request_json(
-            {
-                "symbol": PROVIDER_SYMBOL,
+        params = {
+                "symbol": self._instrument.provider_symbol,
                 "interval": INTERVALS[timeframe],
                 "outputsize": str(outputsize),
                 "order": "desc",
                 "timezone": "UTC",
                 "format": "JSON",
-            },
-            as_of,
-        )
+            }
+        self._add_market_identity(params)
+        payload = self._request_json(params, as_of)
         candles = self._parse_payload(payload, timeframe, as_of)
         previous = self._latest_series.get(timeframe)
         if previous:
@@ -630,6 +766,25 @@ class TwelveDataProvider:
         as_of: datetime,
     ) -> Mapping[str, Any]:
         for attempt in range(1, self._max_attempts + 1):
+            if self._rate_limiter is not None:
+                self._rate_limiter.acquire(self._instrument.instrument_id)
+            request_started = datetime.now(timezone.utc)
+            reservation_id: int | None = None
+            if self._credit_budget is not None:
+                try:
+                    reservation_id = self._credit_budget.reserve_request(
+                        "/time_series",
+                        self._request_category if attempt == 1 else "retry",
+                        started_at=request_started,
+                    )
+                except CreditBudgetExhausted as caught:
+                    error = MarketDataProviderError(
+                        ProviderErrorCode.CREDIT_BUDGET,
+                        HealthState.STALE,
+                        str(caught),
+                    )
+                    self._record_error(error)
+                    raise error from None
             self._network_attempts += 1
             self._request_times.append(as_of)
             try:
@@ -641,6 +796,15 @@ class TwelveDataProvider:
                     read_timeout=self._read_timeout,
                 )
             except TransportTimeoutError:
+                if self._credit_budget is not None and reservation_id is not None:
+                    self._credit_budget.finalize_request(
+                        reservation_id, status="TIMEOUT", http_status=None
+                    )
+                self._request_observations.append(
+                    ProviderRequestObservation(
+                        request_started, datetime.now(timezone.utc), "TIMEOUT"
+                    )
+                )
                 self._failed_requests += 1
                 self._network_timeouts += 1
                 error = MarketDataProviderError(
@@ -655,6 +819,17 @@ class TwelveDataProvider:
                 self._record_error(error)
                 raise error from None
             except TransportConnectionError:
+                if self._credit_budget is not None and reservation_id is not None:
+                    self._credit_budget.finalize_request(
+                        reservation_id, status="CONNECTION_ERROR", http_status=None
+                    )
+                self._request_observations.append(
+                    ProviderRequestObservation(
+                        request_started,
+                        datetime.now(timezone.utc),
+                        "CONNECTION_ERROR",
+                    )
+                )
                 self._failed_requests += 1
                 error = MarketDataProviderError(
                     ProviderErrorCode.TEMPORARY_UNAVAILABLE,
@@ -668,6 +843,20 @@ class TwelveDataProvider:
                 self._record_error(error)
                 raise error from None
 
+            if self._credit_budget is not None and reservation_id is not None:
+                self._credit_budget.finalize_request(
+                    reservation_id,
+                    status=f"HTTP_{response.status_code}",
+                    http_status=response.status_code,
+                    headers=response.headers,
+                )
+            self._request_observations.append(
+                ProviderRequestObservation(
+                    request_started,
+                    datetime.now(timezone.utc),
+                    f"HTTP_{response.status_code}",
+                )
+            )
             if response.status_code == 429 or 500 <= response.status_code <= 599:
                 self._failed_requests += 1
                 if response.status_code == 429:
@@ -771,6 +960,15 @@ class TwelveDataProvider:
             return decoded
         raise AssertionError("bounded retry loop exhausted unexpectedly")
 
+    def _add_market_identity(self, params: dict[str, str]) -> None:
+        if self._instrument.mic_code:
+            params["mic_code"] = self._instrument.mic_code
+        elif self._instrument.exchange:
+            params["exchange"] = self._instrument.exchange
+
+    def request_observations(self) -> tuple[ProviderRequestObservation, ...]:
+        return tuple(self._request_observations)
+
     def _parse_payload(
         self,
         payload: Mapping[str, Any],
@@ -782,9 +980,21 @@ class TwelveDataProvider:
         if (
             payload.get("status") != "ok"
             or not isinstance(meta, dict)
-            or meta.get("symbol") != PROVIDER_SYMBOL
+            or meta.get("symbol") != self._instrument.provider_symbol
             or meta.get("interval") != INTERVALS[timeframe]
             or not isinstance(values, list)
+        ):
+            self._raise_data_error(self._malformed_error())
+        if (
+            self._instrument.instrument_kind is not InstrumentKind.ETF
+            and self._instrument.exchange
+            and self._normalize_identity(
+            meta.get("exchange")
+            ) != self._normalize_identity(self._instrument.exchange)
+        ):
+            self._raise_data_error(self._malformed_error())
+        if self._instrument.mic_code and str(meta.get("mic_code") or "") != str(
+            self._instrument.mic_code
         ):
             self._raise_data_error(self._malformed_error())
         try:
@@ -837,6 +1047,11 @@ class TwelveDataProvider:
                         current,
                     )
                 )
+                and not (
+                    self._instrument.instrument_kind is InstrumentKind.ETF
+                    and timeframe is Timeframe.H1
+                    and is_expected_us_equity_gap(previous, current)
+                )
                 for previous, current in zip(opens, opens[1:])
             )
         )
@@ -856,16 +1071,31 @@ class TwelveDataProvider:
 
         candles: list[RawProviderCandle] = []
         forming = 0
+        structurally_partial = 0
+        outside_regular_session = 0
         for open_time, value in parsed:
             close_time = open_time + step
-            is_complete = close_time < as_of
-            if not is_complete:
+            if (
+                self._instrument.instrument_kind is InstrumentKind.ETF
+                and timeframe is Timeframe.H1
+            ):
+                disposition = classify_etf_h1_open(open_time, as_of=as_of)
+                if disposition is EquityH1Disposition.FORMING:
+                    forming += 1
+                    continue
+                if disposition is EquityH1Disposition.STRUCTURAL_PARTIAL:
+                    structurally_partial += 1
+                    continue
+                if disposition is not EquityH1Disposition.VALID_COMPLETED:
+                    outside_regular_session += 1
+                    continue
+            elif close_time >= as_of:
                 forming += 1
                 continue
             candles.append(
                 RawProviderCandle(
                     provider_id=PROVIDER_ID,
-                    provider_symbol=PROVIDER_SYMBOL,
+                    provider_symbol=self._instrument.provider_symbol,
                     timeframe=timeframe,
                     raw_open_time=str(value["datetime"]),
                     raw_close_time=self._iso_utc(close_time),
@@ -881,14 +1111,15 @@ class TwelveDataProvider:
                     is_complete=True,
                     session_timezone="UTC",
                     provider_name=PROVIDER_ID,
-                    canonical_instrument=PROVIDER_SYMBOL,
+                    canonical_instrument=self._instrument.instrument_id,
                     source_timeframe=timeframe,
                     provider_timestamp=str(value["datetime"]),
                     timestamp_semantics=TimestampSemantics.INTERVAL_START,
                     open_time_utc=open_time,
                     close_time_utc=close_time,
                     source_id=(
-                        f"twelve_data:{PROVIDER_SYMBOL}:{timeframe.value}:"
+                        f"twelve_data:{self._instrument.instrument_id}:"
+                        f"{timeframe.value}:"
                         f"{self._iso_utc(close_time)}"
                     ),
                     received_at=as_of,
@@ -904,6 +1135,8 @@ class TwelveDataProvider:
             completed_count=len(candles),
             forming_filtered_count=forming,
             out_of_order_count=out_of_order_count,
+            structurally_partial_count=structurally_partial,
+            outside_regular_session_count=outside_regular_session,
         )
         return tuple(candles)
 
@@ -918,6 +1151,10 @@ class TwelveDataProvider:
             ZoneInfo(value)
         except ZoneInfoNotFoundError as error:
             raise ValueError("invalid provider exchange timezone metadata") from error
+
+    @staticmethod
+    def _normalize_identity(value: object) -> str:
+        return " ".join(str(value or "").strip().lower().split())
 
     @staticmethod
     def _validate_prices(value: Mapping[str, Any]) -> None:
@@ -987,10 +1224,11 @@ class TwelveDataProvider:
         latest = self._parse_utc(series[-1].raw_close_time)
         return latest < self._expected_completed_close(timeframe, as_of)
 
-    @staticmethod
-    def _expected_completed_close(timeframe: Timeframe, as_of: datetime) -> datetime:
+    def _expected_completed_close(self, timeframe: Timeframe, as_of: datetime) -> datetime:
         checked_at = TwelveDataProvider._aware_utc(as_of)
         if timeframe is Timeframe.H1:
+            if self._instrument.instrument_kind is InstrumentKind.ETF:
+                return latest_expected_etf_h1_close(checked_at) or checked_at
             return checked_at.replace(minute=0, second=0, microsecond=0)
         if timeframe is Timeframe.D1:
             raise ValueError(
@@ -1013,16 +1251,16 @@ class TwelveDataProvider:
     def _source_id(candle: RawProviderCandle) -> str:
         close = TwelveDataProvider._parse_utc(candle.raw_close_time)
         return (
-            f"twelve_data:{PROVIDER_SYMBOL}:{candle.timeframe.value}:"
+            f"twelve_data:{candle.canonical_instrument or candle.provider_symbol}:"
+            f"{candle.timeframe.value}:"
             f"{TwelveDataProvider._iso_utc(close)}"
         )
 
-    @staticmethod
-    def _validate_closed_bar(closed_bar: ProviderClosedBar) -> None:
+    def _validate_closed_bar(self, closed_bar: ProviderClosedBar) -> None:
         if (
-            closed_bar.instrument_id != PROVIDER_SYMBOL
+            closed_bar.instrument_id != self._instrument.instrument_id
             or closed_bar.candle.provider_id != PROVIDER_ID
-            or closed_bar.candle.provider_symbol != PROVIDER_SYMBOL
+            or closed_bar.candle.provider_symbol != self._instrument.provider_symbol
             or closed_bar.candle.timeframe not in (Timeframe.H1, Timeframe.H4)
         ):
             raise ValueError("closed bar is outside the Phase 2C provider scope")

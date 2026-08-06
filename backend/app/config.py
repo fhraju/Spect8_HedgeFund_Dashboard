@@ -26,6 +26,16 @@ class Settings:
     )
     twelve_data_api_key: str | None = field(default=None, repr=False)
     market_data_runtime_enabled: bool = False
+    market_scan_enabled: bool = False
+    market_scan_after_hour_seconds: int = 60
+    market_data_request_min_interval_seconds: float = 8.0
+    market_data_max_requests_per_minute: int = 8
+    twelve_data_daily_credit_limit: int = 800
+    market_data_daily_operational_budget: int = 700
+    market_data_credit_reserve: int = 100
+    market_data_max_retries_per_instrument: int = 2
+    market_data_stale_after_seconds: int = 7200
+    enabled_instrument_ids: tuple[str, ...] | None = None
     market_data_poll_seconds: int = 300
     market_data_safety_delay_seconds: int = 30
     runtime_log_path: Path | None = None
@@ -40,14 +50,6 @@ class Settings:
                 "SPECT8_MARKET_DATA_PROVIDER must be replay or twelve_data."
             )
         if provider == "twelve_data":
-            if self.instrument != "EUR/USD":
-                raise ValueError("Phase 2C supports only EUR/USD.")
-            if set(self.timeframes) != {
-                Timeframe.H1,
-                Timeframe.H4,
-                Timeframe.D1,
-            }:
-                raise ValueError("Phase 2C requires exactly H1, H4 and D1.")
             if not self.twelve_data_api_key:
                 raise ValueError(
                     "TWELVE_DATA_API_KEY is required for twelve_data provider."
@@ -58,8 +60,41 @@ class Settings:
             )
         if not 5 <= self.market_data_safety_delay_seconds <= 300:
             raise ValueError(
-                "SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS must be "
-                "between 5 and 300."
+                "SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS must be " "between 5 and 300."
+            )
+        if not 5 <= self.market_scan_after_hour_seconds <= 300:
+            raise ValueError(
+                "SPECT8_MARKET_SCAN_AFTER_HOUR_SECONDS must be between 5 and 300."
+            )
+        if self.market_data_request_min_interval_seconds < 8:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_REQUEST_MIN_INTERVAL_SECONDS must be at least 8."
+            )
+        if not 1 <= self.market_data_max_requests_per_minute <= 8:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_MAX_REQUESTS_PER_MINUTE must be between 1 and 8."
+            )
+        if self.twelve_data_daily_credit_limit <= 0:
+            raise ValueError("TWELVE_DATA_DAILY_CREDIT_LIMIT must be positive.")
+        if self.market_data_daily_operational_budget <= 0:
+            raise ValueError("MARKET_DATA_DAILY_OPERATIONAL_BUDGET must be positive.")
+        if self.market_data_credit_reserve < 0:
+            raise ValueError("MARKET_DATA_CREDIT_RESERVE cannot be negative.")
+        if (
+            self.market_data_daily_operational_budget
+            + self.market_data_credit_reserve
+            > self.twelve_data_daily_credit_limit
+        ):
+            raise ValueError(
+                "Operational budget plus reserve exceeds Twelve Data daily limit."
+            )
+        if not 0 <= self.market_data_max_retries_per_instrument <= 2:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_MAX_RETRIES_PER_INSTRUMENT must be between 0 and 2."
+            )
+        if self.market_data_stale_after_seconds < 3600:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_STALE_AFTER_SECONDS must be at least 3600."
             )
         if not 65_536 <= self.runtime_log_max_bytes <= 100_000_000:
             raise ValueError("SPECT8_RUNTIME_LOG_MAX_BYTES is outside bounds.")
@@ -85,9 +120,7 @@ class Settings:
                 repository_root / "var" / "spect8_phase1.sqlite3",
             )
         )
-        raw_timeframes = os.environ.get(
-            "SPECT8_TIMEFRAMES", "H1,H4,D1"
-        )
+        raw_timeframes = os.environ.get("SPECT8_TIMEFRAMES", "H1,H4,D1")
         try:
             timeframes = tuple(
                 Timeframe(value.strip())
@@ -95,9 +128,7 @@ class Settings:
                 if value.strip()
             )
         except ValueError as error:
-            raise ValueError(
-                "SPECT8_TIMEFRAMES must contain only H1,H4,D1."
-            ) from error
+            raise ValueError("SPECT8_TIMEFRAMES must contain only H1,H4,D1.") from error
         configured = cls(
             repository_root=repository_root,
             database_path=database_path,
@@ -118,13 +149,61 @@ class Settings:
                 "SPECT8_MARKET_DATA_RUNTIME_ENABLED", "true"
             ).lower()
             == "true",
+            market_scan_enabled=os.environ.get(
+                "SPECT8_MARKET_SCAN_ENABLED",
+                os.environ.get("MARKET_SCAN_ENABLED", "false"),
+            ).lower()
+            == "true",
+            market_scan_after_hour_seconds=int(
+                os.environ.get(
+                    "SPECT8_MARKET_SCAN_AFTER_HOUR_SECONDS",
+                    os.environ.get("MARKET_SCAN_AFTER_HOUR_SECONDS", "60"),
+                )
+            ),
+            market_data_request_min_interval_seconds=float(
+                os.environ.get(
+                    "SPECT8_MARKET_DATA_REQUEST_MIN_INTERVAL_SECONDS",
+                    os.environ.get("MARKET_DATA_REQUEST_MIN_INTERVAL_SECONDS", "8"),
+                )
+            ),
+            market_data_max_requests_per_minute=int(
+                os.environ.get(
+                    "SPECT8_MARKET_DATA_MAX_REQUESTS_PER_MINUTE",
+                    os.environ.get(
+                        "TWELVE_DATA_MAX_CREDITS_PER_MINUTE",
+                        os.environ.get("MARKET_DATA_MAX_REQUESTS_PER_MINUTE", "8"),
+                    ),
+                )
+            ),
+            twelve_data_daily_credit_limit=int(
+                os.environ.get("TWELVE_DATA_DAILY_CREDIT_LIMIT", "800")
+            ),
+            market_data_daily_operational_budget=int(
+                os.environ.get("MARKET_DATA_DAILY_OPERATIONAL_BUDGET", "700")
+            ),
+            market_data_credit_reserve=int(
+                os.environ.get("MARKET_DATA_CREDIT_RESERVE", "100")
+            ),
+            market_data_max_retries_per_instrument=int(
+                os.environ.get("SPECT8_MARKET_DATA_MAX_RETRIES_PER_INSTRUMENT", "2")
+            ),
+            market_data_stale_after_seconds=int(
+                os.environ.get("SPECT8_MARKET_DATA_STALE_AFTER_SECONDS", "7200")
+            ),
+            enabled_instrument_ids=(
+                tuple(
+                    item.strip()
+                    for item in os.environ["SPECT8_ENABLED_INSTRUMENT_IDS"].split(",")
+                    if item.strip()
+                )
+                if os.environ.get("SPECT8_ENABLED_INSTRUMENT_IDS")
+                else None
+            ),
             market_data_poll_seconds=int(
                 os.environ.get("SPECT8_MARKET_DATA_POLL_SECONDS", "300")
             ),
             market_data_safety_delay_seconds=int(
-                os.environ.get(
-                    "SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS", "30"
-                )
+                os.environ.get("SPECT8_MARKET_DATA_SAFETY_DELAY_SECONDS", "30")
             ),
             runtime_log_path=Path(
                 os.environ.get(
@@ -141,9 +220,7 @@ class Settings:
             historical_replay_database_path=Path(
                 os.environ.get(
                     "SPECT8_HISTORICAL_REPLAY_DATABASE_PATH",
-                    repository_root
-                    / "var"
-                    / "spect8_historical_replay.sqlite3",
+                    repository_root / "var" / "spect8_historical_replay.sqlite3",
                 )
             ),
         )

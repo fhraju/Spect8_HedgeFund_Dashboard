@@ -2172,6 +2172,133 @@ td:first-child span,
 .audit-bars-table td:last-child { white-space: normal; min-width: 16rem; }
 .audit-bars-table .expected-closure td { color: #a76a00; background: rgba(234, 170, 0, 0.08); text-align: center; font-weight: 700; }
 
+.scanner-content {
+  min-width: 0;
+  padding: 2rem;
+}
+
+.scanner-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.scanner-header h1 { margin: 0.25rem 0; }
+.scanner-header p { color: var(--muted); margin: 0; }
+
+.scanner-filters {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin-bottom: 1rem;
+}
+
+.scanner-filters label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.7rem;
+  font-weight: 700;
+  gap: 0.35rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scanner-filters select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  color: var(--text);
+  padding: 0.7rem;
+}
+
+.scanner-table-wrap { overflow-x: auto; padding: 0; }
+.scanner-table { min-width: 72rem; width: 100%; }
+.scanner-table th, .scanner-table td { border-bottom: 1px solid var(--border); padding: 0.9rem; text-align: left; vertical-align: middle; }
+.scanner-table th { color: var(--muted); font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; }
+.scanner-table thead th { background: var(--panel); position: sticky; top: 0; z-index: 2; }
+.scanner-table tbody tr:last-child td { border-bottom: 0; }
+.scanner-table a { color: inherit; display: grid; gap: 0.2rem; text-decoration: none; }
+.scanner-table a:hover strong { color: var(--accent); }
+.scanner-table small { color: var(--muted); display: block; margin-top: 0.25rem; }
+
+.scanner-proxy-badge {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.42);
+  border-radius: 999px;
+  color: #087ea4;
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 900;
+  margin-left: 0.4rem;
+  padding: 0.16rem 0.42rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.scanner-chip {
+  background: rgba(100, 116, 139, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.3rem 0.55rem;
+  white-space: nowrap;
+}
+
+.scanner-filter-badge,
+.scanner-signal-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.65rem;
+  font-weight: 800;
+  gap: 0.32rem;
+  min-height: 1.8rem;
+  padding: 0.28rem 0.58rem;
+  white-space: nowrap;
+}
+
+.scanner-filter-badge {
+  background: rgba(100, 116, 139, 0.05);
+  border: 1px solid currentColor;
+}
+
+.scanner-filter-buy { color: #168767; }
+.scanner-filter-sell { color: #2459b6; }
+.scanner-filter-buy_and_sell { color: #7864c8; }
+.scanner-filter-none,
+.scanner-filter-waiting { color: #718096; }
+
+.scanner-signal-badge {
+  border: 2px solid transparent;
+  color: #f8fafc;
+}
+
+.scanner-signal-buy { background: #126b52; border-color: #55ddb1; }
+.scanner-signal-sell { background: #174a9b; border-color: #76a9ff; }
+.scanner-signal-buy_and_sell { background: #6043a5; border-color: #b6a1ee; }
+.scanner-signal-none { background: #475569; border-color: #94a3b8; }
+.scanner-signal-waiting { background: #3f4957; border-color: #7b8797; }
+
+.scanner-buy, .scanner-confirmed, .scanner-healthy, .scanner-recovered { background: rgba(28, 174, 129, 0.12); border-color: rgba(28, 174, 129, 0.32); color: #168767; }
+.scanner-sell { background: rgba(37, 99, 235, 0.11); border-color: rgba(37, 99, 235, 0.28); color: #2459b6; }
+.scanner-stale { background: rgba(234, 170, 0, 0.12); border-color: rgba(234, 170, 0, 0.35); color: #9a6900; }
+.scanner-data_unavailable, .scanner-quarantined, .scanner-insufficient_history { background: rgba(211, 54, 54, 0.1); border-color: rgba(211, 54, 54, 0.3); color: #b02d2d; }
+.scanner-error { color: #b02d2d !important; max-width: 18rem; }
+.scanner-empty { color: var(--muted); margin: 0; padding: 2rem; text-align: center; }
+
+@media (max-width: 1000px) {
+  .scanner-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .scanner-content { padding: 1rem; }
+  .scanner-header { align-items: flex-start; gap: 1rem; }
+  .scanner-filters { grid-template-columns: 1fr; }
+}
+
 @media (width <= 980px) {
   .evaluation-grid,
   .lower-grid {

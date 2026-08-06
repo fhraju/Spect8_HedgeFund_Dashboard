@@ -9,6 +9,7 @@ from typing import Sequence
 from ..domain import Bar, Timeframe
 from ..market_data.profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 from ..market_data.session_boundaries import NEW_YORK, new_york_session_bounds
+from ..market_data.us_equity_calendar import US_ETF_PROFILE_ID
 from .indicators import wilder_atr
 from .models import (
     CURRENT_D1_FILTER_V2,
@@ -63,7 +64,7 @@ def _approved(bar: Bar, timeframe: Timeframe) -> bool:
         bar.timeframe is timeframe
         and bar.is_complete
         and bar.quality_status == "VALID"
-        and bar.construction_profile_version == PROFILE_ID
+        and bar.construction_profile_version in {PROFILE_ID, US_ETF_PROFILE_ID}
         and not bar.synthetic
         and not bar.forward_filled
     )
@@ -77,6 +78,7 @@ class CurrentDailyCandleBuilder:
         instrument: str,
         as_of_h1_close: datetime,
         h1_bars: Sequence[Bar],
+        sparse_actual_h1: bool = False,
     ) -> CurrentPartialDailyCandle:
         if as_of_h1_close.tzinfo is None:
             raise ValueError("as_of_h1_close must be timezone-aware")
@@ -101,7 +103,7 @@ class CurrentDailyCandleBuilder:
             raise DailyFilterUnavailableError(
                 "NO_COMPLETED_H1_IN_CURRENT_DAILY_SESSION"
             )
-        if candidates[0].open_time != session_open:
+        if not sparse_actual_h1 and candidates[0].open_time != session_open:
             raise DailyFilterUnavailableError("CURRENT_D1_MISSING_INITIAL_H1")
         if any(
             current.open_time != previous.close_time
@@ -149,12 +151,14 @@ def build_daily_filter_snapshot(
     as_of_h1_close: datetime,
     h1_bars: Sequence[Bar],
     completed_d1_bars: Sequence[Bar],
+    sparse_actual_h1: bool = False,
 ) -> DailyFilterSnapshot:
     partial = CurrentDailyCandleBuilder().build(
         provider=provider,
         instrument=instrument,
         as_of_h1_close=as_of_h1_close,
         h1_bars=h1_bars,
+        sparse_actual_h1=sparse_actual_h1,
     )
     eligible = tuple(
         bar

@@ -52,7 +52,7 @@ const snapshot = {
     stale: false,
     provider_health: null,
     provider_sync: null,
-    instrument: { instrument_id: "EUR/USD", provider: "TWELVE_DATA", provider_symbol: "EUR/USD", display_name: "Euro / US Dollar", asset_class: "FOREX", session_timezone: "UTC", timeframes: ["H1", "H4"], price_precision: 5, synthetic: false },
+    instrument: { instrument_id: "EUR/USD", provider: "TWELVE_DATA", provider_symbol: "EUR/USD", display_symbol: "EUR/USD", display_name: "Euro / US Dollar", asset_class: "FOREX", enabled: true, session_timezone: "UTC", timeframes: ["H1", "H4"], price_precision: 5, synthetic: false },
     latest_candles: { H1: "2026-08-05T10:00:00Z", H4: "2026-08-05T09:00:00Z", D1: "2026-08-04T21:00:00Z" },
     daily_filter: {
       snapshot_id: snapshotId,

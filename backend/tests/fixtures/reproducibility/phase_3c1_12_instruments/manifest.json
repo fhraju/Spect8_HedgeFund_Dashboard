@@ -1,0 +1,144 @@
+{
+  "atr_specification": "Wilder ATR(5), completed D1 sessions only; current partial D1 excluded",
+  "broker_presentation_timestamp": "2026-08-05 17:00",
+  "buffer_specification": "Wilder ATR(5) * 0.05",
+  "canonical_instrument_ids": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "AUD_USD",
+    "USD_CAD",
+    "NZD_USD",
+    "EUR_GBP",
+    "EUR_JPY",
+    "GBP_JPY",
+    "XAU_USD",
+    "BTC_USD",
+    "ETH_USD"
+  ],
+  "canonical_profile_version": "IC_MARKETS_NY_CLOSE_FOREX_V1",
+  "canonical_utc_evaluation_timestamp": "2026-08-06T04:00:00Z",
+  "checkpoint_name": "phase_3c1_12_instruments",
+  "creation_timestamp": "2026-08-06T04:00:00Z",
+  "d1_session_authority": "17:00 America/New_York",
+  "database_schema_revision": {
+    "schema_sha256": "66d66bef508f9ed896ffe1b33db5a88d8126c194010d8ba59182a2d31ae06706",
+    "sqlite_user_version": 0
+  },
+  "export_command": "python -m backend.app.tools.capture_reproducibility_checkpoint --name phase_3c1_12_instruments --evaluation-time 2026-08-06T04:00:00Z",
+  "fixture_checksums": {
+    "canonical_h1.jsonl": "b7b501dbfb93a3fab12bc0dffe6e24998f1698bc512300345fdb5ca055f84104",
+    "canonical_h4.jsonl": "8e61b94d2f892718effe7774be66374b053689a53e55d3155ee7af8df22f036d",
+    "completed_d1.jsonl": "17d3fcf0b28841e8f75286973c8305104a5c64d28f8615559646b1407088e09f",
+    "current_partial_d1.jsonl": "e9661929420b433ed27ec9428e1982ba1e7a03a70a0036fa6c9eeea4eae62737",
+    "expected_evaluations.jsonl": "cee97defe566909c5a9872c1ddbcecd44cc4f6fe3cd922de66201ba6d85f596e",
+    "expected_event_order.jsonl": "021605090981614a4fa4d5f7486f12c692eb309af6b8f32c8ab2f1a81205c07e",
+    "expected_scanner_response.json": "acaee27ab65df02070bb7b6e486a2c3d29794fe734ba50dbaa1293931b35730b",
+    "filter_snapshots.jsonl": "dffbb7bcb01e30acba21b03f08477867ca3fc3431681c214e4241868fe98d8e4",
+    "instrument_registry.json": "eb0e82159dbc67e97ad77946758928b6857cd1ca31d4c2d0e11f4e0ffd529aa4"
+  },
+  "h4_evaluation_timestamp": "2026-08-06T01:00:00Z",
+  "provider_exchange_identities": {
+    "AUD_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "AUD/USD"
+    },
+    "BTC_USD": {
+      "exchange": "Binance",
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "BTC/USD"
+    },
+    "ETH_USD": {
+      "exchange": "Binance",
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "ETH/USD"
+    },
+    "EUR_GBP": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/GBP"
+    },
+    "EUR_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/JPY"
+    },
+    "EUR_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/USD"
+    },
+    "GBP_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "GBP/JPY"
+    },
+    "GBP_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "GBP/USD"
+    },
+    "NZD_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "NZD/USD"
+    },
+    "USD_CAD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "USD/CAD"
+    },
+    "USD_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "USD/JPY"
+    },
+    "XAU_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "XAU/USD"
+    }
+  },
+  "provider_symbol_mappings": {
+    "AUD_USD": "AUD/USD",
+    "BTC_USD": "BTC/USD",
+    "ETH_USD": "ETH/USD",
+    "EUR_GBP": "EUR/GBP",
+    "EUR_JPY": "EUR/JPY",
+    "EUR_USD": "EUR/USD",
+    "GBP_JPY": "GBP/JPY",
+    "GBP_USD": "GBP/USD",
+    "NZD_USD": "NZD/USD",
+    "USD_CAD": "USD/CAD",
+    "USD_JPY": "USD/JPY",
+    "XAU_USD": "XAU/USD"
+  },
+  "reproduction_command": "python -m backend.app.tools.reproduce_reproducibility_checkpoint --name phase_3c1_12_instruments",
+  "source_git_commit_sha": "dfbfd63246023f0d04dba5748b08e14840b006fa",
+  "source_worktree_note": "Checkpoint captured before Phase 3C-2 ETF expansion from the verified twelve-instrument worktree.",
+  "strategy_version": "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+  "typed_settings": {
+    "canonical_timeframes": [
+      "H1",
+      "H4",
+      "D1"
+    ],
+    "completed_d1_history": 10,
+    "minimum_signal_history": 30,
+    "provider": "TWELVE_DATA"
+  },
+  "validation_command": "python -m pytest -q backend/tests/test_phase_3b_10_instrument_reproducibility.py"
+}

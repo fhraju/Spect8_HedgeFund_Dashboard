@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -10,6 +10,13 @@ from .models import (
     NormalizationResult,
     RawProviderCandle,
     TimestampSemantics,
+    InstrumentKind,
+)
+from .us_equity_calendar import (
+    EquityH1Disposition,
+    US_ETF_PROFILE_ID,
+    classify_etf_h1_open,
+    session_for_instant,
 )
 from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 
@@ -41,6 +48,8 @@ class CandleNormalizer:
             issues.append("SESSION_TIMEZONE_MISMATCH")
         if raw.timeframe not in instrument.available_timeframes:
             issues.append("TIMEFRAME_UNAVAILABLE")
+        if instrument.price_precision is None or instrument.point_size is None:
+            issues.append("PRECISION_UNAVAILABLE")
         if not raw.is_complete:
             issues.append("INCOMPLETE_CANDLE")
 
@@ -65,6 +74,21 @@ class CandleNormalizer:
         if open_time is not None and close_time is not None:
             if close_time <= open_time:
                 issues.append("INVALID_TIMESTAMP_RANGE")
+            if (
+                instrument.instrument_kind is InstrumentKind.ETF
+                and raw.timeframe.value == "H1"
+            ):
+                disposition = classify_etf_h1_open(
+                    open_time,
+                    as_of=max(
+                        raw.received_at or close_time,
+                        close_time + timedelta(microseconds=1),
+                    ),
+                )
+                if disposition is EquityH1Disposition.STRUCTURAL_PARTIAL:
+                    issues.append("STRUCTURAL_PARTIAL_H1")
+                elif disposition is not EquityH1Disposition.VALID_COMPLETED:
+                    issues.append("OUTSIDE_US_REGULAR_SESSION")
 
         raw_prices = (raw.open, raw.high, raw.low, raw.close)
         try:
@@ -107,6 +131,7 @@ class CandleNormalizer:
         assert open_time is not None
         assert close_time is not None
         open_price, high, low, close = prices
+        assert instrument.price_precision is not None
         quantum = Decimal("1").scaleb(-instrument.price_precision)
 
         def normalized(value: Decimal) -> Decimal:
@@ -136,10 +161,13 @@ class CandleNormalizer:
                 synthetic=instrument.synthetic,
                 quality_status="VALID",
                 construction_profile_version=(
-                    PROFILE_ID
+                    (
+                        US_ETF_PROFILE_ID
+                        if instrument.instrument_kind is InstrumentKind.ETF
+                        else PROFILE_ID
+                    )
                     if (
                         raw.timeframe.value == "H1"
-                        and instrument.asset_class == "FOREX"
                         and not instrument.synthetic
                     )
                     else "PROVIDER_NATIVE_COMPARISON_ONLY"
@@ -154,6 +182,11 @@ class CandleNormalizer:
                     ),
                 ),
                 forward_filled=False,
+                expected_closure_before=(
+                    instrument.instrument_kind is InstrumentKind.ETF
+                    and (session := session_for_instant(open_time)) is not None
+                    and open_time == session.open_utc
+                ),
                 ingestion_run_id=(
                     str(raw.provider_metadata.get("ingestion_run_id"))
                     if raw.provider_metadata

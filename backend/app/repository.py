@@ -130,6 +130,21 @@ class SQLiteProjectionRepository:
                     detail TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS instrument_health (
+                    provider TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    latest_completed_close TEXT,
+                    freshness_seconds INTEGER,
+                    detail TEXT NOT NULL,
+                    latest_error_code TEXT,
+                    latest_error_summary TEXT,
+                    last_success_at TEXT,
+                    synthetic INTEGER NOT NULL CHECK (synthetic IN (0, 1)),
+                    PRIMARY KEY (provider, instrument_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS runtime_sessions (
                     session_id TEXT PRIMARY KEY,
                     provider TEXT NOT NULL,
@@ -189,6 +204,38 @@ class SQLiteProjectionRepository:
                         instrument_id, as_of_h1_close_time_utc
                     )
                 );
+
+                CREATE TABLE IF NOT EXISTS provider_credit_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    request_started_at TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    request_category TEXT NOT NULL,
+                    estimated_credits INTEGER NOT NULL CHECK (estimated_credits > 0),
+                    request_status TEXT NOT NULL,
+                    http_status INTEGER,
+                    provider_quota_limit INTEGER,
+                    provider_quota_used INTEGER,
+                    provider_quota_remaining INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_canonical_bars_instrument_time
+                ON canonical_bars (
+                    instrument_id, timeframe, close_time_utc DESC
+                );
+                CREATE INDEX IF NOT EXISTS idx_status_instrument_strategy_time
+                ON instrument_status (
+                    instrument_id, strategy_id, timeframe, updated_at DESC
+                );
+                CREATE INDEX IF NOT EXISTS idx_snapshots_instrument_time
+                ON daily_filter_snapshots (
+                    instrument_id, strategy_version,
+                    as_of_h1_close_time_utc DESC
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_instrument_time
+                ON event_history (instrument_id, timeframe, occurred_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_credit_ledger_provider_time
+                ON provider_credit_ledger (provider, request_started_at DESC);
                 """
             )
             self._migrate_synthetic_constraints(connection)
@@ -1144,6 +1191,64 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
 
+    def update_instrument_health(
+        self,
+        instrument_id: str,
+        health: "ProviderHealth",
+        *,
+        error_code: str | None = None,
+    ) -> None:
+        checked_at = primitive(health.checked_at)
+        healthy = health.state.value in {"HEALTHY", "RECOVERED"}
+        with self._lock, closing(self._connect()) as connection:
+            previous = connection.execute(
+                """
+                SELECT last_success_at
+                FROM instrument_health
+                WHERE provider = ? AND instrument_id = ?
+                """,
+                (health.provider_id, instrument_id),
+            ).fetchone()
+            last_success = (
+                checked_at
+                if healthy
+                else (previous["last_success_at"] if previous is not None else None)
+            )
+            connection.execute(
+                """
+                INSERT INTO instrument_health (
+                    provider, instrument_id, state, checked_at,
+                    latest_completed_close, freshness_seconds, detail,
+                    latest_error_code, latest_error_summary, last_success_at,
+                    synthetic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, instrument_id) DO UPDATE SET
+                    state = excluded.state,
+                    checked_at = excluded.checked_at,
+                    latest_completed_close = excluded.latest_completed_close,
+                    freshness_seconds = excluded.freshness_seconds,
+                    detail = excluded.detail,
+                    latest_error_code = excluded.latest_error_code,
+                    latest_error_summary = excluded.latest_error_summary,
+                    last_success_at = excluded.last_success_at,
+                    synthetic = excluded.synthetic
+                """,
+                (
+                    health.provider_id,
+                    instrument_id,
+                    health.state.value,
+                    checked_at,
+                    primitive(health.latest_completed_close),
+                    health.freshness_seconds,
+                    health.detail,
+                    None if healthy else error_code,
+                    None if healthy else health.detail,
+                    last_success,
+                    int(health.synthetic),
+                ),
+            )
+            connection.commit()
+
     def record_provider_sync(
         self,
         provider_id: str,
@@ -1291,21 +1396,28 @@ class SQLiteProjectionRepository:
             for row in rows
         ]
 
-    def recent_events(self, limit: int = 12) -> list[dict[str, Any]]:
+    def recent_events(
+        self,
+        limit: int = 12,
+        *,
+        instrument_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         if limit < 1 or limit > 100:
             raise ValueError("event limit must be between 1 and 100")
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                """
+            query = """
                 SELECT id, idempotency_key, sequence, event_type, occurred_at,
                        instrument_id, timeframe, source_case_id, payload_json,
                        synthetic
                 FROM event_history
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            """
+            values: list[Any] = []
+            if instrument_id is not None:
+                query += " WHERE instrument_id = ?"
+                values.append(instrument_id)
+            query += " ORDER BY id DESC LIMIT ?"
+            values.append(limit)
+            rows = connection.execute(query, values).fetchall()
         return [
             {
                 "id": row["id"],
@@ -1399,6 +1511,27 @@ class SQLiteProjectionRepository:
             "synthetic": bool(row["synthetic"]),
         }
 
+    def instrument_health(
+        self, provider_id: str, instrument_id: str
+    ) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT provider, instrument_id, state, checked_at,
+                       latest_completed_close, freshness_seconds, detail,
+                       latest_error_code, latest_error_summary,
+                       last_success_at, synthetic
+                FROM instrument_health
+                WHERE provider = ? AND instrument_id = ?
+                """,
+                (provider_id, instrument_id),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["synthetic"] = bool(result["synthetic"])
+        return result
+
     def provider_sync(self, provider_id: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
@@ -1451,6 +1584,122 @@ class SQLiteProjectionRepository:
         if row is None:
             return None
         return json.loads(row["status_json"]).get("signal_bar_close_time")
+
+    def latest_canonical_close(
+        self,
+        provider_id: str,
+        instrument_id: str,
+        timeframe: str = "H1",
+    ) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT MAX(close_time_utc) AS close_time_utc
+                FROM canonical_bars
+                WHERE provider = ? AND instrument_id = ? AND timeframe = ?
+                """,
+                (provider_id, instrument_id, timeframe),
+            ).fetchone()
+        return str(row["close_time_utc"]) if row and row["close_time_utc"] else None
+
+    def reserve_provider_credits(
+        self,
+        *,
+        provider: str,
+        request_started_at: datetime,
+        endpoint: str,
+        request_category: str,
+        estimated_credits: int,
+        window_start: datetime,
+        operational_budget: int,
+    ) -> int | None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            used = connection.execute(
+                """
+                SELECT COALESCE(SUM(estimated_credits), 0) AS used
+                FROM provider_credit_ledger
+                WHERE provider = ? AND request_started_at > ?
+                """,
+                (provider, primitive(window_start)),
+            ).fetchone()["used"]
+            if int(used) + estimated_credits > operational_budget:
+                connection.rollback()
+                return None
+            cursor = connection.execute(
+                """
+                INSERT INTO provider_credit_ledger (
+                    provider, request_started_at, endpoint, request_category,
+                    estimated_credits, request_status
+                ) VALUES (?, ?, ?, ?, ?, 'RESERVED')
+                """,
+                (
+                    provider,
+                    primitive(request_started_at),
+                    endpoint,
+                    request_category,
+                    estimated_credits,
+                ),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def finalize_provider_credit(
+        self,
+        reservation_id: int,
+        *,
+        request_status: str,
+        http_status: int | None,
+        quota_limit: int | None = None,
+        quota_used: int | None = None,
+        quota_remaining: int | None = None,
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE provider_credit_ledger
+                SET request_status = ?, http_status = ?,
+                    provider_quota_limit = ?, provider_quota_used = ?,
+                    provider_quota_remaining = ?
+                WHERE id = ?
+                """,
+                (
+                    request_status,
+                    http_status,
+                    quota_limit,
+                    quota_used,
+                    quota_remaining,
+                    reservation_id,
+                ),
+            )
+            connection.commit()
+
+    def provider_credit_usage(
+        self,
+        provider: str,
+        *,
+        window_start: datetime,
+    ) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(SUM(estimated_credits), 0) AS used,
+                       COUNT(*) AS request_count,
+                       MAX(provider_quota_limit) AS provider_quota_limit,
+                       MAX(provider_quota_used) AS provider_quota_used,
+                       MIN(provider_quota_remaining) AS provider_quota_remaining
+                FROM provider_credit_ledger
+                WHERE provider = ? AND request_started_at > ?
+                """,
+                (provider, primitive(window_start)),
+            ).fetchone()
+        return {
+            "estimated_credits_used": int(row["used"]),
+            "request_count": int(row["request_count"]),
+            "provider_quota_limit": row["provider_quota_limit"],
+            "provider_quota_used": row["provider_quota_used"],
+            "provider_quota_remaining": row["provider_quota_remaining"],
+        }
 
     def observation_report(
         self,

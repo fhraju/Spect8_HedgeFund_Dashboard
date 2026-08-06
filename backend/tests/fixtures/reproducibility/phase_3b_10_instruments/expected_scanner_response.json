@@ -1,0 +1,280 @@
+{
+  "data": {
+    "generated_at": "2026-08-05T14:00:00Z",
+    "instruments": [
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_435accd7fdbd3985b302d0421bc9518b4bc7f0dd3fcc1566b87fc521cf5834b1",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_7e2d44e8afb1b47b6a084950fc179931ad676ea471341186f77c33bd5c423e8e",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "Euro / US Dollar",
+        "display_symbol": "EUR/USD",
+        "enabled": true,
+        "instrument_id": "EUR_USD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "EUR/USD",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_28cbacc6dcf6942f759bcdba5820abacdc465c7138a04ce9c784a4067b4e5e64",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_3096ecfb9d023071d508998213555559d100fbadaae94b8dddffd8acc69af621",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "British Pound / US Dollar",
+        "display_symbol": "GBP/USD",
+        "enabled": true,
+        "instrument_id": "GBP_USD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "GBP/USD",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "NONE",
+          "latest_filter_snapshot_id": "dfs_44b2c3f49ef7e2f9fb5f810bad819e420a303fc683b3eb202840bbb57f9eb880",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "NONE",
+          "latest_filter_snapshot_id": "dfs_ec47fecf02e64819d6d639ebfa5b1a63ae8dced5972b56fb677ee62ed099d6a6",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "US Dollar / Japanese Yen",
+        "display_symbol": "USD/JPY",
+        "enabled": true,
+        "instrument_id": "USD_JPY",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "USD/JPY",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_a6cc956a1ef23ed4c285856b7998489675bf19ce6bce14de3a4a9b669a6c8372",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_34dacd17ac8b5a20cb3c8da3c8aab9f879d49f89d3b7f1ef3260eeed19eecab9",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "Australian Dollar / US Dollar",
+        "display_symbol": "AUD/USD",
+        "enabled": true,
+        "instrument_id": "AUD_USD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "AUD/USD",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_67dd2f239014e21af25dbe7fb60d67e0ecdc29b5a779d11bf77d4b42fafa0eb4",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_cd2b738de5bafcde66ac3ddbafaa5b92aeac0e3462a701bd180a8b536d431dc0",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "US Dollar / Canadian Dollar",
+        "display_symbol": "USD/CAD",
+        "enabled": true,
+        "instrument_id": "USD_CAD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "USD/CAD",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "BUY_AND_SELL",
+          "latest_filter_snapshot_id": "dfs_7c78fbec97a31f53736f38feb4a5e8578a295997aeb0f060273cd884a17c8525",
+          "signal_status": "BUY"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "BUY_AND_SELL",
+          "latest_filter_snapshot_id": "dfs_72ff2a0bd0bcd7873527bd523a7e28a741cef667e4f70e913420d77a27b850e1",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "New Zealand Dollar / US Dollar",
+        "display_symbol": "NZD/USD",
+        "enabled": true,
+        "instrument_id": "NZD_USD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "NZD/USD",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_ba4c0d02ae2735b49128a09cdb2d4f0f45d420c023f3f804f3de6142d28d4f34",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_d7adc0ed86618de889a63b18046120a61d7346e080b1dddcdc48835d276bf08e",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "Euro / British Pound",
+        "display_symbol": "EUR/GBP",
+        "enabled": true,
+        "instrument_id": "EUR_GBP",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "EUR/GBP",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_e6aa58eb68060f77e274d4870ad1cc55c6cf6193a2981e8c97146251226d6a1f",
+          "signal_status": "SELL"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_15ab2ee922d734ea1a6fe69c31a2726858b60f100f9ef0c85064fb257412063e",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "Euro / Japanese Yen",
+        "display_symbol": "EUR/JPY",
+        "enabled": true,
+        "instrument_id": "EUR_JPY",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "EUR/JPY",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_da49292429eb41c5697637c13c71b59a59572693ed5b8ef676087ca217238fac",
+          "signal_status": "SELL"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_258dc70404c895376cc2f1c35fed8df07d8a87a7ce10470df6ebc994321ca15e",
+          "signal_status": "NONE"
+        },
+        "asset_class": "FOREX",
+        "data_status": "HEALTHY",
+        "display_name": "British Pound / Japanese Yen",
+        "display_symbol": "GBP/JPY",
+        "enabled": true,
+        "instrument_id": "GBP_JPY",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "GBP/JPY",
+        "stale": false
+      },
+      {
+        "H1": {
+          "evaluation_timestamp": "2026-08-05T14:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_acd46841f617f92cec1381ea249815bfab570682a542803f7d1eb01e0dd29772",
+          "signal_status": "NONE"
+        },
+        "H4": {
+          "evaluation_timestamp": "2026-08-05T13:00:00Z",
+          "filter_status": "SELL",
+          "latest_filter_snapshot_id": "dfs_e1c0fdbc62cbd35c61de1ac594c3d9f0db2880d17352109803abe6db3564d2db",
+          "signal_status": "NONE"
+        },
+        "asset_class": "METAL",
+        "data_status": "HEALTHY",
+        "display_name": "Gold / US Dollar",
+        "display_symbol": "XAU/USD",
+        "enabled": true,
+        "instrument_id": "XAU_USD",
+        "last_successful_provider_update": "2026-08-05T14:00:00Z",
+        "latest_completed_h1_timestamp": "2026-08-05T14:00:00Z",
+        "latest_completed_h4_timestamp": "2026-08-05T13:00:00Z",
+        "latest_error_summary": null,
+        "provider_health": "HEALTHY",
+        "provider_symbol": "XAU/USD",
+        "stale": false
+      }
+    ]
+  },
+  "notice": "Frozen Phase 3B ten-instrument reproducibility checkpoint.",
+  "source": "TWELVE_DATA_PROVIDER",
+  "synthetic": false
+}

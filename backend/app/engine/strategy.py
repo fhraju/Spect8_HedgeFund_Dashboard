@@ -78,6 +78,7 @@ def _missing_issue(
     step = TIMEFRAME_STEP[timeframe]
     if any(
         current.open_time - previous.open_time != step
+        and not current.expected_closure_before
         and not is_expected_forex_weekend_gap(
             previous.open_time + step,
             current.open_time,

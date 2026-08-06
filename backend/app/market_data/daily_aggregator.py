@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
 from typing import Sequence
@@ -289,3 +289,45 @@ class NewYorkDailyAggregator:
             session_open_broker_time=broker_wall_time(start).isoformat(),
             session_close_broker_time=broker_wall_time(end).isoformat(),
         )
+
+
+class ActualDataNewYorkDailyAggregator:
+    """Build NY-17 D1 bars from actual sparse exchange H1 data only."""
+
+    def aggregate(
+        self,
+        source_bars: Sequence[Bar],
+        *,
+        as_of: datetime,
+    ) -> DailyAggregationResult:
+        if as_of.tzinfo is None:
+            raise ValueError("aggregation as_of must be timezone-aware")
+        if not source_bars:
+            return DailyAggregationResult((), ())
+        bars = tuple(sorted(source_bars, key=lambda item: item.open_time))
+        issues = NewYorkDailyAggregator._source_issues(bars, as_of)
+        if issues:
+            return DailyAggregationResult((), tuple(issues))
+        grouped: dict[date, list[Bar]] = {}
+        for bar in bars:
+            local = bar.open_time.astimezone(NEW_YORK)
+            session_date = local.date() if local.hour < 17 else local.date() + timedelta(days=1)
+            grouped.setdefault(session_date, []).append(bar)
+        sessions: list[AggregatedDailyBar] = []
+        for session_date in sorted(grouped):
+            start, end = new_york_session_bounds(session_date)
+            if end > as_of.astimezone(timezone.utc):
+                continue
+            members = tuple(
+                bar for bar in grouped[session_date]
+                if start <= bar.open_time and bar.close_time <= end
+            )
+            if not members:
+                continue
+            sessions.append(
+                AggregatedDailyBar(
+                    bar=NewYorkDailyAggregator._aggregate_session(members, start, end),
+                    source_bar_count=len(members),
+                )
+            )
+        return DailyAggregationResult(tuple(sessions), ())

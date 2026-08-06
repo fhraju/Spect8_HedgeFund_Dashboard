@@ -1,0 +1,1387 @@
+{
+  "candidates": [
+    {
+      "asset_class": "PRECIOUS_METAL",
+      "canonical_instrument_id": "XAG_USD",
+      "completed_candle_count": 0,
+      "current_plan_access": "DENIED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": "Precious Metal",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Silver Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "XAG/USD"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/commodities",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "XAG/USD"
+          },
+          "query_type": "COMMODITY_EXACT_SYMBOL",
+          "request_finish_utc": "2026-08-05T16:22:08.805522Z",
+          "request_start_utc": "2026-08-05T16:22:06.314965Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": "Precious Metal",
+          "country": null,
+          "currency": null,
+          "description": "",
+          "exchange": null,
+          "exchange_timezone": null,
+          "instrument_name": "Silver Spot",
+          "instrument_type": "Commodity",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "XAG/USD"
+        }
+      ],
+      "discovery_kind": "EXACT_COMMODITY",
+      "discovery_request_finish_utc": "2026-08-05T16:22:08.805522Z",
+      "discovery_request_start_utc": "2026-08-05T16:22:06.314965Z",
+      "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "exchange": null,
+      "forming_candle_count": 0,
+      "h1_http_status": 404,
+      "h1_provider_status": "error",
+      "h1_request_finish_utc": "2026-08-05T16:22:15.394350Z",
+      "h1_request_start_utc": "2026-08-05T16:22:14.413252Z",
+      "h1_request_status": "PLAN_RESTRICTED",
+      "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "latest_timestamp": null,
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+        "passed": false,
+        "strategy_evaluator_status": "NOT_RUN"
+      },
+      "point_size": null,
+      "price_precision": null,
+      "provider_instrument_name": "Silver Spot",
+      "provider_instrument_type": "Commodity",
+      "provider_timezone": null,
+      "requested_instrument_name": "Silver / US Dollar",
+      "resolved_provider_symbol": "XAG/USD",
+      "returned_candle_count": 0,
+      "session_policy": "FOREX_WEEKDAY_ACTUAL_CANDLES",
+      "validation_decision": "KEEP_DISABLED",
+      "validation_status": "PLAN_RESTRICTED"
+    },
+    {
+      "asset_class": "ENERGY",
+      "canonical_instrument_id": "WTI_CRUDE",
+      "completed_candle_count": 0,
+      "current_plan_access": "DENIED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": "Energy Resource",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Crude Oil WTI Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "WTI/USD"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/commodities",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "WTI/USD"
+          },
+          "query_type": "COMMODITY_EXACT_SYMBOL",
+          "request_finish_utc": "2026-08-05T16:22:26.696535Z",
+          "request_start_utc": "2026-08-05T16:22:22.527502Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": "Energy Resource",
+          "country": null,
+          "currency": null,
+          "description": "",
+          "exchange": null,
+          "exchange_timezone": null,
+          "instrument_name": "Crude Oil WTI Spot",
+          "instrument_type": "Commodity",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "WTI/USD"
+        }
+      ],
+      "discovery_kind": "EXACT_COMMODITY",
+      "discovery_request_finish_utc": "2026-08-05T16:22:26.696535Z",
+      "discovery_request_start_utc": "2026-08-05T16:22:22.527502Z",
+      "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "exchange": null,
+      "forming_candle_count": 0,
+      "h1_http_status": 404,
+      "h1_provider_status": "error",
+      "h1_request_finish_utc": "2026-08-05T16:22:31.057797Z",
+      "h1_request_start_utc": "2026-08-05T16:22:30.631715Z",
+      "h1_request_status": "PLAN_RESTRICTED",
+      "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "latest_timestamp": null,
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+        "passed": false,
+        "strategy_evaluator_status": "NOT_RUN"
+      },
+      "point_size": null,
+      "price_precision": null,
+      "provider_instrument_name": "Crude Oil WTI Spot",
+      "provider_instrument_type": "Commodity",
+      "provider_timezone": null,
+      "requested_instrument_name": "WTI Crude Oil Spot",
+      "resolved_provider_symbol": "WTI/USD",
+      "returned_candle_count": 0,
+      "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+      "validation_decision": "KEEP_DISABLED",
+      "validation_status": "PLAN_RESTRICTED"
+    },
+    {
+      "asset_class": "ENERGY",
+      "canonical_instrument_id": "BRENT_CRUDE",
+      "completed_candle_count": 0,
+      "current_plan_access": "DENIED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": "Energy Resource",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Brent Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "XBR/USD"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/commodities",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "XBR/USD"
+          },
+          "query_type": "COMMODITY_EXACT_SYMBOL",
+          "request_finish_utc": "2026-08-05T16:22:39.531307Z",
+          "request_start_utc": "2026-08-05T16:22:38.743406Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": "Energy Resource",
+          "country": null,
+          "currency": null,
+          "description": "",
+          "exchange": null,
+          "exchange_timezone": null,
+          "instrument_name": "Brent Spot",
+          "instrument_type": "Commodity",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "XBR/USD"
+        }
+      ],
+      "discovery_kind": "EXACT_COMMODITY",
+      "discovery_request_finish_utc": "2026-08-05T16:22:39.531307Z",
+      "discovery_request_start_utc": "2026-08-05T16:22:38.743406Z",
+      "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "exchange": null,
+      "forming_candle_count": 0,
+      "h1_http_status": 404,
+      "h1_provider_status": "error",
+      "h1_request_finish_utc": "2026-08-05T16:22:47.244995Z",
+      "h1_request_start_utc": "2026-08-05T16:22:46.851961Z",
+      "h1_request_status": "PLAN_RESTRICTED",
+      "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "latest_timestamp": null,
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+        "passed": false,
+        "strategy_evaluator_status": "NOT_RUN"
+      },
+      "point_size": null,
+      "price_precision": null,
+      "provider_instrument_name": "Brent Spot",
+      "provider_instrument_type": "Commodity",
+      "provider_timezone": null,
+      "requested_instrument_name": "Brent Crude Oil Spot",
+      "resolved_provider_symbol": "XBR/USD",
+      "returned_candle_count": 0,
+      "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+      "validation_decision": "KEEP_DISABLED",
+      "validation_status": "PLAN_RESTRICTED"
+    },
+    {
+      "asset_class": "INDUSTRIAL_METAL",
+      "canonical_instrument_id": "COPPER",
+      "completed_candle_count": 0,
+      "current_plan_access": "DENIED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": "Industrial Metal",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Copper Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "HG1"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/commodities",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "HG1"
+          },
+          "query_type": "COMMODITY_EXACT_SYMBOL",
+          "request_finish_utc": "2026-08-05T16:22:55.506018Z",
+          "request_start_utc": "2026-08-05T16:22:54.961981Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": "Industrial Metal",
+          "country": null,
+          "currency": null,
+          "description": "",
+          "exchange": null,
+          "exchange_timezone": null,
+          "instrument_name": "Copper Spot",
+          "instrument_type": "Commodity",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "HG1"
+        }
+      ],
+      "discovery_kind": "EXACT_COMMODITY",
+      "discovery_request_finish_utc": "2026-08-05T16:22:55.506018Z",
+      "discovery_request_start_utc": "2026-08-05T16:22:54.961981Z",
+      "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "exchange": null,
+      "forming_candle_count": 0,
+      "h1_http_status": 404,
+      "h1_provider_status": "error",
+      "h1_request_finish_utc": "2026-08-05T16:23:05.097466Z",
+      "h1_request_start_utc": "2026-08-05T16:23:03.068035Z",
+      "h1_request_status": "PLAN_RESTRICTED",
+      "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+      "latest_timestamp": null,
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+        "passed": false,
+        "strategy_evaluator_status": "NOT_RUN"
+      },
+      "point_size": null,
+      "price_precision": null,
+      "provider_instrument_name": "Copper Spot",
+      "provider_instrument_type": "Commodity",
+      "provider_timezone": null,
+      "requested_instrument_name": "Copper Spot",
+      "resolved_provider_symbol": "HG1",
+      "returned_candle_count": 0,
+      "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+      "validation_decision": "KEEP_DISABLED",
+      "validation_status": "PLAN_RESTRICTED"
+    },
+    {
+      "asset_class": "CRYPTO",
+      "canonical_instrument_id": "BTC_USD",
+      "completed_candle_count": 508,
+      "current_plan_access": "GRANTED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Binance",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Bitfinex",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Coinbase Pro",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/cryptocurrencies",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "BTC/USD"
+          },
+          "query_type": "CRYPTO_EXACT_PAIR",
+          "request_finish_utc": "2026-08-05T16:23:11.670986Z",
+          "request_start_utc": "2026-08-05T16:23:11.182333Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Binance",
+          "exchange_timezone": null,
+          "instrument_name": "Bitcoin / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "BTC/USD"
+        },
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Bitfinex",
+          "exchange_timezone": null,
+          "instrument_name": "Bitcoin / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "BTC/USD"
+        },
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Coinbase Pro",
+          "exchange_timezone": null,
+          "instrument_name": "Bitcoin / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "BTC/USD"
+        }
+      ],
+      "discovery_kind": "CRYPTO_CATALOG",
+      "discovery_request_finish_utc": "2026-08-05T16:23:11.670986Z",
+      "discovery_request_start_utc": "2026-08-05T16:23:11.182333Z",
+      "error_reason": null,
+      "exchange": "Binance",
+      "forming_candle_count": 1,
+      "h1_http_status": 200,
+      "h1_provider_status": "ok",
+      "h1_request_finish_utc": "2026-08-05T16:23:23.131672Z",
+      "h1_request_start_utc": "2026-08-05T16:23:19.286996Z",
+      "h1_request_status": "OK",
+      "h1_response_error": null,
+      "latest_timestamp": "2026-08-05T16:00:00Z",
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "canonical_h1_persistence": "PASS",
+        "constructed_d1_count": 14,
+        "d1_session_status": "PASS",
+        "derived_h4_count": 90,
+        "derived_h4_status": "PASS",
+        "exact_error": null,
+        "forming_candles_excluded": true,
+        "h1_filter": "SELL",
+        "h1_signal": "NONE",
+        "h4_filter": "SELL",
+        "h4_signal": "NONE",
+        "latest_completed_h1_timestamp": "2026-08-05T16:00:00Z",
+        "latest_derived_h4_timestamp": "2026-08-05T13:00:00Z",
+        "no_forward_filled_bars": true,
+        "no_synthetic_bars": true,
+        "passed": true,
+        "persisted_h1_count": 364,
+        "strategy_evaluator_status": "PASS",
+        "timestamp_normalization": "PASS"
+      },
+      "point_size": "0.01",
+      "price_precision": 2,
+      "provider_instrument_name": "Bitcoin / US Dollar",
+      "provider_instrument_type": "Digital Currency",
+      "provider_timezone": null,
+      "requested_instrument_name": "Bitcoin / US Dollar",
+      "resolved_provider_symbol": "BTC/USD",
+      "returned_candle_count": 509,
+      "session_policy": "FROZEN_STRATEGY_WEEKEND_POLICY",
+      "validation_decision": "ENABLE",
+      "validation_status": "H1_VALIDATED"
+    },
+    {
+      "asset_class": "CRYPTO",
+      "canonical_instrument_id": "ETH_USD",
+      "completed_candle_count": 508,
+      "current_plan_access": "GRANTED",
+      "discovery_attempts": [
+        {
+          "candidates": [
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Binance",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Bitfinex",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Huobi",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            }
+          ],
+          "http_status": 200,
+          "provider_endpoint": "/cryptocurrencies",
+          "provider_status": "ok",
+          "query_parameters": {
+            "outputsize": "120",
+            "symbol": "ETH/USD"
+          },
+          "query_type": "CRYPTO_EXACT_PAIR",
+          "request_finish_utc": "2026-08-05T16:23:29.368889Z",
+          "request_start_utc": "2026-08-05T16:23:27.400177Z",
+          "response_error": null
+        }
+      ],
+      "discovery_candidates": [
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Binance",
+          "exchange_timezone": null,
+          "instrument_name": "Ethereum / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "ETH/USD"
+        },
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Bitfinex",
+          "exchange_timezone": null,
+          "instrument_name": "Ethereum / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "ETH/USD"
+        },
+        {
+          "category": null,
+          "country": null,
+          "currency": null,
+          "description": null,
+          "exchange": "Huobi",
+          "exchange_timezone": null,
+          "instrument_name": "Ethereum / US Dollar",
+          "instrument_type": "Digital Currency",
+          "mic_code": null,
+          "minimum_plan": null,
+          "symbol": "ETH/USD"
+        }
+      ],
+      "discovery_kind": "CRYPTO_CATALOG",
+      "discovery_request_finish_utc": "2026-08-05T16:23:29.368889Z",
+      "discovery_request_start_utc": "2026-08-05T16:23:27.400177Z",
+      "error_reason": null,
+      "exchange": "Binance",
+      "forming_candle_count": 1,
+      "h1_http_status": 200,
+      "h1_provider_status": "ok",
+      "h1_request_finish_utc": "2026-08-05T16:23:39.184535Z",
+      "h1_request_start_utc": "2026-08-05T16:23:35.507701Z",
+      "h1_request_status": "OK",
+      "h1_response_error": null,
+      "latest_timestamp": "2026-08-05T16:00:00Z",
+      "mic_code": null,
+      "minimum_plan_access": null,
+      "pipeline_checks": {
+        "canonical_h1_persistence": "PASS",
+        "constructed_d1_count": 14,
+        "d1_session_status": "PASS",
+        "derived_h4_count": 90,
+        "derived_h4_status": "PASS",
+        "exact_error": null,
+        "forming_candles_excluded": true,
+        "h1_filter": "SELL",
+        "h1_signal": "NONE",
+        "h4_filter": "SELL",
+        "h4_signal": "NONE",
+        "latest_completed_h1_timestamp": "2026-08-05T16:00:00Z",
+        "latest_derived_h4_timestamp": "2026-08-05T13:00:00Z",
+        "no_forward_filled_bars": true,
+        "no_synthetic_bars": true,
+        "passed": true,
+        "persisted_h1_count": 364,
+        "strategy_evaluator_status": "PASS",
+        "timestamp_normalization": "PASS"
+      },
+      "point_size": "0.01",
+      "price_precision": 2,
+      "provider_instrument_name": "Ethereum / US Dollar",
+      "provider_instrument_type": "Digital Currency",
+      "provider_timezone": null,
+      "requested_instrument_name": "Ethereum / US Dollar",
+      "resolved_provider_symbol": "ETH/USD",
+      "returned_candle_count": 509,
+      "session_policy": "FROZEN_STRATEGY_WEEKEND_POLICY",
+      "validation_decision": "ENABLE",
+      "validation_status": "H1_VALIDATED"
+    }
+  ],
+  "created_at_utc": "2026-08-05T16:23:39.662851Z",
+  "credentials_included": false,
+  "disabled_count": 4,
+  "enabled_count": 2,
+  "h1_validated_count": 2,
+  "provider": "TWELVE_DATA",
+  "rate_limit": {
+    "maximum_request_starts_per_rolling_60_seconds": 8,
+    "minimum_request_start_interval_seconds": 8.1
+  },
+  "request_count": 12,
+  "requests": [
+    {
+      "label": "validation:XAG_USD:commodity_exact_symbol",
+      "request_start_utc": "2026-08-05T16:22:06.314965Z"
+    },
+    {
+      "label": "validation:XAG_USD:h1_time_series",
+      "request_start_utc": "2026-08-05T16:22:14.413252Z"
+    },
+    {
+      "label": "validation:WTI_CRUDE:commodity_exact_symbol",
+      "request_start_utc": "2026-08-05T16:22:22.527502Z"
+    },
+    {
+      "label": "validation:WTI_CRUDE:h1_time_series",
+      "request_start_utc": "2026-08-05T16:22:30.631715Z"
+    },
+    {
+      "label": "validation:BRENT_CRUDE:commodity_exact_symbol",
+      "request_start_utc": "2026-08-05T16:22:38.743406Z"
+    },
+    {
+      "label": "validation:BRENT_CRUDE:h1_time_series",
+      "request_start_utc": "2026-08-05T16:22:46.851961Z"
+    },
+    {
+      "label": "validation:COPPER:commodity_exact_symbol",
+      "request_start_utc": "2026-08-05T16:22:54.961981Z"
+    },
+    {
+      "label": "validation:COPPER:h1_time_series",
+      "request_start_utc": "2026-08-05T16:23:03.068035Z"
+    },
+    {
+      "label": "validation:BTC_USD:crypto_exact_pair",
+      "request_start_utc": "2026-08-05T16:23:11.182333Z"
+    },
+    {
+      "label": "validation:BTC_USD:h1_time_series",
+      "request_start_utc": "2026-08-05T16:23:19.286996Z"
+    },
+    {
+      "label": "validation:ETH_USD:crypto_exact_pair",
+      "request_start_utc": "2026-08-05T16:23:27.400177Z"
+    },
+    {
+      "label": "validation:ETH_USD:h1_time_series",
+      "request_start_utc": "2026-08-05T16:23:35.507701Z"
+    }
+  ],
+  "schema_version": 2,
+  "validation_runs": [
+    {
+      "candidates": [
+        {
+          "asset_class": "PRECIOUS_METAL",
+          "canonical_instrument_id": "XAG_USD",
+          "completed_candle_count": 0,
+          "current_plan_access": "DENIED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": "Precious Metal",
+                  "country": null,
+                  "currency": null,
+                  "description": "",
+                  "exchange": null,
+                  "exchange_timezone": null,
+                  "instrument_name": "Silver Spot",
+                  "instrument_type": "Commodity",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "XAG/USD"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/commodities",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "XAG/USD"
+              },
+              "query_type": "COMMODITY_EXACT_SYMBOL",
+              "request_finish_utc": "2026-08-05T16:22:08.805522Z",
+              "request_start_utc": "2026-08-05T16:22:06.314965Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": "Precious Metal",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Silver Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "XAG/USD"
+            }
+          ],
+          "discovery_kind": "EXACT_COMMODITY",
+          "discovery_request_finish_utc": "2026-08-05T16:22:08.805522Z",
+          "discovery_request_start_utc": "2026-08-05T16:22:06.314965Z",
+          "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "exchange": null,
+          "forming_candle_count": 0,
+          "h1_http_status": 404,
+          "h1_provider_status": "error",
+          "h1_request_finish_utc": "2026-08-05T16:22:15.394350Z",
+          "h1_request_start_utc": "2026-08-05T16:22:14.413252Z",
+          "h1_request_status": "PLAN_RESTRICTED",
+          "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "latest_timestamp": null,
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+            "passed": false,
+            "strategy_evaluator_status": "NOT_RUN"
+          },
+          "point_size": null,
+          "price_precision": null,
+          "provider_instrument_name": "Silver Spot",
+          "provider_instrument_type": "Commodity",
+          "provider_timezone": null,
+          "requested_instrument_name": "Silver / US Dollar",
+          "resolved_provider_symbol": "XAG/USD",
+          "returned_candle_count": 0,
+          "session_policy": "FOREX_WEEKDAY_ACTUAL_CANDLES",
+          "validation_decision": "KEEP_DISABLED",
+          "validation_status": "PLAN_RESTRICTED"
+        },
+        {
+          "asset_class": "ENERGY",
+          "canonical_instrument_id": "WTI_CRUDE",
+          "completed_candle_count": 0,
+          "current_plan_access": "DENIED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": "Energy Resource",
+                  "country": null,
+                  "currency": null,
+                  "description": "",
+                  "exchange": null,
+                  "exchange_timezone": null,
+                  "instrument_name": "Crude Oil WTI Spot",
+                  "instrument_type": "Commodity",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "WTI/USD"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/commodities",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "WTI/USD"
+              },
+              "query_type": "COMMODITY_EXACT_SYMBOL",
+              "request_finish_utc": "2026-08-05T16:22:26.696535Z",
+              "request_start_utc": "2026-08-05T16:22:22.527502Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": "Energy Resource",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Crude Oil WTI Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "WTI/USD"
+            }
+          ],
+          "discovery_kind": "EXACT_COMMODITY",
+          "discovery_request_finish_utc": "2026-08-05T16:22:26.696535Z",
+          "discovery_request_start_utc": "2026-08-05T16:22:22.527502Z",
+          "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "exchange": null,
+          "forming_candle_count": 0,
+          "h1_http_status": 404,
+          "h1_provider_status": "error",
+          "h1_request_finish_utc": "2026-08-05T16:22:31.057797Z",
+          "h1_request_start_utc": "2026-08-05T16:22:30.631715Z",
+          "h1_request_status": "PLAN_RESTRICTED",
+          "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "latest_timestamp": null,
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+            "passed": false,
+            "strategy_evaluator_status": "NOT_RUN"
+          },
+          "point_size": null,
+          "price_precision": null,
+          "provider_instrument_name": "Crude Oil WTI Spot",
+          "provider_instrument_type": "Commodity",
+          "provider_timezone": null,
+          "requested_instrument_name": "WTI Crude Oil Spot",
+          "resolved_provider_symbol": "WTI/USD",
+          "returned_candle_count": 0,
+          "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+          "validation_decision": "KEEP_DISABLED",
+          "validation_status": "PLAN_RESTRICTED"
+        },
+        {
+          "asset_class": "ENERGY",
+          "canonical_instrument_id": "BRENT_CRUDE",
+          "completed_candle_count": 0,
+          "current_plan_access": "DENIED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": "Energy Resource",
+                  "country": null,
+                  "currency": null,
+                  "description": "",
+                  "exchange": null,
+                  "exchange_timezone": null,
+                  "instrument_name": "Brent Spot",
+                  "instrument_type": "Commodity",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "XBR/USD"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/commodities",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "XBR/USD"
+              },
+              "query_type": "COMMODITY_EXACT_SYMBOL",
+              "request_finish_utc": "2026-08-05T16:22:39.531307Z",
+              "request_start_utc": "2026-08-05T16:22:38.743406Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": "Energy Resource",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Brent Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "XBR/USD"
+            }
+          ],
+          "discovery_kind": "EXACT_COMMODITY",
+          "discovery_request_finish_utc": "2026-08-05T16:22:39.531307Z",
+          "discovery_request_start_utc": "2026-08-05T16:22:38.743406Z",
+          "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "exchange": null,
+          "forming_candle_count": 0,
+          "h1_http_status": 404,
+          "h1_provider_status": "error",
+          "h1_request_finish_utc": "2026-08-05T16:22:47.244995Z",
+          "h1_request_start_utc": "2026-08-05T16:22:46.851961Z",
+          "h1_request_status": "PLAN_RESTRICTED",
+          "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "latest_timestamp": null,
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+            "passed": false,
+            "strategy_evaluator_status": "NOT_RUN"
+          },
+          "point_size": null,
+          "price_precision": null,
+          "provider_instrument_name": "Brent Spot",
+          "provider_instrument_type": "Commodity",
+          "provider_timezone": null,
+          "requested_instrument_name": "Brent Crude Oil Spot",
+          "resolved_provider_symbol": "XBR/USD",
+          "returned_candle_count": 0,
+          "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+          "validation_decision": "KEEP_DISABLED",
+          "validation_status": "PLAN_RESTRICTED"
+        },
+        {
+          "asset_class": "INDUSTRIAL_METAL",
+          "canonical_instrument_id": "COPPER",
+          "completed_candle_count": 0,
+          "current_plan_access": "DENIED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": "Industrial Metal",
+                  "country": null,
+                  "currency": null,
+                  "description": "",
+                  "exchange": null,
+                  "exchange_timezone": null,
+                  "instrument_name": "Copper Spot",
+                  "instrument_type": "Commodity",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "HG1"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/commodities",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "HG1"
+              },
+              "query_type": "COMMODITY_EXACT_SYMBOL",
+              "request_finish_utc": "2026-08-05T16:22:55.506018Z",
+              "request_start_utc": "2026-08-05T16:22:54.961981Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": "Industrial Metal",
+              "country": null,
+              "currency": null,
+              "description": "",
+              "exchange": null,
+              "exchange_timezone": null,
+              "instrument_name": "Copper Spot",
+              "instrument_type": "Commodity",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "HG1"
+            }
+          ],
+          "discovery_kind": "EXACT_COMMODITY",
+          "discovery_request_finish_utc": "2026-08-05T16:22:55.506018Z",
+          "discovery_request_start_utc": "2026-08-05T16:22:54.961981Z",
+          "error_reason": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "exchange": null,
+          "forming_candle_count": 0,
+          "h1_http_status": 404,
+          "h1_provider_status": "error",
+          "h1_request_finish_utc": "2026-08-05T16:23:05.097466Z",
+          "h1_request_start_utc": "2026-08-05T16:23:03.068035Z",
+          "h1_request_status": "PLAN_RESTRICTED",
+          "h1_response_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+          "latest_timestamp": null,
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "exact_error": "404: This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing",
+            "passed": false,
+            "strategy_evaluator_status": "NOT_RUN"
+          },
+          "point_size": null,
+          "price_precision": null,
+          "provider_instrument_name": "Copper Spot",
+          "provider_instrument_type": "Commodity",
+          "provider_timezone": null,
+          "requested_instrument_name": "Copper Spot",
+          "resolved_provider_symbol": "HG1",
+          "returned_candle_count": 0,
+          "session_policy": "EXCHANGE_SESSION_ACTUAL_CANDLES",
+          "validation_decision": "KEEP_DISABLED",
+          "validation_status": "PLAN_RESTRICTED"
+        },
+        {
+          "asset_class": "CRYPTO",
+          "canonical_instrument_id": "BTC_USD",
+          "completed_candle_count": 508,
+          "current_plan_access": "GRANTED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Binance",
+                  "exchange_timezone": null,
+                  "instrument_name": "Bitcoin / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "BTC/USD"
+                },
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Bitfinex",
+                  "exchange_timezone": null,
+                  "instrument_name": "Bitcoin / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "BTC/USD"
+                },
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Coinbase Pro",
+                  "exchange_timezone": null,
+                  "instrument_name": "Bitcoin / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "BTC/USD"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/cryptocurrencies",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "BTC/USD"
+              },
+              "query_type": "CRYPTO_EXACT_PAIR",
+              "request_finish_utc": "2026-08-05T16:23:11.670986Z",
+              "request_start_utc": "2026-08-05T16:23:11.182333Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Binance",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Bitfinex",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Coinbase Pro",
+              "exchange_timezone": null,
+              "instrument_name": "Bitcoin / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "BTC/USD"
+            }
+          ],
+          "discovery_kind": "CRYPTO_CATALOG",
+          "discovery_request_finish_utc": "2026-08-05T16:23:11.670986Z",
+          "discovery_request_start_utc": "2026-08-05T16:23:11.182333Z",
+          "error_reason": null,
+          "exchange": "Binance",
+          "forming_candle_count": 1,
+          "h1_http_status": 200,
+          "h1_provider_status": "ok",
+          "h1_request_finish_utc": "2026-08-05T16:23:23.131672Z",
+          "h1_request_start_utc": "2026-08-05T16:23:19.286996Z",
+          "h1_request_status": "OK",
+          "h1_response_error": null,
+          "latest_timestamp": "2026-08-05T16:00:00Z",
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "canonical_h1_persistence": "PASS",
+            "constructed_d1_count": 14,
+            "d1_session_status": "PASS",
+            "derived_h4_count": 90,
+            "derived_h4_status": "PASS",
+            "exact_error": null,
+            "forming_candles_excluded": true,
+            "h1_filter": "SELL",
+            "h1_signal": "NONE",
+            "h4_filter": "SELL",
+            "h4_signal": "NONE",
+            "latest_completed_h1_timestamp": "2026-08-05T16:00:00Z",
+            "latest_derived_h4_timestamp": "2026-08-05T13:00:00Z",
+            "no_forward_filled_bars": true,
+            "no_synthetic_bars": true,
+            "passed": true,
+            "persisted_h1_count": 364,
+            "strategy_evaluator_status": "PASS",
+            "timestamp_normalization": "PASS"
+          },
+          "point_size": "0.01",
+          "price_precision": 2,
+          "provider_instrument_name": "Bitcoin / US Dollar",
+          "provider_instrument_type": "Digital Currency",
+          "provider_timezone": null,
+          "requested_instrument_name": "Bitcoin / US Dollar",
+          "resolved_provider_symbol": "BTC/USD",
+          "returned_candle_count": 509,
+          "session_policy": "FROZEN_STRATEGY_WEEKEND_POLICY",
+          "validation_decision": "ENABLE",
+          "validation_status": "H1_VALIDATED"
+        },
+        {
+          "asset_class": "CRYPTO",
+          "canonical_instrument_id": "ETH_USD",
+          "completed_candle_count": 508,
+          "current_plan_access": "GRANTED",
+          "discovery_attempts": [
+            {
+              "candidates": [
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Binance",
+                  "exchange_timezone": null,
+                  "instrument_name": "Ethereum / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "ETH/USD"
+                },
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Bitfinex",
+                  "exchange_timezone": null,
+                  "instrument_name": "Ethereum / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "ETH/USD"
+                },
+                {
+                  "category": null,
+                  "country": null,
+                  "currency": null,
+                  "description": null,
+                  "exchange": "Huobi",
+                  "exchange_timezone": null,
+                  "instrument_name": "Ethereum / US Dollar",
+                  "instrument_type": "Digital Currency",
+                  "mic_code": null,
+                  "minimum_plan": null,
+                  "symbol": "ETH/USD"
+                }
+              ],
+              "http_status": 200,
+              "provider_endpoint": "/cryptocurrencies",
+              "provider_status": "ok",
+              "query_parameters": {
+                "outputsize": "120",
+                "symbol": "ETH/USD"
+              },
+              "query_type": "CRYPTO_EXACT_PAIR",
+              "request_finish_utc": "2026-08-05T16:23:29.368889Z",
+              "request_start_utc": "2026-08-05T16:23:27.400177Z",
+              "response_error": null
+            }
+          ],
+          "discovery_candidates": [
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Binance",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Bitfinex",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            },
+            {
+              "category": null,
+              "country": null,
+              "currency": null,
+              "description": null,
+              "exchange": "Huobi",
+              "exchange_timezone": null,
+              "instrument_name": "Ethereum / US Dollar",
+              "instrument_type": "Digital Currency",
+              "mic_code": null,
+              "minimum_plan": null,
+              "symbol": "ETH/USD"
+            }
+          ],
+          "discovery_kind": "CRYPTO_CATALOG",
+          "discovery_request_finish_utc": "2026-08-05T16:23:29.368889Z",
+          "discovery_request_start_utc": "2026-08-05T16:23:27.400177Z",
+          "error_reason": null,
+          "exchange": "Binance",
+          "forming_candle_count": 1,
+          "h1_http_status": 200,
+          "h1_provider_status": "ok",
+          "h1_request_finish_utc": "2026-08-05T16:23:39.184535Z",
+          "h1_request_start_utc": "2026-08-05T16:23:35.507701Z",
+          "h1_request_status": "OK",
+          "h1_response_error": null,
+          "latest_timestamp": "2026-08-05T16:00:00Z",
+          "mic_code": null,
+          "minimum_plan_access": null,
+          "pipeline_checks": {
+            "canonical_h1_persistence": "PASS",
+            "constructed_d1_count": 14,
+            "d1_session_status": "PASS",
+            "derived_h4_count": 90,
+            "derived_h4_status": "PASS",
+            "exact_error": null,
+            "forming_candles_excluded": true,
+            "h1_filter": "SELL",
+            "h1_signal": "NONE",
+            "h4_filter": "SELL",
+            "h4_signal": "NONE",
+            "latest_completed_h1_timestamp": "2026-08-05T16:00:00Z",
+            "latest_derived_h4_timestamp": "2026-08-05T13:00:00Z",
+            "no_forward_filled_bars": true,
+            "no_synthetic_bars": true,
+            "passed": true,
+            "persisted_h1_count": 364,
+            "strategy_evaluator_status": "PASS",
+            "timestamp_normalization": "PASS"
+          },
+          "point_size": "0.01",
+          "price_precision": 2,
+          "provider_instrument_name": "Ethereum / US Dollar",
+          "provider_instrument_type": "Digital Currency",
+          "provider_timezone": null,
+          "requested_instrument_name": "Ethereum / US Dollar",
+          "resolved_provider_symbol": "ETH/USD",
+          "returned_candle_count": 509,
+          "session_policy": "FROZEN_STRATEGY_WEEKEND_POLICY",
+          "validation_decision": "ENABLE",
+          "validation_status": "H1_VALIDATED"
+        }
+      ],
+      "created_at_utc": "2026-08-05T16:23:39.662851Z",
+      "instrument_ids": [
+        "XAG_USD",
+        "WTI_CRUDE",
+        "BRENT_CRUDE",
+        "COPPER",
+        "BTC_USD",
+        "ETH_USD"
+      ],
+      "requests": [
+        {
+          "label": "validation:XAG_USD:commodity_exact_symbol",
+          "request_start_utc": "2026-08-05T16:22:06.314965Z"
+        },
+        {
+          "label": "validation:XAG_USD:h1_time_series",
+          "request_start_utc": "2026-08-05T16:22:14.413252Z"
+        },
+        {
+          "label": "validation:WTI_CRUDE:commodity_exact_symbol",
+          "request_start_utc": "2026-08-05T16:22:22.527502Z"
+        },
+        {
+          "label": "validation:WTI_CRUDE:h1_time_series",
+          "request_start_utc": "2026-08-05T16:22:30.631715Z"
+        },
+        {
+          "label": "validation:BRENT_CRUDE:commodity_exact_symbol",
+          "request_start_utc": "2026-08-05T16:22:38.743406Z"
+        },
+        {
+          "label": "validation:BRENT_CRUDE:h1_time_series",
+          "request_start_utc": "2026-08-05T16:22:46.851961Z"
+        },
+        {
+          "label": "validation:COPPER:commodity_exact_symbol",
+          "request_start_utc": "2026-08-05T16:22:54.961981Z"
+        },
+        {
+          "label": "validation:COPPER:h1_time_series",
+          "request_start_utc": "2026-08-05T16:23:03.068035Z"
+        },
+        {
+          "label": "validation:BTC_USD:crypto_exact_pair",
+          "request_start_utc": "2026-08-05T16:23:11.182333Z"
+        },
+        {
+          "label": "validation:BTC_USD:h1_time_series",
+          "request_start_utc": "2026-08-05T16:23:19.286996Z"
+        },
+        {
+          "label": "validation:ETH_USD:crypto_exact_pair",
+          "request_start_utc": "2026-08-05T16:23:27.400177Z"
+        },
+        {
+          "label": "validation:ETH_USD:h1_time_series",
+          "request_start_utc": "2026-08-05T16:23:35.507701Z"
+        }
+      ]
+    }
+  ]
+}

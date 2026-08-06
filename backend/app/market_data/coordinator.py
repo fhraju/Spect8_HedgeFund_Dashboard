@@ -14,7 +14,8 @@ from ..repository import SQLiteProjectionRepository
 from ..service import ProcessingOutcome, WalkingSkeletonService
 from .clock import Clock
 from .closed_bar import DAILY_ATR_INPUT_HISTORY, ClosedBarDetector
-from .daily_aggregator import NewYorkDailyAggregator
+from .daily_aggregator import ActualDataNewYorkDailyAggregator, NewYorkDailyAggregator
+from .exchange_aggregator import ExchangeSessionH4Aggregator
 from .forex_profile import (
     BrokerAlignedH4Aggregator,
     is_broker_h4_close,
@@ -33,9 +34,15 @@ from .models import (
     ProviderHealth,
     RawProviderCandle,
     ProviderErrorCode,
+    InstrumentKind,
 )
 from .normalizer import CandleNormalizer
 from .registry import CanonicalInstrumentRegistry
+from .us_equity_calendar import (
+    EquityH1Disposition,
+    classify_etf_h1_open,
+    session_for_instant,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +81,9 @@ class MarketDataCoordinator:
         self._normalizer = normalizer
         self._detector = detector
         self._daily_aggregator = NewYorkDailyAggregator()
+        self._exchange_daily_aggregator = ActualDataNewYorkDailyAggregator()
         self._h4_aggregator = BrokerAlignedH4Aggregator()
+        self._exchange_h4_aggregator = ExchangeSessionH4Aggregator()
         self._service = service
         self._repository = repository
         self._clock = clock
@@ -114,6 +123,20 @@ class MarketDataCoordinator:
         outcomes: list[PollOutcome] = []
         inserted = 0
         override_state: HealthState | None = None
+        instrument_overrides: dict[str, tuple[HealthState, str]] = {}
+        failures = getattr(self.provider, "scan_failures", None)
+        initial_scan_failures = failures() if callable(failures) else {}
+        for instrument_id, error in initial_scan_failures.items():
+            outcomes.append(
+                PollOutcome(
+                    source_case_id=f"provider:{instrument_id}:H1",
+                    idempotency_key=None,
+                    replayed=False,
+                    events_created=0,
+                    health_state=error.health_state,
+                    issues=(error.code.value,),
+                )
+            )
 
         for closed in raw_closed:
             instrument = self.registry.get(
@@ -123,6 +146,10 @@ class MarketDataCoordinator:
             normalized = self._normalizer.normalize(closed.candle, instrument)
             if normalized.candle is None:
                 override_state = HealthState.QUARANTINED
+                instrument_overrides[instrument.instrument_id] = (
+                    HealthState.QUARANTINED,
+                    ", ".join(normalized.issues),
+                )
                 for issue in normalized.issues:
                     self._repository.persist_quality_issue(
                         provider=instrument.provider_id,
@@ -152,9 +179,24 @@ class MarketDataCoordinator:
                 continue
             prepared.append((closed, normalized.candle))
 
-        trigger_issues = self._detector.batch_issues([candle for _, candle in prepared])
-        if trigger_issues:
+        valid_prepared: list[tuple[ProviderClosedBar, Bar]] = []
+        grouped: dict[tuple[str, str], list[tuple[ProviderClosedBar, Bar]]] = {}
+        for item in prepared:
+            grouped.setdefault((item[1].provider, item[1].instrument_id), []).append(
+                item
+            )
+        for (_, instrument_id), items in grouped.items():
+            trigger_issues = self._detector.batch_issues(
+                [candle for _, candle in items]
+            )
+            if not trigger_issues:
+                valid_prepared.extend(items)
+                continue
             override_state = HealthState.QUARANTINED
+            instrument_overrides[instrument_id] = (
+                HealthState.QUARANTINED,
+                ", ".join(trigger_issues),
+            )
             outcomes.extend(
                 PollOutcome(
                     source_case_id=closed.source_id,
@@ -164,9 +206,9 @@ class MarketDataCoordinator:
                     health_state=HealthState.QUARANTINED,
                     issues=trigger_issues,
                 )
-                for closed, _ in prepared
+                for closed, _ in items
             )
-            prepared = []
+        prepared = valid_prepared
 
         if profile_enabled:
             # H4 evaluation boundaries are derived from completed H1 closes.
@@ -174,10 +216,25 @@ class MarketDataCoordinator:
             # supplies a strategy candle.
             derived: list[tuple[ProviderClosedBar, Bar]] = []
             for closed, trigger in prepared:
+                if trigger.timeframe is Timeframe.H4:
+                    derived.append((closed, trigger))
+                    continue
                 if trigger.timeframe is not Timeframe.H1:
                     continue
                 derived.append((closed, trigger))
-                if is_broker_h4_close(trigger.close_time):
+                instrument = self.registry.get(
+                    closed.candle.provider_id, closed.instrument_id
+                )
+                if instrument.instrument_kind is InstrumentKind.ETF:
+                    session = session_for_instant(trigger.open_time)
+                    valid_opens = session.valid_h1_opens if session else ()
+                    h4_boundary = (
+                        trigger.open_time in valid_opens
+                        and (valid_opens.index(trigger.open_time) + 1) % 4 == 0
+                    )
+                else:
+                    h4_boundary = is_broker_h4_close(trigger.close_time)
+                if h4_boundary:
                     h4_trigger = replace(
                         trigger,
                         timeframe=Timeframe.H4,
@@ -206,10 +263,23 @@ class MarketDataCoordinator:
         h4_cache: dict[tuple[str, str, datetime], object] = {}
         snapshot_cache: dict[tuple[str, str, datetime], DailyFilterSnapshot] = {}
         for closed, trigger in prepared:
+            instrument = self.registry.get(
+                closed.candle.provider_id,
+                closed.instrument_id,
+            )
             if profile_enabled and (
-                (trigger.timeframe is Timeframe.H1 and not is_valid_market_h1(trigger))
+                (
+                    trigger.timeframe is Timeframe.H1
+                    and not (
+                        classify_etf_h1_open(trigger.open_time, as_of=now)
+                        is EquityH1Disposition.VALID_COMPLETED
+                        if instrument.instrument_kind is InstrumentKind.ETF
+                        else is_valid_market_h1(trigger)
+                    )
+                )
                 or (
                     trigger.timeframe is Timeframe.H4
+                    and instrument.instrument_kind is not InstrumentKind.ETF
                     and not is_valid_market_h4(trigger)
                 )
             ):
@@ -224,10 +294,6 @@ class MarketDataCoordinator:
                     )
                 )
                 continue
-            instrument = self.registry.get(
-                closed.candle.provider_id,
-                closed.instrument_id,
-            )
             try:
                 cache_key = (
                     instrument.provider_id,
@@ -247,6 +313,10 @@ class MarketDataCoordinator:
                         history_cache[cache_key] = history
             except MarketDataProviderError as error:
                 override_state = error.health_state
+                instrument_overrides[instrument.instrument_id] = (
+                    error.health_state,
+                    str(error),
+                )
                 outcomes.append(
                     PollOutcome(
                         source_case_id=closed.source_id,
@@ -268,7 +338,18 @@ class MarketDataCoordinator:
                 history.daily_source_bars, instrument
             )
             if profile_enabled:
-                daily_source = market_h1_bars(daily_source)
+                if instrument.instrument_kind is InstrumentKind.ETF:
+                    daily_source = tuple(
+                        bar
+                        for bar in daily_source
+                        if classify_etf_h1_open(
+                            bar.open_time,
+                            as_of=history.evaluation_time,
+                        )
+                        is EquityH1Disposition.VALID_COMPLETED
+                    )
+                else:
+                    daily_source = market_h1_bars(daily_source)
                 if trigger.timeframe is Timeframe.H1 and not daily_source_issues:
                     # Persist the completed canonical H1 before any derived
                     # timeframe state or evaluation references it.
@@ -287,8 +368,14 @@ class MarketDataCoordinator:
                     )[-30:]
                     # Update H4 before the partial D1 and shared snapshot. A
                     # completing H4 evaluation reuses this exact aggregate.
-                    h4 = self._h4_aggregator.aggregate(
-                        daily_source, as_of=history.evaluation_time
+                    h4 = (
+                        self._exchange_h4_aggregator.aggregate(
+                            daily_source, as_of=history.evaluation_time
+                        )
+                        if instrument.instrument_kind is InstrumentKind.ETF
+                        else self._h4_aggregator.aggregate(
+                            daily_source, as_of=history.evaluation_time
+                        )
                     )
                     h4_cache[cache_key] = h4
                     for issue in h4.issues:
@@ -314,15 +401,35 @@ class MarketDataCoordinator:
                 elif profile_enabled:
                     h4 = h4_cache.get(cache_key)
                     if h4 is None:
-                        h4 = self._h4_aggregator.aggregate(
-                            daily_source, as_of=history.evaluation_time
+                        h4 = (
+                            self._exchange_h4_aggregator.aggregate(
+                                daily_source, as_of=history.evaluation_time
+                            )
+                            if instrument.instrument_kind is InstrumentKind.ETF
+                            else self._h4_aggregator.aggregate(
+                                daily_source, as_of=history.evaluation_time
+                            )
+                        )
+                    completing_h4 = tuple(
+                        bar for bar in h4.bars if bar.close_time == trigger.close_time
+                    )
+                    if completing_h4:
+                        inserted += self._repository.persist_canonical_bars(
+                            completing_h4
                         )
                     signal_bars = tuple(
                         bar for bar in h4.bars if bar.close_time <= trigger.close_time
                     )[-30:]
-                aggregation = self._daily_aggregator.aggregate(
-                    daily_source,
-                    as_of=history.evaluation_time,
+                aggregation = (
+                    self._exchange_daily_aggregator.aggregate(
+                        daily_source,
+                        as_of=history.evaluation_time,
+                    )
+                    if instrument.instrument_kind is InstrumentKind.ETF
+                    else self._daily_aggregator.aggregate(
+                        daily_source,
+                        as_of=history.evaluation_time,
+                    )
                 )
                 daily_bars = tuple(
                     bar
@@ -364,6 +471,7 @@ class MarketDataCoordinator:
                 daily_bars,
                 history.timeframe,
                 trigger.close_time,
+                session_profile=instrument.session_profile,
             )
             issues = tuple(sorted(set((*issues, *validation.issues))))
             snapshot: DailyFilterSnapshot | None = None
@@ -377,6 +485,9 @@ class MarketDataCoordinator:
                             as_of_h1_close=trigger.close_time,
                             h1_bars=daily_source,
                             completed_d1_bars=daily_bars,
+                            sparse_actual_h1=(
+                                instrument.instrument_kind is InstrumentKind.ETF
+                            ),
                         )
                     except DailyFilterUnavailableError as error:
                         issues = (str(error),)
@@ -390,6 +501,10 @@ class MarketDataCoordinator:
                     else HealthState.QUARANTINED
                 )
                 override_state = state
+                instrument_overrides[instrument.instrument_id] = (
+                    state,
+                    ", ".join(issues),
+                )
                 outcomes.append(
                     PollOutcome(
                         source_case_id=closed.source_id,
@@ -436,6 +551,24 @@ class MarketDataCoordinator:
         )
         final_health = self._apply_recovery(final_health)
         self._repository.update_provider_health(final_health)
+        instrument_health = getattr(self.provider, "instrument_health", None)
+        scan_failures = failures() if callable(failures) else {}
+        if callable(instrument_health):
+            for instrument in self.registry.enabled():
+                health = instrument_health(instrument.instrument_id, now)
+                local = instrument_overrides.get(instrument.instrument_id)
+                if local is not None:
+                    health = replace(
+                        health,
+                        state=local[0],
+                        detail=local[1],
+                    )
+                failure = scan_failures.get(instrument.instrument_id)
+                self._repository.update_instrument_health(
+                    instrument.instrument_id,
+                    health,
+                    error_code=(failure.code.value if failure else None),
+                )
         if final_health.state is HealthState.RECOVERED:
             outcomes = [
                 replace(outcome, health_state=HealthState.RECOVERED)
@@ -461,14 +594,15 @@ class MarketDataCoordinator:
                     instrument.instrument_id,
                     timeframe.value,
                 )
-                setter(
-                    timeframe,
-                    (
-                        datetime.fromisoformat(value.replace("Z", "+00:00"))
-                        if value is not None
-                        else None
-                    ),
+                cursor = (
+                    datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    if value is not None
+                    else None
                 )
+                if hasattr(self.provider, "provider_for"):
+                    setter(instrument.instrument_id, timeframe, cursor)
+                else:
+                    setter(timeframe, cursor)
 
     def current_health(self) -> dict[str, object] | None:
         return self._repository.provider_health(self.provider.identity.provider_id)

@@ -29,6 +29,7 @@ class ProviderErrorCode(StrEnum):
     MALFORMED_RESPONSE = "MALFORMED_RESPONSE"
     DUPLICATE_CANDLE = "DUPLICATE_CANDLE"
     MISSING_CANDLE = "MISSING_CANDLE"
+    CREDIT_BUDGET = "CREDIT_BUDGET"
 
 
 class TimestampSemantics(StrEnum):
@@ -37,6 +38,37 @@ class TimestampSemantics(StrEnum):
     INTERVAL_START = "INTERVAL_START"
     INTERVAL_END = "INTERVAL_END"
     UNKNOWN = "UNKNOWN"
+
+
+class InstrumentKind(StrEnum):
+    FOREX = "FOREX"
+    SPOT_METAL = "SPOT_METAL"
+    CRYPTO = "CRYPTO"
+    ETF = "ETF"
+    DIRECT_MARKET = "DIRECT_MARKET"
+
+
+class ExposureCategory(StrEnum):
+    CURRENCY = "CURRENCY"
+    PRECIOUS_METAL = "PRECIOUS_METAL"
+    US_LARGE_CAP_EQUITY = "US_LARGE_CAP_EQUITY"
+    US_TECH_EQUITY = "US_TECH_EQUITY"
+    US_SMALL_CAP_EQUITY = "US_SMALL_CAP_EQUITY"
+    EUROPE_EQUITY = "EUROPE_EQUITY"
+    JAPAN_EQUITY = "JAPAN_EQUITY"
+    EMERGING_MARKET_EQUITY = "EMERGING_MARKET_EQUITY"
+    GOVERNMENT_BONDS = "GOVERNMENT_BONDS"
+    CREDIT = "CREDIT"
+    ENERGY = "ENERGY"
+    AGRICULTURE = "AGRICULTURE"
+    VOLATILITY = "VOLATILITY"
+
+
+class SessionProfileKind(StrEnum):
+    FOREX_WEEKDAY = "FOREX_WEEKDAY"
+    CRYPTO_FROZEN_WEEKEND = "CRYPTO_FROZEN_WEEKEND"
+    US_EQUITY_REGULAR = "US_EQUITY_REGULAR"
+    DIRECT_MARKET = "DIRECT_MARKET"
 
 
 class MarketDataProviderError(RuntimeError):
@@ -71,9 +103,9 @@ class CanonicalInstrument:
     provider_symbol: str
     display_name: str
     asset_class: str
-    point_size: Decimal
+    point_size: Decimal | None
     tick_size: Decimal | None
-    price_precision: int
+    price_precision: int | None
     tick_value_usd: Decimal | None
     conversion_rate_to_usd: Decimal | None
     contract_min: Decimal | None
@@ -86,9 +118,27 @@ class CanonicalInstrument:
     candle_boundary_convention: str
     available_timeframes: tuple[Timeframe, ...]
     strategy_id: str
+    display_symbol: str = ""
+    enabled: bool = True
+    exchange: str | None = None
+    mic_code: str | None = None
+    provider_instrument_type: str | None = None
+    provider_timezone: str | None = None
+    validation_status: str = "NOT_VALIDATED"
+    registry_order: int = 0
     synthetic: bool = True
+    instrument_kind: InstrumentKind = InstrumentKind.DIRECT_MARKET
+    exposure_category: ExposureCategory = ExposureCategory.CURRENCY
+    underlying_description: str | None = None
+    is_proxy: bool = False
+    proxy_for: str | None = None
+    session_profile: SessionProfileKind = SessionProfileKind.DIRECT_MARKET
 
     def to_strategy_metadata(self) -> InstrumentMetadata:
+        if self.point_size is None or self.price_precision is None:
+            raise ValueError(
+                f"{self.instrument_id} cannot be evaluated before precision validation"
+            )
         return InstrumentMetadata(
             strategy_id=self.strategy_id,
             instrument_id=self.instrument_id,

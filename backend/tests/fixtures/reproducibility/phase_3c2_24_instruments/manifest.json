@@ -1,0 +1,292 @@
+{
+  "atr_specification": "Wilder ATR(5), completed D1 sessions only; current partial D1 excluded",
+  "broker_presentation_timestamp": "2026-08-05 17:00",
+  "buffer_specification": "Wilder ATR(5) * 0.05",
+  "canonical_instrument_ids": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "AUD_USD",
+    "USD_CAD",
+    "NZD_USD",
+    "EUR_GBP",
+    "EUR_JPY",
+    "GBP_JPY",
+    "XAU_USD",
+    "BTC_USD",
+    "ETH_USD",
+    "SPY_US_ETF",
+    "QQQ_US_ETF",
+    "IWM_US_ETF",
+    "FEZ_US_ETF",
+    "EWJ_US_ETF",
+    "EEM_US_ETF",
+    "HYG_US_ETF",
+    "SLV_US_ETF",
+    "USO_US_ETF",
+    "UNG_US_ETF",
+    "DBA_US_ETF",
+    "VIXM_US_ETF"
+  ],
+  "canonical_profile_version": "IC_MARKETS_NY_CLOSE_FOREX_V1",
+  "canonical_utc_evaluation_timestamp": "2026-08-06T05:00:00Z",
+  "checkpoint_name": "phase_3c2_24_instruments",
+  "creation_timestamp": "2026-08-06T05:00:00Z",
+  "d1_session_authority": "17:00 America/New_York",
+  "database_schema_revision": {
+    "schema_sha256": "21868ca059d83ba1f9abd153d0dc1f2b3350a2d3ec8edc28610962e01d57d253",
+    "sqlite_user_version": 0
+  },
+  "export_command": "python -m backend.app.tools.capture_reproducibility_checkpoint --name phase_3c2_24_instruments --evaluation-time 2026-08-06T05:00:00Z",
+  "fixture_checksums": {
+    "canonical_h1.jsonl": "8b46a56044a58ee0f4e904f185c1647c5be0b10abdc7bd2fc16e31a7b110098f",
+    "canonical_h4.jsonl": "2a2fcb438bfcf70e99917d86c6338fef3416c48c5a30bb9bc7c3b398f20e6df9",
+    "completed_d1.jsonl": "895ac52f8301310d8ef70058269bac29e2bb999fdd0aa98bd23b5e0b76063cbe",
+    "current_partial_d1.jsonl": "f66c7d0cf79034210df4f172cac8ab90a7e08c4e70ae6c769102163afd0e0008",
+    "expected_evaluations.jsonl": "2c14fbaf05297be958b8e0d7095deb26abb588d9dba2a3a10adc0f51a92ca424",
+    "expected_event_order.jsonl": "e0f5bd0115489b92d05d40f2677f3d8b7cf4f4027e5fb6a03d38a538aa085eaa",
+    "expected_scanner_response.json": "2fb8ddee62f52b14ca24deae855a5ad6188fa5abe30a644d0d56cb5bb67f8c06",
+    "filter_snapshots.jsonl": "7b6eaba11e5c798d0f802ffab03a184bd05509288542e3278f90e344882765aa",
+    "instrument_registry.json": "95eaf57e8657c60cc6f11451a8c8973223919d57c7c6b368f60b2988db680387"
+  },
+  "h1_evaluation_timestamps": {
+    "AUD_USD": "2026-08-06T05:00:00Z",
+    "BTC_USD": "2026-08-06T05:00:00Z",
+    "DBA_US_ETF": "2026-08-05T19:30:00Z",
+    "EEM_US_ETF": "2026-08-05T19:30:00Z",
+    "ETH_USD": "2026-08-06T05:00:00Z",
+    "EUR_GBP": "2026-08-06T05:00:00Z",
+    "EUR_JPY": "2026-08-06T05:00:00Z",
+    "EUR_USD": "2026-08-06T05:00:00Z",
+    "EWJ_US_ETF": "2026-08-05T19:30:00Z",
+    "FEZ_US_ETF": "2026-08-05T19:30:00Z",
+    "GBP_JPY": "2026-08-06T05:00:00Z",
+    "GBP_USD": "2026-08-06T05:00:00Z",
+    "HYG_US_ETF": "2026-08-05T19:30:00Z",
+    "IWM_US_ETF": "2026-08-05T19:30:00Z",
+    "NZD_USD": "2026-08-06T05:00:00Z",
+    "QQQ_US_ETF": "2026-08-05T19:30:00Z",
+    "SLV_US_ETF": "2026-08-05T19:30:00Z",
+    "SPY_US_ETF": "2026-08-05T19:30:00Z",
+    "UNG_US_ETF": "2026-08-05T19:30:00Z",
+    "USD_CAD": "2026-08-06T05:00:00Z",
+    "USD_JPY": "2026-08-06T05:00:00Z",
+    "USO_US_ETF": "2026-08-05T19:30:00Z",
+    "VIXM_US_ETF": "2026-08-05T19:30:00Z",
+    "XAU_USD": "2026-08-06T05:00:00Z"
+  },
+  "h4_evaluation_timestamp": null,
+  "h4_evaluation_timestamps": {
+    "AUD_USD": "2026-08-06T05:00:00Z",
+    "BTC_USD": "2026-08-06T05:00:00Z",
+    "DBA_US_ETF": "2026-08-05T17:30:00Z",
+    "EEM_US_ETF": "2026-08-05T17:30:00Z",
+    "ETH_USD": "2026-08-06T05:00:00Z",
+    "EUR_GBP": "2026-08-06T05:00:00Z",
+    "EUR_JPY": "2026-08-06T05:00:00Z",
+    "EUR_USD": "2026-08-06T05:00:00Z",
+    "EWJ_US_ETF": "2026-08-05T17:30:00Z",
+    "FEZ_US_ETF": "2026-08-05T17:30:00Z",
+    "GBP_JPY": "2026-08-06T05:00:00Z",
+    "GBP_USD": "2026-08-06T05:00:00Z",
+    "HYG_US_ETF": "2026-08-05T17:30:00Z",
+    "IWM_US_ETF": "2026-08-05T17:30:00Z",
+    "NZD_USD": "2026-08-06T05:00:00Z",
+    "QQQ_US_ETF": "2026-08-05T17:30:00Z",
+    "SLV_US_ETF": "2026-08-05T17:30:00Z",
+    "SPY_US_ETF": "2026-08-05T17:30:00Z",
+    "UNG_US_ETF": "2026-08-05T17:30:00Z",
+    "USD_CAD": "2026-08-06T05:00:00Z",
+    "USD_JPY": "2026-08-06T05:00:00Z",
+    "USO_US_ETF": "2026-08-05T17:30:00Z",
+    "VIXM_US_ETF": "2026-08-05T17:30:00Z",
+    "XAU_USD": "2026-08-06T05:00:00Z"
+  },
+  "provider_exchange_identities": {
+    "AUD_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "AUD/USD"
+    },
+    "BTC_USD": {
+      "exchange": "Binance",
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "BTC/USD"
+    },
+    "DBA_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "DBA"
+    },
+    "EEM_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "EEM"
+    },
+    "ETH_USD": {
+      "exchange": "Binance",
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "ETH/USD"
+    },
+    "EUR_GBP": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/GBP"
+    },
+    "EUR_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/JPY"
+    },
+    "EUR_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "EUR/USD"
+    },
+    "EWJ_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "EWJ"
+    },
+    "FEZ_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "FEZ"
+    },
+    "GBP_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "GBP/JPY"
+    },
+    "GBP_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "GBP/USD"
+    },
+    "HYG_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "HYG"
+    },
+    "IWM_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "IWM"
+    },
+    "NZD_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "NZD/USD"
+    },
+    "QQQ_US_ETF": {
+      "exchange": "NASDAQ",
+      "mic_code": "XNMS",
+      "provider": "TWELVE_DATA",
+      "symbol": "QQQ"
+    },
+    "SLV_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "SLV"
+    },
+    "SPY_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "SPY"
+    },
+    "UNG_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "UNG"
+    },
+    "USD_CAD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "USD/CAD"
+    },
+    "USD_JPY": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "USD/JPY"
+    },
+    "USO_US_ETF": {
+      "exchange": "NYSE Arca",
+      "mic_code": "ARCX",
+      "provider": "TWELVE_DATA",
+      "symbol": "USO"
+    },
+    "VIXM_US_ETF": {
+      "exchange": "CBOE BZX",
+      "mic_code": "BATS",
+      "provider": "TWELVE_DATA",
+      "symbol": "VIXM"
+    },
+    "XAU_USD": {
+      "exchange": null,
+      "mic_code": null,
+      "provider": "TWELVE_DATA",
+      "symbol": "XAU/USD"
+    }
+  },
+  "provider_symbol_mappings": {
+    "AUD_USD": "AUD/USD",
+    "BTC_USD": "BTC/USD",
+    "DBA_US_ETF": "DBA",
+    "EEM_US_ETF": "EEM",
+    "ETH_USD": "ETH/USD",
+    "EUR_GBP": "EUR/GBP",
+    "EUR_JPY": "EUR/JPY",
+    "EUR_USD": "EUR/USD",
+    "EWJ_US_ETF": "EWJ",
+    "FEZ_US_ETF": "FEZ",
+    "GBP_JPY": "GBP/JPY",
+    "GBP_USD": "GBP/USD",
+    "HYG_US_ETF": "HYG",
+    "IWM_US_ETF": "IWM",
+    "NZD_USD": "NZD/USD",
+    "QQQ_US_ETF": "QQQ",
+    "SLV_US_ETF": "SLV",
+    "SPY_US_ETF": "SPY",
+    "UNG_US_ETF": "UNG",
+    "USD_CAD": "USD/CAD",
+    "USD_JPY": "USD/JPY",
+    "USO_US_ETF": "USO",
+    "VIXM_US_ETF": "VIXM",
+    "XAU_USD": "XAU/USD"
+  },
+  "reproduction_command": "python -m backend.app.tools.reproduce_reproducibility_checkpoint --name phase_3c2_24_instruments",
+  "source_git_commit_sha": "dfbfd63246023f0d04dba5748b08e14840b006fa",
+  "source_worktree_note": "Checkpoint captured after controlled Phase 3C-2 validation with TLT disabled for one quarantined OHLC row.",
+  "strategy_version": "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+  "typed_settings": {
+    "canonical_timeframes": [
+      "H1",
+      "H4",
+      "D1"
+    ],
+    "completed_d1_history": 10,
+    "minimum_signal_history": 30,
+    "provider": "TWELVE_DATA"
+  },
+  "validation_command": "python -m pytest -q backend/tests/test_phase_3b_10_instrument_reproducibility.py"
+}
