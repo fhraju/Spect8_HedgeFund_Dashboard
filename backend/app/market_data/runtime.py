@@ -36,6 +36,7 @@ class MarketDataRuntime:
         *,
         poll_seconds: int,
         safety_delay_seconds: int = 30,
+        startup_backfill_enabled: bool = True,
         logger: logging.Logger | None = None,
     ) -> None:
         self._coordinator = coordinator
@@ -48,6 +49,7 @@ class MarketDataRuntime:
         self._lock = Lock()
         self._runtime_lock = SingleRuntimeLock(repository.database_path)
         self._stop = asyncio.Event()
+        self._startup_backfill_enabled = startup_backfill_enabled
         self._logger = logger or logging.getLogger(
             "spect8.market_data.runtime"
         )
@@ -164,6 +166,14 @@ class MarketDataRuntime:
             },
         )
         try:
+            if not self._startup_backfill_enabled:
+                wait_seconds = self._schedule.seconds_until_next_poll(
+                    self._clock.now()
+                )
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=wait_seconds)
+                except TimeoutError:
+                    pass
             while not self._stop.is_set():
                 try:
                     await asyncio.to_thread(self.run_once)
@@ -220,6 +230,7 @@ class MarketDataRuntime:
             "lock_conflict": self._lock_conflict,
             "session_id": self._session_id,
             "last_poll_at": self._last_poll_at,
+            "startup_backfill_enabled": self._startup_backfill_enabled,
             "next_poll_in_seconds": (
                 self._schedule.seconds_until_next_poll(self._clock.now())
                 if self._running

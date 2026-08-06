@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -90,6 +91,47 @@ def test_runtime_starts_immediately_and_stops_gracefully(
     assert report["runtime_uptime_seconds"] == 0
     assert runtime.status()["running"] is False
     assert runtime.status()["single_runtime_lock_acquired"] is False
+
+
+def test_runtime_skips_immediate_poll_when_startup_backfill_is_disabled(
+    tmp_path: Path,
+) -> None:
+    configured = replace(
+        settings(tmp_path / "no-startup-backfill.sqlite3"),
+        startup_backfill_enabled=False,
+    )
+    application = create_app(configured)
+    with TestClient(application):
+        runtime = application.state.market_data_runtime
+        calls = 0
+
+        class Schedule:
+            safety_delay_seconds = 30
+            health_check_seconds = 300
+
+            def seconds_until_next_poll(self, now):
+                return 3600
+
+        runtime._schedule = Schedule()
+
+        def forbidden_poll():
+            nonlocal calls
+            calls += 1
+            raise AssertionError("startup poll must remain disabled")
+
+        runtime.run_once = forbidden_poll
+
+        async def exercise() -> None:
+            task = asyncio.create_task(runtime.run())
+            while not runtime.status()["running"]:
+                await asyncio.sleep(0)
+            runtime.stop()
+            await task
+
+        asyncio.run(exercise())
+
+    assert calls == 0
+    assert runtime.status()["startup_backfill_enabled"] is False
 
 
 def test_observation_report_aggregates_restarts_requests_and_recovery(

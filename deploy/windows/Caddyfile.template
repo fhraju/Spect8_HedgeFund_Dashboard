@@ -1,0 +1,21 @@
+spect8dashboard.digitallabb.com {
+    encode zstd gzip
+
+    # All browser pages and /api/* routes belong to Next.js. Next.js calls
+    # FastAPI over loopback with the server-only internal API key.
+    reverse_proxy 127.0.0.1:3000
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    log {
+        output file C:\Spect8\logs\caddy-access.log {
+            roll_size 10MiB
+            roll_keep 5
+        }
+    }
+}

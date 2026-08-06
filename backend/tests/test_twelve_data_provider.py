@@ -588,7 +588,10 @@ def test_application_can_select_twelve_data_without_startup_network(
     assert application.state.provider.identity.provider_id == "TWELVE_DATA"
     assert health["synthetic"] is False
     assert health["data"]["mode"] == "PHASE_3B_TWELVE_DATA_RUNTIME"
-    assert health["data"]["provider_health"]["state"] == "DATA_UNAVAILABLE"
+    assert health["data"]["provider_health"]["state"] == "POLLING_DISABLED"
+    assert health["data"]["operations"]["polling_state"] == (
+        "DISABLED_BY_CONFIGURATION"
+    )
 
 
 def _golden_payload(case_id: str, filename: str, interval: str) -> HttpResponse:

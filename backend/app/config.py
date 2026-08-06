@@ -42,8 +42,46 @@ class Settings:
     runtime_log_max_bytes: int = 5_000_000
     runtime_log_backup_count: int = 5
     historical_replay_database_path: Path | None = None
+    application_environment: str = "development"
+    polling_enabled: bool | None = None
+    startup_backfill_enabled: bool = True
+    provider_discovery_enabled: bool = True
+
+    @property
+    def is_production(self) -> bool:
+        return self.application_environment == "production"
+
+    @property
+    def effective_polling_enabled(self) -> bool:
+        if self.polling_enabled is not None:
+            return self.polling_enabled
+        return self.market_scan_enabled or self.market_data_runtime_enabled
 
     def validate(self) -> None:
+        if self.application_environment not in {
+            "development",
+            "test",
+            "production",
+        }:
+            raise ValueError(
+                "SPECT8_APPLICATION_ENVIRONMENT must be development, test, or production."
+            )
+        if self.is_production:
+            if not self.database_path.is_absolute():
+                raise ValueError(
+                    "SPECT8_DATABASE_PATH must be absolute in production."
+                )
+            try:
+                self.database_path.resolve().relative_to(
+                    self.repository_root.resolve()
+                )
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    "SPECT8_DATABASE_PATH must be outside the Git repository "
+                    "in production."
+                )
         provider = self.market_data_provider.lower()
         if provider not in {"replay", "twelve_data"}:
             raise ValueError(
@@ -223,6 +261,22 @@ class Settings:
                     repository_root / "var" / "spect8_historical_replay.sqlite3",
                 )
             ),
+            application_environment=os.environ.get(
+                "SPECT8_APPLICATION_ENVIRONMENT", "development"
+            ).lower(),
+            polling_enabled=(
+                os.environ["SPECT8_POLLING_ENABLED"].lower() == "true"
+                if "SPECT8_POLLING_ENABLED" in os.environ
+                else None
+            ),
+            startup_backfill_enabled=os.environ.get(
+                "SPECT8_STARTUP_BACKFILL_ENABLED", "true"
+            ).lower()
+            == "true",
+            provider_discovery_enabled=os.environ.get(
+                "SPECT8_PROVIDER_DISCOVERY_ENABLED", "true"
+            ).lower()
+            == "true",
         )
         configured.validate()
         return configured

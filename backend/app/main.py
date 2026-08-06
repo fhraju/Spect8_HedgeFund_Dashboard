@@ -67,6 +67,12 @@ def create_app(
 ) -> FastAPI:
     configured = settings or Settings.from_environment()
     configured.validate()
+    if configured.is_production and not configured.database_path.is_file():
+        raise FileNotFoundError(
+            "Configured production database does not exist: "
+            f"{configured.database_path}. Copy and validate the database, or run "
+            "the explicit deployment initialization command before starting FastAPI."
+        )
     repository = SQLiteProjectionRepository(configured.database_path)
     credit_budget = DailyCreditBudgetGuard(
         repository,
@@ -74,11 +80,14 @@ def create_app(
         operational_budget=configured.market_data_daily_operational_budget,
         reserve=configured.market_data_credit_reserve,
     )
+    configured_instruments = twelve_data_instruments(
+        configured.enabled_instrument_ids
+    )
     if configured.market_data_provider == "twelve_data":
         assert configured.twelve_data_api_key is not None
         provider = MultiInstrumentTwelveDataProvider(
             configured.twelve_data_api_key,
-            twelve_data_instruments(configured.enabled_instrument_ids),
+            configured_instruments,
             max_requests_per_minute=(configured.market_data_max_requests_per_minute),
             min_interval_seconds=(configured.market_data_request_min_interval_seconds),
             max_retries_per_instrument=(
@@ -95,7 +104,12 @@ def create_app(
             configured.selected_cases,
         )
         clock = FixedClock(provider.initial_clock_time())
-    registry = CanonicalInstrumentRegistry(provider.discover_instruments())
+    discovered_instruments = (
+        provider.discover_instruments()
+        if provider.identity.synthetic or configured.provider_discovery_enabled
+        else configured_instruments
+    )
+    registry = CanonicalInstrumentRegistry(discovered_instruments)
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
     coordinator = MarketDataCoordinator(
@@ -116,9 +130,7 @@ def create_app(
         )
         if (
             not provider.identity.synthetic
-            and (
-                configured.market_scan_enabled or configured.market_data_runtime_enabled
-            )
+            and configured.effective_polling_enabled
         )
         else None
     )
@@ -132,6 +144,7 @@ def create_app(
             if configured.market_scan_enabled
             else configured.market_data_safety_delay_seconds
         ),
+        startup_backfill_enabled=configured.startup_backfill_enabled,
         logger=runtime_logger,
     )
     replay_database_path = (
@@ -159,9 +172,7 @@ def create_app(
         runtime_task: asyncio.Task[None] | None = None
         if configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
-        elif not provider.identity.synthetic and (
-            configured.market_scan_enabled or configured.market_data_runtime_enabled
-        ):
+        elif not provider.identity.synthetic and configured.effective_polling_enabled:
             runtime_task = asyncio.create_task(
                 runtime.run(), name="spect8-market-data-runtime"
             )
@@ -222,7 +233,31 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, Any]:
         provider_health = coordinator.current_health()
-        if provider_health is None:
+        if (
+            not provider.identity.synthetic
+            and not configured.effective_polling_enabled
+        ):
+            provider_health = {
+                "provider": provider.identity.provider_id,
+                "state": "POLLING_DISABLED",
+                "previous_state": (
+                    provider_health.get("state") if provider_health else None
+                ),
+                "checked_at": primitive(clock.now()),
+                "latest_completed_close": (
+                    provider_health.get("latest_completed_close")
+                    if provider_health
+                    else None
+                ),
+                "freshness_seconds": (
+                    provider_health.get("freshness_seconds")
+                    if provider_health
+                    else None
+                ),
+                "detail": "Polling is intentionally disabled by configuration.",
+                "synthetic": False,
+            }
+        elif provider_health is None:
             current = primitive(provider.health(clock.now()))
             provider_health = {
                 "provider": current["provider_id"],
@@ -251,6 +286,24 @@ def create_app(
                 "provider": primitive(provider.identity),
                 "provider_health": provider_health,
                 "credit_budget": primitive(credit_budget.status(as_of=clock.now())),
+                "operations": {
+                    "polling_enabled": configured.effective_polling_enabled,
+                    "polling_state": (
+                        "RUNNING"
+                        if runtime.status()["running"]
+                        else (
+                            "DISABLED_BY_CONFIGURATION"
+                            if not configured.effective_polling_enabled
+                            else "STARTING"
+                        )
+                    ),
+                    "startup_backfill_enabled": (
+                        configured.startup_backfill_enabled
+                    ),
+                    "provider_discovery_enabled": (
+                        configured.provider_discovery_enabled
+                    ),
+                },
             }
         )
 
@@ -328,6 +381,15 @@ def create_app(
         return envelope(
             {
                 "runtime": runtime.status(),
+                "configuration": {
+                    "polling_enabled": configured.effective_polling_enabled,
+                    "startup_backfill_enabled": (
+                        configured.startup_backfill_enabled
+                    ),
+                    "provider_discovery_enabled": (
+                        configured.provider_discovery_enabled
+                    ),
+                },
                 "observation": repository.observation_report(
                     instrument.provider_id, instrument.instrument_id
                 ),

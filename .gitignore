@@ -6,6 +6,12 @@ __pycache__/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
 *.tsbuildinfo
 var/
 frontend/.next/
