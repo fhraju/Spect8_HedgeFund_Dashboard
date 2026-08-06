@@ -1298,6 +1298,52 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
 
+    def reconcile_and_start_runtime_session(
+        self, session_id: str, provider_id: str, started_at: str
+    ) -> tuple[str, ...]:
+        """Close orphaned sessions and atomically record their successor.
+
+        The caller must hold the database-scoped ``SingleRuntimeLock``. Once
+        that lock has been acquired, any unfinished session for the same
+        provider belongs to a process that no longer owns the runtime.
+        """
+        with self._lock, closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                interrupted = tuple(
+                    str(row["session_id"])
+                    for row in connection.execute(
+                        """
+                        SELECT session_id
+                        FROM runtime_sessions
+                        WHERE provider = ? AND ended_at IS NULL
+                        ORDER BY started_at, session_id
+                        """,
+                        (provider_id,),
+                    ).fetchall()
+                )
+                connection.execute(
+                    """
+                    UPDATE runtime_sessions
+                    SET ended_at = ?, exit_reason = 'INTERRUPTED_RESTART'
+                    WHERE provider = ? AND ended_at IS NULL
+                    """,
+                    (started_at, provider_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO runtime_sessions (
+                        session_id, provider, started_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (session_id, provider_id, started_at),
+                )
+                connection.commit()
+                return interrupted
+            except Exception:
+                connection.rollback()
+                raise
+
     def end_runtime_session(
         self, session_id: str, ended_at: str, exit_reason: str
     ) -> None:

@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
+import sys
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +37,45 @@ def settings(database_path: Path) -> Settings:
         internal_api_key="phase3b-test",
         auto_seed_synthetic=False,
     )
+
+
+class LongWaitSchedule:
+    safety_delay_seconds = 30
+    health_check_seconds = 300
+
+    def seconds_until_next_poll(self, now):
+        return 3600
+
+
+async def start_without_poll(runtime):
+    runtime._schedule = LongWaitSchedule()
+
+    def forbidden_poll():
+        raise AssertionError("offline lifecycle test must not poll a provider")
+
+    runtime.run_once = forbidden_poll
+    task = asyncio.create_task(runtime.run())
+    for _ in range(1_000):
+        if runtime.status()["running"] or task.done():
+            break
+        await asyncio.sleep(0)
+    assert task.done() is False
+    assert runtime.status()["running"] is True
+    return task
+
+
+def runtime_sessions(repository: SQLiteProjectionRepository):
+    with closing(repository._connect()) as connection:
+        return [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT session_id, provider, started_at, ended_at, exit_reason
+                FROM runtime_sessions
+                ORDER BY started_at, session_id
+                """
+            ).fetchall()
+        ]
 
 
 def test_single_runtime_lock_rejects_second_owner_and_releases(
@@ -91,6 +133,187 @@ def test_runtime_starts_immediately_and_stops_gracefully(
     assert report["runtime_uptime_seconds"] == 0
     assert runtime.status()["running"] is False
     assert runtime.status()["single_runtime_lock_acquired"] is False
+
+
+def test_runtime_records_a_new_session_across_graceful_restart(
+    tmp_path: Path,
+) -> None:
+    application = create_app(
+        replace(
+            settings(tmp_path / "graceful-restart.sqlite3"),
+            startup_backfill_enabled=False,
+        )
+    )
+    repository = application.state.repository
+    repository.initialize()
+    runtime = application.state.market_data_runtime
+
+    async def exercise() -> tuple[str, str]:
+        first_task = await start_without_poll(runtime)
+        first_session_id = runtime.status()["session_id"]
+        runtime.stop()
+        await first_task
+
+        second_task = await start_without_poll(runtime)
+        second_session_id = runtime.status()["session_id"]
+        runtime.stop()
+        await second_task
+        return first_session_id, second_session_id
+
+    first_session_id, second_session_id = asyncio.run(exercise())
+    sessions = runtime_sessions(repository)
+
+    assert application.state.provider.identity.synthetic is True
+    assert first_session_id != second_session_id
+    assert len(sessions) == 2
+    assert {row["session_id"] for row in sessions} == {
+        first_session_id,
+        second_session_id,
+    }
+    assert all(row["ended_at"] is not None for row in sessions)
+    assert all(row["exit_reason"] == "GRACEFUL_STOP" for row in sessions)
+    assert runtime.status()["running"] is False
+    assert runtime.status()["single_runtime_lock_acquired"] is False
+
+
+def test_runtime_recovers_session_left_by_abruptly_terminated_process(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "abrupt-restart.sqlite3"
+    child = "\n".join(
+        (
+            "import os",
+            "import sys",
+            "from pathlib import Path",
+            "from backend.app.market_data.runtime_support import SingleRuntimeLock",
+            "from backend.app.repository import SQLiteProjectionRepository",
+            "database = Path(sys.argv[1])",
+            "repository = SQLiteProjectionRepository(database)",
+            "repository.initialize()",
+            "runtime_lock = SingleRuntimeLock(database)",
+            "runtime_lock.acquire()",
+            "repository.start_runtime_session(",
+            "    'abrupt-session', 'SYNTHETIC_UTC_V1',",
+            "    '2026-02-07T19:59:00Z'",
+            ")",
+            "os._exit(0)",
+        )
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", child, str(database)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    application = create_app(
+        replace(
+            settings(database),
+            startup_backfill_enabled=False,
+        )
+    )
+    repository = application.state.repository
+    repository.initialize()
+    runtime = application.state.market_data_runtime
+
+    async def exercise() -> tuple[str, list[dict]]:
+        task = await start_without_poll(runtime)
+        new_session_id = runtime.status()["session_id"]
+        active_sessions = runtime_sessions(repository)
+        runtime.stop()
+        await task
+        return new_session_id, active_sessions
+
+    new_session_id, active_sessions = asyncio.run(exercise())
+    final_sessions = runtime_sessions(repository)
+
+    assert application.state.provider.identity.synthetic is True
+    assert [row["session_id"] for row in active_sessions] == [
+        "abrupt-session",
+        new_session_id,
+    ]
+    assert active_sessions[0]["ended_at"] == "2026-02-07T20:00:01Z"
+    assert active_sessions[0]["exit_reason"] == "INTERRUPTED_RESTART"
+    assert active_sessions[1]["ended_at"] is None
+    assert active_sessions[1]["exit_reason"] is None
+    assert final_sessions[1]["exit_reason"] == "GRACEFUL_STOP"
+    assert runtime.status()["running"] is False
+    assert runtime.status()["single_runtime_lock_acquired"] is False
+
+
+def test_duplicate_runtime_is_blocked_without_reconciling_owner_session(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "duplicate-runtime.sqlite3"
+    first_application = create_app(
+        replace(settings(database), startup_backfill_enabled=False)
+    )
+    second_application = create_app(
+        replace(settings(database), startup_backfill_enabled=False)
+    )
+    repository = first_application.state.repository
+    repository.initialize()
+    first = first_application.state.market_data_runtime
+    second = second_application.state.market_data_runtime
+
+    async def exercise() -> tuple[str, dict]:
+        first_task = await start_without_poll(first)
+        first_session_id = first.status()["session_id"]
+        await second.run()
+        second_status = second.status()
+        assert first.status()["running"] is True
+        first.stop()
+        await first_task
+        return first_session_id, second_status
+
+    first_session_id, second_status = asyncio.run(exercise())
+    sessions = runtime_sessions(repository)
+
+    assert first_application.state.provider.identity.synthetic is True
+    assert second_application.state.provider.identity.synthetic is True
+    assert second_status["running"] is False
+    assert second_status["lock_conflict"] is True
+    assert second_status["single_runtime_lock_acquired"] is False
+    assert [row["session_id"] for row in sessions] == [first_session_id]
+    assert sessions[0]["exit_reason"] == "GRACEFUL_STOP"
+
+
+def test_runtime_start_failure_logs_releases_lock_and_records_no_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    database = tmp_path / "startup-failure.sqlite3"
+    application = create_app(
+        replace(settings(database), startup_backfill_enabled=False)
+    )
+    repository = application.state.repository
+    repository.initialize()
+    runtime = application.state.market_data_runtime
+    runtime._logger = logging.getLogger("spect8.test.runtime.startup")
+
+    def fail_start(*args, **kwargs):
+        raise RuntimeError("simulated offline session-write failure")
+
+    monkeypatch.setattr(
+        repository, "reconcile_and_start_runtime_session", fail_start
+    )
+    with caplog.at_level(logging.ERROR, logger=runtime._logger.name):
+        asyncio.run(runtime.run())
+
+    assert application.state.provider.identity.synthetic is True
+    assert runtime.status()["running"] is False
+    assert runtime.status()["single_runtime_lock_acquired"] is False
+    assert runtime_sessions(repository) == []
+    assert "runtime_start_failed" in caplog.messages
+
+    successor = SingleRuntimeLock(database)
+    successor.acquire()
+    assert successor.acquired is True
+    successor.release()
 
 
 def test_runtime_skips_immediate_poll_when_startup_backfill_is_disabled(

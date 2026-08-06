@@ -136,6 +136,7 @@ class MarketDataRuntime:
     async def run(self) -> None:
         provider_id = self._coordinator.provider.identity.provider_id
         self._stop.clear()
+        self._lock_conflict = False
         try:
             self._runtime_lock.acquire()
         except RuntimeAlreadyActiveError:
@@ -146,10 +147,39 @@ class MarketDataRuntime:
                 level=logging.ERROR,
             )
             return
-        started_at = primitive(self._clock.now())
-        self._repository.start_runtime_session(
-            self._session_id, provider_id, started_at
-        )
+        self._session_id = uuid4().hex
+        try:
+            started_at = primitive(self._clock.now())
+            interrupted_sessions = (
+                self._repository.reconcile_and_start_runtime_session(
+                    self._session_id, provider_id, started_at
+                )
+            )
+        except Exception as error:
+            self._runtime_lock.release()
+            self._log(
+                "runtime_start_failed",
+                {
+                    "provider": provider_id,
+                    "database": "configured",
+                    "error_type": type(error).__name__,
+                    "detail": (
+                        "Unable to reconcile and record the runtime session; "
+                        "the single-runtime lock was released."
+                    ),
+                },
+                level=logging.ERROR,
+            )
+            return
+        if interrupted_sessions:
+            self._log(
+                "runtime_sessions_reconciled",
+                {
+                    "provider": provider_id,
+                    "interrupted_sessions": len(interrupted_sessions),
+                    "exit_reason": "INTERRUPTED_RESTART",
+                },
+            )
         self._running = True
         exit_reason = "GRACEFUL_STOP"
         self._log(
@@ -207,10 +237,26 @@ class MarketDataRuntime:
         finally:
             self._running = False
             ended_at = primitive(self._clock.now())
-            self._repository.end_runtime_session(
-                self._session_id, ended_at, exit_reason
-            )
-            self._runtime_lock.release()
+            try:
+                self._repository.end_runtime_session(
+                    self._session_id, ended_at, exit_reason
+                )
+            except Exception as error:
+                self._log(
+                    "runtime_session_stop_failed",
+                    {
+                        "provider": provider_id,
+                        "session_id": self._session_id,
+                        "error_type": type(error).__name__,
+                        "detail": (
+                            "Unable to mark the runtime session stopped; "
+                            "the single-runtime lock will still be released."
+                        ),
+                    },
+                    level=logging.ERROR,
+                )
+            finally:
+                self._runtime_lock.release()
             self._log(
                 "runtime_stopped",
                 {
