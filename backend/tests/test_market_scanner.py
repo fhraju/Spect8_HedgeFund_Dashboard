@@ -10,7 +10,9 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
+from backend.app.dashboard_api import scanner_snapshot
 from backend.app.domain import Bar, Timeframe
+from backend.app.engine.models import CURRENT_D1_FILTER_V2
 from backend.app.main import create_app
 from backend.app.market_data.models import (
     HealthState,
@@ -344,6 +346,12 @@ def test_scanner_api_returns_enabled_typed_ordered_bootstrap_rows(
     )
     assert all(item["data_status"] == "BOOTSTRAPPING" for item in rows)
     assert all(item["H1"]["signal_status"] == "WAITING" for item in rows)
+    assert all(item["current_filter"] == {
+        "status": "WAITING",
+        "as_of_h1_close_time": None,
+        "snapshot_id": None,
+        "source": "WAITING",
+    } for item in rows)
     assert len(rows) == 24
     spy = next(item for item in rows if item["instrument_id"] == "SPY_US_ETF")
     assert spy["instrument_kind"] == "ETF"
@@ -354,6 +362,66 @@ def test_scanner_api_returns_enabled_typed_ordered_bootstrap_rows(
     assert spy["provider_exchange"] == "NYSE Arca"
     assert payload["data"]["credit_budget"]["reserve_preserved"] is True
     assert "provider-secret-that-must-not-leak" not in response.text
+
+
+def test_scanner_current_filter_uses_latest_completed_h1_snapshot() -> None:
+    instrument = twelve_data_instruments()[0]
+
+    class Repository:
+        def statuses(self):
+            common = {
+                "provider": instrument.provider_id,
+                "instrument_id": instrument.instrument_id,
+                "strategy_version": CURRENT_D1_FILTER_V2,
+                "signal_result": {"confirmed_buy": False, "confirmed_sell": False},
+                "daily_filter_snapshot_id": "older-evaluation-snapshot",
+            }
+            return [
+                {
+                    **common,
+                    "timeframe": "H1",
+                    "filter_result": {"buy_matched": True, "sell_matched": False},
+                    "signal_bar_close_time": "2026-08-05T06:00:00Z",
+                },
+                {
+                    **common,
+                    "timeframe": "H4",
+                    "filter_result": {"buy_matched": False, "sell_matched": False},
+                    "signal_bar_close_time": "2026-08-05T05:00:00Z",
+                },
+            ]
+
+        def instrument_health(self, provider, instrument_id):
+            return None
+
+        def latest_candle_timestamps(self, provider, instrument_id):
+            return {}
+
+        def latest_daily_filter_snapshot(
+            self, provider, instrument_id, strategy_version
+        ):
+            return {
+                "snapshot_id": "latest-completed-h1-snapshot",
+                "as_of_h1_close_time_utc": "2026-08-05T07:00:00Z",
+                "final_classification": "SELL",
+                "buy_matched": False,
+                "sell_matched": True,
+            }
+
+    data = scanner_snapshot(
+        Repository(),
+        (instrument,),
+        datetime(2026, 8, 5, 7, 1, tzinfo=timezone.utc),
+    )
+    row = data.instruments[0]
+
+    assert row.H1.filter_status == "BUY"
+    assert row.H4.filter_status == "NONE"
+    assert row.current_filter.status == "SELL"
+    assert row.current_filter.snapshot_id == "latest-completed-h1-snapshot"
+    assert row.current_filter.as_of_h1_close_time == datetime(
+        2026, 8, 5, 7, tzinfo=timezone.utc
+    )
 
 
 def test_scanner_migration_adds_query_indexes(tmp_path: Path) -> None:

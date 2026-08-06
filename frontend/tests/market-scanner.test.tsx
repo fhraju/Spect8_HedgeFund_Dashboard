@@ -39,6 +39,12 @@ function row(instrumentId: string, index: number): ScannerInstrument {
     data_status: index === 1 ? "DATA_UNAVAILABLE" : index === 2 ? "STALE" : "HEALTHY",
     latest_completed_h1_timestamp: "2026-08-05T10:00:00Z",
     latest_completed_h4_timestamp: "2026-08-05T09:00:00Z",
+    current_filter: {
+      status: index === 0 ? "SELL" : "NONE",
+      as_of_h1_close_time: "2026-08-05T10:00:00Z",
+      snapshot_id: `current-filter-${instrumentId}`,
+      source: "COMPLETED_H1",
+    },
     H1: {
       filter_status: index === 0 ? "BUY" : "NONE",
       signal_status: index === 0 ? "BUY" : "NONE",
@@ -71,7 +77,9 @@ describe("multi-instrument market scanner", () => {
       expect(html).toContain(value.replace("_", "/"));
       expect(html).toContain(`/instruments/${value}`);
     }
-    expect(html).toContain("H1 Filter");
+    expect(html).toContain("Current D1 Filter");
+    expect(html).not.toContain("H1 Filter");
+    expect(html).not.toContain("H4 Filter");
     expect(html).toContain("H4 Signal");
     expect(html).toContain("BUY");
     expect(html).toContain("SELL");
@@ -97,7 +105,9 @@ describe("multi-instrument market scanner", () => {
       health: "ALL",
     };
     expect(filterScannerRows(rows, { ...common, asset: "METAL" })).toHaveLength(1);
-    expect(filterScannerRows(rows, { ...common, timeframe: "H1", match: "BUY" })).toEqual([rows[0]]);
+    expect(filterScannerRows(rows, { ...common, timeframe: "H1", match: "SELL" })).toEqual([rows[0]]);
+    expect(filterScannerRows(rows, { ...common, timeframe: "H4", match: "SELL" })).toEqual([rows[0]]);
+    expect(filterScannerRows(rows, { ...common, timeframe: "H1", match: "BUY" })).toEqual([]);
     expect(filterScannerRows(rows, { ...common, confirmed: "CONFIRMED" })).toEqual([rows[0]]);
     expect(filterScannerRows(rows, { ...common, health: "STALE" })).toEqual([rows[2]]);
     expect(filterScannerRows(rows, { ...common, health: "ERROR" })).toEqual([rows[1]]);

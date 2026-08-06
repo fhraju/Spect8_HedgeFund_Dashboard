@@ -306,6 +306,13 @@ class ScannerTimeframeView(BaseModel):
     latest_filter_snapshot_id: str | None
 
 
+class ScannerCurrentFilterView(BaseModel):
+    status: str
+    as_of_h1_close_time: datetime | None
+    snapshot_id: str | None
+    source: Literal["COMPLETED_H1", "WAITING"]
+
+
 class ScannerInstrumentView(BaseModel):
     instrument_id: str
     display_symbol: str
@@ -331,6 +338,7 @@ class ScannerInstrumentView(BaseModel):
     data_status: str
     latest_completed_h1_timestamp: datetime | None
     latest_completed_h4_timestamp: datetime | None
+    current_filter: ScannerCurrentFilterView
     H1: ScannerTimeframeView
     H4: ScannerTimeframeView
     latest_error_summary: str | None
@@ -376,6 +384,32 @@ def scanner_snapshot(
             and item["timeframe"] in {"H1", "H4"}
             and item.get("strategy_version") == CURRENT_D1_FILTER_V2
         }
+        latest_filter = repository.latest_daily_filter_snapshot(
+            instrument.provider_id,
+            instrument.instrument_id,
+            CURRENT_D1_FILTER_V2,
+        )
+
+        if latest_filter is None:
+            current_filter = ScannerCurrentFilterView(
+                status="WAITING",
+                as_of_h1_close_time=None,
+                snapshot_id=None,
+                source="WAITING",
+            )
+        else:
+            classification = str(latest_filter.get("final_classification") or "")
+            if classification not in {"NONE", "BUY", "SELL", "BUY_AND_SELL"}:
+                classification = _direction_status(
+                    bool(latest_filter.get("buy_matched")),
+                    bool(latest_filter.get("sell_matched")),
+                )
+            current_filter = ScannerCurrentFilterView(
+                status=classification,
+                as_of_h1_close_time=latest_filter.get("as_of_h1_close_time_utc"),
+                snapshot_id=latest_filter.get("snapshot_id"),
+                source="COMPLETED_H1",
+            )
 
         def timeframe(value: str) -> ScannerTimeframeView:
             status = instrument_statuses.get(value)
@@ -430,6 +464,7 @@ def scanner_snapshot(
                 data_status=state,
                 latest_completed_h1_timestamp=latest.get("H1"),
                 latest_completed_h4_timestamp=latest.get("H4"),
+                current_filter=current_filter,
                 H1=timeframe("H1"),
                 H4=timeframe("H4"),
                 latest_error_summary=(

@@ -2230,6 +2230,10 @@ td:first-child span,
 .scanner-table a { color: inherit; display: grid; gap: 0.2rem; text-decoration: none; }
 .scanner-table a:hover strong { color: var(--accent); }
 .scanner-table small { color: var(--muted); display: block; margin-top: 0.25rem; }
+.scanner-filter-time { color: var(--muted); font-size: 0.6rem; margin-top: 0.25rem; max-width: 13rem; }
+.scanner-current-filter .zoned-time { display: inline; }
+.scanner-current-filter .zoned-time span { display: inline; }
+.scanner-current-filter .zoned-time small { display: none; }
 
 .scanner-proxy-badge {
   background: rgba(14, 165, 233, 0.12);

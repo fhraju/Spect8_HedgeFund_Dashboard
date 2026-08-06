@@ -39,13 +39,22 @@ const filterLabels: Record<string, string> = {
   WAITING: "WAITING",
 };
 
-export function FilterBadge({ status }: { status: string }) {
+export function FilterBadge({
+  status,
+  asOf,
+}: {
+  status: string;
+  asOf?: string | null;
+}) {
   const label = filterLabels[status] ?? status.replaceAll("_", " ");
+  const title = asOf
+    ? `Current D1 Filter · completed H1 snapshot at ${asOf}`
+    : "Filter = Daily market eligibility";
   return (
     <span
       aria-label={`Daily market eligibility filter: ${label}`}
       className={`scanner-filter-badge scanner-filter-${status.toLowerCase()}`}
-      title="Filter = Daily market eligibility"
+      title={title}
     >
       {label}
     </span>
@@ -93,6 +102,12 @@ function matchesDirection(
   );
 }
 
+function matchesCurrentFilter(row: ScannerInstrument, direction: string) {
+  return direction === "ALL"
+    ? true
+    : row.current_filter.status.split("_AND_").includes(direction);
+}
+
 export function filterScannerRows(
   rows: ScannerInstrument[],
   filters: ScannerFilters,
@@ -110,12 +125,7 @@ export function filterScannerRows(
       (!filters.kind || filters.kind === "ALL" || row.instrument_kind === filters.kind) &&
       (!filters.exposure || filters.exposure === "ALL" || row.exposure_category === filters.exposure) &&
       (!filters.proxy || filters.proxy === "ALL" || (filters.proxy === "PROXY") === Boolean(row.is_proxy)) &&
-      matchesDirection(
-        row,
-        filters.timeframe,
-        filters.match,
-        "filter_status",
-      ) &&
+      matchesCurrentFilter(row, filters.match) &&
       matchesDirection(
         row,
         filters.timeframe,
@@ -155,10 +165,8 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     (row) => !["HEALTHY", "RECOVERED"].includes(row.data_status),
   ).length;
   const monitored = snapshot.data.instruments.length;
-  const filteredCandidates = snapshot.data.instruments.filter((row) =>
-    [row.H1.filter_status, row.H4.filter_status].some(
-      (status) => !["NONE", "WAITING"].includes(status),
-    ),
+  const filteredCandidates = snapshot.data.instruments.filter(
+    (row) => !["NONE", "WAITING"].includes(row.current_filter.status),
   ).length;
   const confirmedSignals = snapshot.data.instruments.filter((row) =>
     [row.H1.signal_status, row.H4.signal_status].some(
@@ -234,7 +242,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
 
         <div className="scanner-table-wrap panel">
           <table className="scanner-table">
-            <thead><tr><th>Instrument</th><th>Exposure</th><th>Type</th>{timeframe !== "H4" && <><th>H1 Filter</th><th>H1 Signal</th></>}{timeframe !== "H1" && <><th>H4 Filter</th><th>H4 Signal</th></>}<th>Latest completed bar</th><th>Provider / Data status</th></tr></thead>
+            <thead><tr><th>Instrument</th><th>Exposure</th><th>Type</th><th>Current D1 Filter</th>{timeframe !== "H4" && <th>H1 Signal</th>}{timeframe !== "H1" && <th>H4 Signal</th>}<th>Latest completed bar</th><th>Provider / Data status</th></tr></thead>
             <tbody>
               {rows.map((row) => {
                 const latest = timeframe === "H4"
@@ -245,8 +253,9 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                     <td><Link href={`/instruments/${row.instrument_id}`}><strong>{row.display_symbol}</strong>{row.is_proxy && <span className="scanner-proxy-badge" title="Signals use this ETF price series, not the direct underlying market.">ETF PROXY</span>}<small>{row.display_name}</small></Link></td>
                     <td><span>{(row.exposure_category ?? row.asset_class).replaceAll("_", " ")}</span>{row.underlying_description && <small title={row.underlying_description}>{row.underlying_description}</small>}</td>
                     <td>{(row.instrument_kind ?? row.asset_class).replaceAll("_", " ")}</td>
-                    {timeframe !== "H4" && <><td><FilterBadge status={row.H1.filter_status} /></td><td><SignalBadge status={row.H1.signal_status} /></td></>}
-                    {timeframe !== "H1" && <><td><FilterBadge status={row.H4.filter_status} /></td><td><SignalBadge status={row.H4.signal_status} /></td></>}
+                    <td className="scanner-current-filter"><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
+                    {timeframe !== "H4" && <td><SignalBadge status={row.H1.signal_status} /></td>}
+                    {timeframe !== "H1" && <td><SignalBadge status={row.H4.signal_status} /></td>}
                     <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
                     <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
                   </tr>

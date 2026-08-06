@@ -306,6 +306,12 @@ export type ScannerInstrument = {
   data_status: string;
   latest_completed_h1_timestamp: string | null;
   latest_completed_h4_timestamp: string | null;
+  current_filter: {
+    status: string;
+    as_of_h1_close_time: string | null;
+    snapshot_id: string | null;
+    source: "COMPLETED_H1" | "WAITING";
+  };
   H1: ScannerTimeframe;
   H4: ScannerTimeframe;
   latest_error_summary: string | null;

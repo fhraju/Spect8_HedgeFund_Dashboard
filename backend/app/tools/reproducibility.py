@@ -866,6 +866,11 @@ def reproduce_checkpoint(*, fixture_root: Path, database_path: Path) -> dict[str
                 "credit_budget_status",
             ):
                 row.pop(field, None)
+    # Existing frozen checkpoints predate the additive scanner-level current
+    # Filter projection. Their evaluation-specific H1/H4 snapshot evidence is
+    # retained byte-for-byte and the new API field is tested independently.
+    for row in scanner_data["instruments"]:
+        row.pop("current_filter", None)
     notice = _checkpoint_notice(manifest["checkpoint_name"])
     actual_scanner = {
         "synthetic": False,
