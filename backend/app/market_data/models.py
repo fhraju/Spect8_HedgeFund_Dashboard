@@ -56,6 +56,7 @@ class ExposureCategory(StrEnum):
     US_SMALL_CAP_EQUITY = "US_SMALL_CAP_EQUITY"
     EUROPE_EQUITY = "EUROPE_EQUITY"
     JAPAN_EQUITY = "JAPAN_EQUITY"
+    ASIA_PACIFIC_EQUITY = "ASIA_PACIFIC_EQUITY"
     EMERGING_MARKET_EQUITY = "EMERGING_MARKET_EQUITY"
     GOVERNMENT_BONDS = "GOVERNMENT_BONDS"
     CREDIT = "CREDIT"
@@ -120,6 +121,7 @@ class CanonicalInstrument:
     strategy_id: str
     display_symbol: str = ""
     enabled: bool = True
+    polling_enabled: bool = True
     exchange: str | None = None
     mic_code: str | None = None
     provider_instrument_type: str | None = None

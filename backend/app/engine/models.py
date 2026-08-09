@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from ..domain import Bar, Direction, Timeframe
+from ..domain import Bar, Direction, FilterMode, Timeframe
 
 CURRENT_D1_FILTER_V2 = "MICRO_DAILY_FILTER_CURRENT_D1_V2"
+CURRENT_W1_FILTER_V1 = "MACRO_WEEKLY_FILTER_CURRENT_W1_V1"
 LEGACY_FILTER_VERSION = "SPECT8_MICRO_DAILY_V1_0_3"
 
 
@@ -67,6 +68,64 @@ class DailyFilterSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class CurrentPartialWeeklyCandle:
+    session_identifier: str
+    session_open_utc: datetime
+    session_close_utc: datetime
+    first_h1_open_time_utc: datetime
+    last_h1_close_time_utc: datetime
+    h1_count: int
+    source_h1_ids: tuple[str, ...]
+    source_checksum: str
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    quality_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class WeeklyFilterSnapshot:
+    snapshot_id: str
+    filter_mode: FilterMode
+    strategy_version: str
+    canonical_profile_version: str
+    provider: str
+    instrument: str
+    evaluation_time_utc: datetime
+    as_of_h1_close_time_utc: datetime
+    current_partial_w1: CurrentPartialWeeklyCandle
+    previous_w1_candle_id: str
+    previous_w1_session_id: str
+    previous_w1_open_utc: datetime
+    previous_w1_close_utc: datetime
+    previous_w1_open: Decimal
+    previous_w1_high: Decimal
+    previous_w1_low: Decimal
+    previous_w1_close: Decimal
+    atr_period: int
+    atr_value: Decimal
+    atr_source_w1_ids: tuple[str, ...]
+    atr_source_checksum: str
+    buffer_percentage: Decimal
+    buffer_value: Decimal
+    buy_threshold: Decimal
+    sell_threshold: Decimal
+    buy_left_value: Decimal
+    buy_operator: str
+    buy_right_value: Decimal
+    buy_matched: bool
+    sell_left_value: Decimal
+    sell_operator: str
+    sell_right_value: Decimal
+    sell_matched: bool
+    final_classification: str
+    data_quality_status: str
+    ingestion_run_id: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentMetadata:
     strategy_id: str
     instrument_id: str
@@ -96,6 +155,8 @@ class StrategyRequest:
     instrument: InstrumentMetadata
     strategy_version: str = LEGACY_FILTER_VERSION
     daily_filter_snapshot: DailyFilterSnapshot | None = None
+    filter_mode: FilterMode = FilterMode.MICRO
+    w1_filter_snapshot: WeeklyFilterSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +377,7 @@ class StrategyEvaluation:
     filter_audit: FilterAuditResult | None = None
     strategy_version: str = LEGACY_FILTER_VERSION
     daily_filter_snapshot_id: str | None = None
+    filter_mode: FilterMode = FilterMode.MICRO
 
     @property
     def candidates(self) -> tuple[CandidateResult, ...]:

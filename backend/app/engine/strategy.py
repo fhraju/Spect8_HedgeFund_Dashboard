@@ -4,7 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Protocol, Sequence
 
-from ..domain import Bar, Direction, Timeframe
+from ..domain import Bar, Direction, FilterMode, Timeframe
 from ..market_data.forex_profile import (
     CANONICAL_TIMEZONE,
     PROFILE_ID,
@@ -30,6 +30,7 @@ from .models import (
     IndicatorResult,
     MicroDailyFilterResult,
     CURRENT_D1_FILTER_V2,
+    CURRENT_W1_FILTER_V1,
     StrategyEvaluation,
     StrategyRequest,
 )
@@ -124,7 +125,11 @@ class Spect8StrategyEvaluator:
     """Pure production evaluator for the frozen Spect8 Micro Daily rules."""
 
     def evaluate(self, request: StrategyRequest) -> StrategyEvaluation:
-        if request.strategy_id not in (STRATEGY_ID, CURRENT_D1_FILTER_V2):
+        if request.strategy_id not in (
+            STRATEGY_ID,
+            CURRENT_D1_FILTER_V2,
+            CURRENT_W1_FILTER_V1,
+        ):
             raise ValueError(f"unsupported strategy: {request.strategy_id}")
         if request.timeframe not in (Timeframe.H1, Timeframe.H4):
             raise ValueError("strategy timeframe must be H1 or H4")
@@ -184,17 +189,41 @@ class Spect8StrategyEvaluator:
             issues.append("INSUFFICIENT_SIGNAL_HISTORY")
         if len(completed_daily) < 6:
             issues.append("INSUFFICIENT_DAILY_HISTORY")
-        snapshot = request.daily_filter_snapshot
-        if request.strategy_version == CURRENT_D1_FILTER_V2:
-            if snapshot is None:
+        daily_snapshot = request.daily_filter_snapshot
+        weekly_snapshot = request.w1_filter_snapshot
+        selected_snapshot = (
+            weekly_snapshot
+            if request.filter_mode is FilterMode.MACRO
+            else daily_snapshot
+        )
+        if (
+            request.filter_mode is FilterMode.MICRO
+            and request.strategy_version == CURRENT_D1_FILTER_V2
+        ):
+            if daily_snapshot is None:
                 issues.append("DAILY_FILTER_SNAPSHOT_UNAVAILABLE")
             elif completed_signal and (
-                snapshot.instrument != instrument.instrument_id
-                or snapshot.provider != instrument.provider
-                or snapshot.as_of_h1_close_time_utc != completed_signal[-1].close_time
-                or snapshot.strategy_version != CURRENT_D1_FILTER_V2
+                daily_snapshot.instrument != instrument.instrument_id
+                or daily_snapshot.provider != instrument.provider
+                or daily_snapshot.as_of_h1_close_time_utc
+                != completed_signal[-1].close_time
+                or daily_snapshot.strategy_version != CURRENT_D1_FILTER_V2
             ):
                 issues.append("DAILY_FILTER_SNAPSHOT_MISMATCH")
+        elif request.filter_mode is FilterMode.MACRO:
+            if request.strategy_version != CURRENT_W1_FILTER_V1:
+                issues.append("WEEKLY_FILTER_VERSION_MISMATCH")
+            elif weekly_snapshot is None:
+                issues.append("WEEKLY_FILTER_SNAPSHOT_UNAVAILABLE")
+            elif completed_signal and (
+                weekly_snapshot.instrument != instrument.instrument_id
+                or weekly_snapshot.provider != instrument.provider
+                or weekly_snapshot.as_of_h1_close_time_utc
+                != completed_signal[-1].close_time
+                or weekly_snapshot.strategy_version != CURRENT_W1_FILTER_V1
+                or weekly_snapshot.filter_mode is not FilterMode.MACRO
+            ):
+                issues.append("WEEKLY_FILTER_SNAPSHOT_MISMATCH")
         if issues:
             unique_issues = tuple(sorted(set(issues)))
             return StrategyEvaluation(
@@ -222,49 +251,66 @@ class Spect8StrategyEvaluator:
                 signal_bar=None,
                 strategy_version=request.strategy_version,
                 daily_filter_snapshot_id=(
-                    snapshot.snapshot_id if snapshot is not None else None
+                    selected_snapshot.snapshot_id
+                    if selected_snapshot is not None
+                    else None
                 ),
+                filter_mode=request.filter_mode,
             )
 
-        atr = (
-            snapshot.atr_value
-            if snapshot is not None and request.strategy_version == CURRENT_D1_FILTER_V2
+        daily_atr = (
+            daily_snapshot.atr_value
+            if daily_snapshot is not None
+            and request.strategy_version == CURRENT_D1_FILTER_V2
             else wilder_atr(completed_daily, 5)
         )
         sma10 = simple_moving_average(completed_signal, 10)
         sma20 = simple_moving_average(completed_signal, 20)
         recent_low, recent_high = completed_extremes(completed_signal, 21)
-        if snapshot is not None and request.strategy_version == CURRENT_D1_FILTER_V2:
+        if selected_snapshot is not None and request.strategy_version in {
+            CURRENT_D1_FILTER_V2,
+            CURRENT_W1_FILTER_V1,
+        }:
+            previous_low = (
+                weekly_snapshot.previous_w1_low
+                if weekly_snapshot is not None
+                else daily_snapshot.previous_d1_low  # type: ignore[union-attr]
+            )
+            previous_high = (
+                weekly_snapshot.previous_w1_high
+                if weekly_snapshot is not None
+                else daily_snapshot.previous_d1_high  # type: ignore[union-attr]
+            )
             filter_result = MicroDailyFilterResult(
                 buy=FilterSideResult(
                     direction=Direction.BUY,
-                    matched=snapshot.buy_matched,
+                    matched=selected_snapshot.buy_matched,
                     recent_extreme=recent_low,
-                    daily_level=snapshot.buy_threshold,
+                    daily_level=selected_snapshot.buy_threshold,
                     reason_code=(
                         "BUY_FILTER_MATCHED"
-                        if snapshot.buy_matched
+                        if selected_snapshot.buy_matched
                         else "BUY_FILTER_NOT_MATCHED"
                     ),
                 ),
                 sell=FilterSideResult(
                     direction=Direction.SELL,
-                    matched=snapshot.sell_matched,
+                    matched=selected_snapshot.sell_matched,
                     recent_extreme=recent_high,
-                    daily_level=snapshot.sell_threshold,
+                    daily_level=selected_snapshot.sell_threshold,
                     reason_code=(
                         "SELL_FILTER_MATCHED"
-                        if snapshot.sell_matched
+                        if selected_snapshot.sell_matched
                         else "SELL_FILTER_NOT_MATCHED"
                     ),
                 ),
-                daily_raw_low=snapshot.previous_d1_low,
-                daily_raw_high=snapshot.previous_d1_high,
-                activation_buffer=snapshot.buffer_value,
+                daily_raw_low=previous_low,
+                daily_raw_high=previous_high,
+                activation_buffer=selected_snapshot.buffer_value,
             )
         else:
             filter_result = evaluate_micro_daily_filter(
-                completed_signal, completed_daily, atr
+                completed_signal, completed_daily, daily_atr
             )
         signal_result = evaluate_spect8_signal(completed_signal, sma10, sma20)
         confirmed_buy = filter_result.buy.matched and signal_result.buy.technical_signal
@@ -368,7 +414,7 @@ class Spect8StrategyEvaluator:
             atr_sessions=tuple(daily_session(bar) for bar in completed_daily),
             d1_context_eligibility_time=latest.close_time,
             atr_period=5,
-            atr_value=atr,
+            atr_value=daily_atr,
             buffer_percentage=Decimal("0.05"),
             buffer_value=filter_result.activation_buffer,
             daily_low=filter_result.daily_raw_low,
@@ -398,9 +444,11 @@ class Spect8StrategyEvaluator:
             daily_session_authority="17:00 America/New_York",
             selected_bars=tuple(selected_audit_bars),
         )
-        if request.strategy_version == CURRENT_D1_FILTER_V2:
+        if request.strategy_version in {CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1}:
             audit = None
-        stop_atr_distance, point_adjustment = calculate_level_distances(atr, instrument)
+        stop_atr_distance, point_adjustment = calculate_level_distances(
+            daily_atr, instrument
+        )
         buy_candidate = (
             calculate_candidate_levels(
                 Direction.BUY,
@@ -436,7 +484,7 @@ class Spect8StrategyEvaluator:
         indicators = IndicatorResult(
             sma10=sma10,
             sma20=sma20,
-            atr_d1_wilder_5=atr,
+            atr_d1_wilder_5=daily_atr,
             activation_buffer=activation_buffer,
             stop_atr_distance=stop_atr_distance,
             point_adjustment=point_adjustment,
@@ -483,6 +531,7 @@ class Spect8StrategyEvaluator:
             filter_audit=audit,
             strategy_version=request.strategy_version,
             daily_filter_snapshot_id=(
-                snapshot.snapshot_id if snapshot is not None else None
+                selected_snapshot.snapshot_id if selected_snapshot is not None else None
             ),
+            filter_mode=request.filter_mode,
         )

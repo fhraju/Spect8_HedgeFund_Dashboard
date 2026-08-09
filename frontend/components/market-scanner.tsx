@@ -8,6 +8,8 @@ import type {
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { FilterModeSelector } from "./filter-mode-selector";
+import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 
@@ -26,7 +28,7 @@ export type ScannerFilters = {
 function healthBadge(status: string) {
   return (
     <span className={`scanner-chip scanner-${status.toLowerCase()}`}>
-      {status.replaceAll("_", " + ")}
+      {status.replaceAll("_", " ")}
     </span>
   );
 }
@@ -42,17 +44,19 @@ const filterLabels: Record<string, string> = {
 export function FilterBadge({
   status,
   asOf,
+  timeframe = "D1",
 }: {
   status: string;
   asOf?: string | null;
+  timeframe?: "D1" | "W1";
 }) {
   const label = filterLabels[status] ?? status.replaceAll("_", " ");
   const title = asOf
-    ? `Current D1 Filter · completed H1 snapshot at ${asOf}`
-    : "Filter = Daily market eligibility";
+    ? `Current ${timeframe} Filter · completed H1 snapshot at ${asOf}`
+    : `Filter = ${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility`;
   return (
     <span
-      aria-label={`Daily market eligibility filter: ${label}`}
+      aria-label={`${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility filter: ${label}`}
       className={`scanner-filter-badge scanner-filter-${status.toLowerCase()}`}
       title={title}
     >
@@ -138,6 +142,8 @@ export function filterScannerRows(
 }
 
 export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
+  const activeFilterMode = snapshot.data.active_filter_mode ?? "MICRO";
+  const filterTimeframe = snapshot.data.filter_timeframe ?? "D1";
   const [asset, setAsset] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [exposure, setExposure] = useState("ALL");
@@ -194,7 +200,11 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
         <nav className="primary-nav" aria-label="Primary navigation">
           <span className="active"><i>⌕</i>Market Scanner</span>
         </nav>
+        <div className="sidebar-bottom">
+          <LogoutButton />
+        </div>
       </aside>
+      <LogoutButton className="mobile-logout" />
 
       <section className="dashboard-content scanner-content">
         <header className="scanner-header">
@@ -203,7 +213,10 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
             <h1>Multi-instrument market scanner</h1>
             <p>{snapshot.data.instruments.length} enabled instruments · {unhealthy} require attention{snapshot.data.credit_budget ? ` · ${snapshot.data.credit_budget.estimated_operational_remaining} operational credits remaining` : ""}</p>
           </div>
-          <RefreshButton />
+          <div className="scanner-header-actions">
+            <FilterModeSelector activeMode={activeFilterMode} />
+            <RefreshButton />
+          </div>
         </header>
 
         <section className="kpi-grid scanner-kpis" aria-label="Market scanner summary">
@@ -242,7 +255,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
 
         <div className="scanner-table-wrap panel">
           <table className="scanner-table">
-            <thead><tr><th>Instrument</th><th>Exposure</th><th>Type</th><th>Current D1 Filter</th>{timeframe !== "H4" && <th>H1 Signal</th>}{timeframe !== "H1" && <th>H4 Signal</th>}<th>Latest completed bar</th><th>Provider / Data status</th></tr></thead>
+            <thead><tr><th>Instrument</th><th>Exposure</th><th>Type</th><th>Current {filterTimeframe} Filter</th>{timeframe !== "H4" && <th>H1 Signal</th>}{timeframe !== "H1" && <th>H4 Signal</th>}<th>Latest completed bar</th><th>Provider / Data status</th></tr></thead>
             <tbody>
               {rows.map((row) => {
                 const latest = timeframe === "H4"
@@ -250,10 +263,19 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                   : row.latest_completed_h1_timestamp;
                 return (
                   <tr key={row.instrument_id}>
-                    <td><Link href={`/instruments/${row.instrument_id}`}><strong>{row.display_symbol}</strong>{row.is_proxy && <span className="scanner-proxy-badge" title="Signals use this ETF price series, not the direct underlying market.">ETF PROXY</span>}<small>{row.display_name}</small></Link></td>
+                    <td>
+                      {row.polling_enabled === false ? (
+                        <span className="scanner-unavailable-instrument" title="Provider data unavailable; this instrument is not polled.">
+                          <strong>{row.display_symbol}</strong>
+                          <small>{row.display_name}</small>
+                        </span>
+                      ) : (
+                        <Link href={`/instruments/${row.instrument_id}`}><strong>{row.display_symbol}</strong>{row.is_proxy && <span className="scanner-proxy-badge" title="Signals use this ETF price series, not the direct underlying market.">ETF PROXY</span>}<small>{row.display_name}</small></Link>
+                      )}
+                    </td>
                     <td><span>{(row.exposure_category ?? row.asset_class).replaceAll("_", " ")}</span>{row.underlying_description && <small title={row.underlying_description}>{row.underlying_description}</small>}</td>
                     <td>{(row.instrument_kind ?? row.asset_class).replaceAll("_", " ")}</td>
-                    <td className="scanner-current-filter"><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
+                    <td className="scanner-current-filter"><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} timeframe={filterTimeframe} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
                     {timeframe !== "H4" && <td><SignalBadge status={row.H1.signal_status} /></td>}
                     {timeframe !== "H1" && <td><SignalBadge status={row.H4.signal_status} /></td>}
                     <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>

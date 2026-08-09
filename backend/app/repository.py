@@ -10,11 +10,11 @@ from threading import RLock
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from .domain import Bar, DomainEvent, InstrumentStatus, Timeframe, primitive
+from .domain import Bar, DomainEvent, FilterMode, InstrumentStatus, Timeframe, primitive
 from .observation import expansion_projections
 
 if TYPE_CHECKING:
-    from .engine.models import DailyFilterSnapshot
+    from .engine.models import DailyFilterSnapshot, WeeklyFilterSnapshot
     from .market_data.models import ProviderHealth
 
 
@@ -27,6 +27,13 @@ def _exact_value(value: Any) -> Any:
         return {key: _exact_value(child) for key, child in value.items()}
     if isinstance(value, (tuple, list)):
         return [_exact_value(child) for child in value]
+    return value
+
+
+def _status_value(status: InstrumentStatus) -> dict[str, Any]:
+    value = primitive(status)
+    if status.strategy_version == "MACRO_WEEKLY_FILTER_CURRENT_W1_V1":
+        value["filter_mode"] = FilterMode.MACRO.value
     return value
 
 
@@ -205,6 +212,29 @@ class SQLiteProjectionRepository:
                     )
                 );
 
+                CREATE TABLE IF NOT EXISTS weekly_filter_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    filter_mode TEXT NOT NULL CHECK (filter_mode IN ('MICRO', 'MACRO')),
+                    strategy_version TEXT NOT NULL,
+                    canonical_profile_version TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    as_of_h1_close_time_utc TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    source_checksum TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (
+                        strategy_version, canonical_profile_version, provider,
+                        instrument_id, as_of_h1_close_time_utc
+                    )
+                );
+
+                CREATE TABLE IF NOT EXISTS runtime_configuration (
+                    configuration_key TEXT PRIMARY KEY,
+                    configuration_value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS provider_credit_ledger (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     provider TEXT NOT NULL,
@@ -232,6 +262,11 @@ class SQLiteProjectionRepository:
                     instrument_id, strategy_version,
                     as_of_h1_close_time_utc DESC
                 );
+                CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_instrument_time
+                ON weekly_filter_snapshots (
+                    instrument_id, strategy_version,
+                    as_of_h1_close_time_utc DESC
+                );
                 CREATE INDEX IF NOT EXISTS idx_events_instrument_time
                 ON event_history (instrument_id, timeframe, occurred_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_credit_ledger_provider_time
@@ -241,6 +276,12 @@ class SQLiteProjectionRepository:
             self._migrate_synthetic_constraints(connection)
             self._migrate_canonical_provenance(connection)
             self._migrate_status_payloads(connection)
+            connection.execute(
+                """INSERT OR IGNORE INTO runtime_configuration (
+                       configuration_key, configuration_value, updated_at
+                   ) VALUES ('active_filter_mode', 'MICRO',
+                             '1970-01-01T00:00:00Z')"""
+            )
             connection.commit()
 
     @staticmethod
@@ -431,7 +472,7 @@ class SQLiteProjectionRepository:
         status: InstrumentStatus,
         events: tuple[DomainEvent, ...],
     ) -> bool:
-        status_value = primitive(status)
+        status_value = _status_value(status)
         with self._lock, closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
@@ -510,7 +551,7 @@ class SQLiteProjectionRepository:
         if any(status.filter_audit is None for status in statuses):
             raise ValueError("replacement statuses must contain filter audit evidence")
 
-        replacements = tuple((status, primitive(status)) for status in statuses)
+        replacements = tuple((status, _status_value(status)) for status in statuses)
         changed = 0
         with self._lock, closing(self._connect()) as connection:
             try:
@@ -735,6 +776,103 @@ class SQLiteProjectionRepository:
                     raise ValueError("Daily Filter snapshot identity conflict")
             connection.commit()
             return cursor.rowcount > 0
+
+    def persist_w1_filter_snapshot(self, snapshot: "WeeklyFilterSnapshot") -> bool:
+        payload = _exact_value(asdict(snapshot))
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO weekly_filter_snapshots (
+                    snapshot_id, filter_mode, strategy_version,
+                    canonical_profile_version, provider, instrument_id,
+                    as_of_h1_close_time_utc, payload_json, source_checksum,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.snapshot_id,
+                    snapshot.filter_mode.value,
+                    snapshot.strategy_version,
+                    snapshot.canonical_profile_version,
+                    snapshot.provider,
+                    snapshot.instrument,
+                    payload["as_of_h1_close_time_utc"],
+                    encoded,
+                    snapshot.current_partial_w1.source_checksum,
+                    payload["created_at"],
+                ),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT payload_json FROM weekly_filter_snapshots WHERE snapshot_id = ?",
+                    (snapshot.snapshot_id,),
+                ).fetchone()
+                if row is None or row["payload_json"] != encoded:
+                    raise ValueError("Weekly Filter snapshot identity conflict")
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def latest_weekly_filter_snapshot(
+        self,
+        provider: str,
+        instrument_id: str,
+        strategy_version: str | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT payload_json FROM weekly_filter_snapshots
+            WHERE provider = ? AND instrument_id = ?
+        """
+        values: list[Any] = [provider, instrument_id]
+        if strategy_version is not None:
+            query += " AND strategy_version = ?"
+            values.append(strategy_version)
+        query += " ORDER BY as_of_h1_close_time_utc DESC LIMIT 1"
+        with closing(self._connect()) as connection:
+            row = connection.execute(query, values).fetchone()
+        return json.loads(row["payload_json"]) if row is not None else None
+
+    def weekly_filter_snapshot_at(
+        self,
+        provider: str,
+        instrument_id: str,
+        strategy_version: str,
+        as_of_h1_close_time_utc: str,
+    ) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM weekly_filter_snapshots
+                   WHERE provider = ? AND instrument_id = ?
+                     AND strategy_version = ?
+                     AND as_of_h1_close_time_utc = ?""",
+                (provider, instrument_id, strategy_version, as_of_h1_close_time_utc),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row is not None else None
+
+    def active_filter_mode(self) -> FilterMode:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT configuration_value FROM runtime_configuration
+                   WHERE configuration_key = 'active_filter_mode'"""
+            ).fetchone()
+        return FilterMode(row["configuration_value"] if row is not None else "MICRO")
+
+    def set_active_filter_mode(
+        self, mode: FilterMode, *, updated_at: datetime
+    ) -> FilterMode:
+        value = updated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """INSERT INTO runtime_configuration (
+                       configuration_key, configuration_value, updated_at
+                   ) VALUES ('active_filter_mode', ?, ?)
+                   ON CONFLICT(configuration_key) DO UPDATE SET
+                       configuration_value = excluded.configuration_value,
+                       updated_at = excluded.updated_at""",
+                (mode.value, value),
+            )
+            connection.commit()
+        return mode
 
     def latest_daily_filter_snapshot(
         self,
@@ -1097,7 +1235,7 @@ class SQLiteProjectionRepository:
         status: InstrumentStatus,
         events: tuple[DomainEvent, ...],
     ) -> None:
-        status_value = primitive(status)
+        status_value = _status_value(status)
         connection.execute(
             """
             INSERT INTO processed_bars

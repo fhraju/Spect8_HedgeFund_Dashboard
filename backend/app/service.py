@@ -315,6 +315,11 @@ class WalkingSkeletonService:
         filter_payload[
             "daily_filter_snapshot_id"
         ] = adapted.status.daily_filter_snapshot_id
+        if adapted.evaluation.filter_mode.value == "MACRO":
+            filter_payload[
+                "filter_snapshot_id"
+            ] = adapted.status.daily_filter_snapshot_id
+            filter_payload["filter_mode"] = adapted.evaluation.filter_mode.value
         filter_payload["strategy_version"] = adapted.status.strategy_version
         emit(EventType.FILTER_EVALUATED, filter_payload)
         emit(
@@ -327,6 +332,14 @@ class WalkingSkeletonService:
             {
                 "buy_matched": adapted.filter_result.buy_matched,
                 "sell_matched": adapted.filter_result.sell_matched,
+                **(
+                    {
+                        "filter_mode": adapted.evaluation.filter_mode.value,
+                        "strategy_version": adapted.status.strategy_version,
+                    }
+                    if adapted.evaluation.filter_mode.value == "MACRO"
+                    else {}
+                ),
             },
         )
         emit(EventType.SIGNAL_EVALUATED, primitive(adapted.signal_result))
@@ -360,6 +373,14 @@ class WalkingSkeletonService:
             {
                 "dashboard_state": adapted.status.dashboard_state,
                 "source_case_id": adapted.status.source_case_id,
+                **(
+                    {
+                        "filter_mode": adapted.evaluation.filter_mode.value,
+                        "strategy_version": adapted.status.strategy_version,
+                    }
+                    if adapted.evaluation.filter_mode.value == "MACRO"
+                    else {}
+                ),
             },
         )
         return tuple(collected)

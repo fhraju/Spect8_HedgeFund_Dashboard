@@ -116,6 +116,7 @@ describe("historical replay dashboard", () => {
     expect(html).toContain("REPLAY — NOT LIVE");
     expect(html).toContain("No historical replay exists");
     expect(html).toContain("Orders 0 · fills 0");
+    expect(html).toContain('action="/api/auth/logout"');
   });
 
   it("renders backend totals, filters, history and the detailed inspector", () => {

@@ -9,6 +9,7 @@ import type {
   HistoricalReplayRun,
   HistoricalReplaySummary,
   SyntheticEnvelope,
+  FilterMode,
 } from "./api-types";
 
 function backendConfiguration(): { baseUrl: string; apiKey: string } {
@@ -53,6 +54,17 @@ export async function getInstrumentDashboardSnapshot(
 
 export async function getScannerSnapshot(): Promise<ScannerSnapshot> {
   return backendFetch<ScannerSnapshot>("/scanner");
+}
+
+export async function setFilterMode(mode: FilterMode): Promise<{
+  active_filter_mode: FilterMode;
+  filter_timeframe: "D1" | "W1";
+}> {
+  return backendFetch("/filter-mode", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
 }
 
 export async function replaySyntheticCases(): Promise<

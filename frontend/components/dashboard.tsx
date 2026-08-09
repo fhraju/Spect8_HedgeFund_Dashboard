@@ -1,6 +1,7 @@
 import type {
   DashboardSnapshot,
   DailyFilterSnapshot,
+  WeeklyFilterSnapshot,
   EventRecord,
   FilterAuditDailySession,
   InstrumentStatus,
@@ -10,6 +11,8 @@ import Link from "next/link";
 import { Fragment } from "react";
 
 import { RefreshButton } from "./refresh-button";
+import { FilterModeSelector } from "./filter-mode-selector";
+import { LogoutButton } from "./logout-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 
 function signalDirection(status: InstrumentStatus): string {
@@ -121,7 +124,10 @@ function SourceCandleEvidence({
 function FilterAuditView({ status }: { status: InstrumentStatus }) {
   const audit = status.filter_audit;
   if (!audit) {
-    if (status.strategy_version === "MICRO_DAILY_FILTER_CURRENT_D1_V2") {
+    if (
+      status.strategy_version === "MICRO_DAILY_FILTER_CURRENT_D1_V2" ||
+      status.strategy_version === "MACRO_WEEKLY_FILTER_CURRENT_W1_V1"
+    ) {
       return (
         <details className="filter-audit-details">
           <summary>Signal Audit</summary>
@@ -297,6 +303,47 @@ function SharedDailyFilter({ snapshot }: { snapshot: DailyFilterSnapshot }) {
   );
 }
 
+function SharedWeeklyFilter({ snapshot }: { snapshot: WeeklyFilterSnapshot }) {
+  const partial = snapshot.current_partial_w1;
+  const classification = snapshot.final_classification === "BUY_AND_SELL"
+    ? "BUY + SELL"
+    : snapshot.final_classification;
+  return (
+    <section className="panel shared-daily-filter" aria-label="Current Weekly Filter">
+      <div className="panel-heading">
+        <div>
+          <span className="section-kicker">As of last completed canonical H1 candle.</span>
+          <h2>Current Weekly Filter</h2>
+        </div>
+        <strong>{classification}</strong>
+      </div>
+      <dl className="market-values">
+        <div><dt>Filter mode</dt><dd>Macro — Weekly Filter</dd></div>
+        <div><dt>Strategy version</dt><dd>{snapshot.strategy_version}</dd></div>
+        <div><dt>Snapshot ID</dt><dd><code>{snapshot.snapshot_id}</code></dd></div>
+        <div><dt>H1 as-of close</dt><dd><ZonedTimestamp value={snapshot.as_of_h1_close_time_utc} /></dd></div>
+        <div><dt>Weekly session</dt><dd>{formatNewYorkSessionDate(partial.session_identifier)}</dd></div>
+        <div><dt>Friday 17:00 session open</dt><dd><ZonedTimestamp value={partial.session_open_utc} newYorkPrefix="New York open" /></dd></div>
+        <div><dt>Friday 17:00 session close</dt><dd><ZonedTimestamp value={partial.session_close_utc} newYorkPrefix="New York close" /></dd></div>
+        <div><dt>Latest included H1 close</dt><dd><ZonedTimestamp value={partial.last_h1_close_time_utc} /></dd></div>
+        <div><dt>Completed H1 bars used</dt><dd>{partial.h1_count}</dd></div>
+        <div><dt>Current partial W1 high</dt><dd>{partial.high}</dd></div>
+        <div><dt>Current partial W1 low</dt><dd>{partial.low}</dd></div>
+        <div><dt>Previous completed W1 high</dt><dd>{snapshot.previous_w1_high}</dd></div>
+        <div><dt>Previous completed W1 low</dt><dd>{snapshot.previous_w1_low}</dd></div>
+        <div><dt>Wilder W1 ATR({snapshot.atr_period})</dt><dd>{snapshot.atr_value}</dd></div>
+        <div><dt>5% W1 ATR buffer</dt><dd>{snapshot.buffer_value}</dd></div>
+        <div><dt>BUY threshold</dt><dd>{snapshot.buy_threshold}</dd></div>
+        <div><dt>SELL threshold</dt><dd>{snapshot.sell_threshold}</dd></div>
+      </dl>
+      <div className="filter-audit-summary">
+        <AuditComparison label="BUY" left={snapshot.buy_left_value} operator={snapshot.buy_operator} right={snapshot.buy_right_value} matched={snapshot.buy_matched} />
+        <AuditComparison label="SELL" left={snapshot.sell_left_value} operator={snapshot.sell_operator} right={snapshot.sell_right_value} matched={snapshot.sell_matched} />
+      </div>
+    </section>
+  );
+}
+
 function EvaluationCard({
   status,
   precision,
@@ -359,7 +406,7 @@ function EvaluationCard({
               </dd>
             </div>
           </dl>
-          {status.strategy_version !== "MICRO_DAILY_FILTER_CURRENT_D1_V2" && (
+          {status.strategy_version !== "MICRO_DAILY_FILTER_CURRENT_D1_V2" && status.strategy_version !== "MACRO_WEEKLY_FILTER_CURRENT_W1_V1" && (
             <div className="level-strip"><span>Legacy BUY threshold <b>{price(values.daily_buy_level, precision)}</b></span><span>Legacy SELL threshold <b>{price(values.daily_sell_level, precision)}</b></span></div>
           )}
         </>
@@ -392,6 +439,8 @@ function EvaluationCard({
 
 export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
   const { data } = snapshot;
+  const activeFilterMode = data.active_filter_mode ?? "MICRO";
+  const filterTimeframe = data.filter_timeframe ?? "D1";
   const precision = data.instrument.price_precision;
   const confirmed = data.evaluations.filter(
     (status) =>
@@ -417,9 +466,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
           </Link>
         </nav>
         <div className="sidebar-bottom">
-          <form action="/api/auth/logout" method="post">
-            <button className="logout-button" type="submit"><i>↪</i> Logout</button>
-          </form>
+          <LogoutButton />
           <div className="connection-card">
             <div><i className={isHealthy ? "" : "warning-dot"} /> {healthState}</div>
             <small>{data.instrument.provider} · EUR/USD only</small>
@@ -427,6 +474,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
           </div>
         </div>
       </aside>
+      <LogoutButton className="mobile-logout" />
 
       <section className="workspace">
         <header className="topbar">
@@ -435,6 +483,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             <h1>{data.instrument.display_name}</h1>
           </div>
           <div className="top-actions">
+            <FilterModeSelector activeMode={activeFilterMode} />
             <div className="api-status">
               <i className={isHealthy ? "" : "warning-dot"} />
               <span>{data.instrument.provider_symbol}</span>
@@ -465,9 +514,9 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
               <em>{data.provider_health?.detail ?? "Awaiting provider health"}</em>
             </article>
             <article className="kpi">
-              <span className="kpi-icon amber">D1</span>
-              <span><b>{data.latest_candles.D1 ? "READY" : "PENDING"}</b><small>Daily Context</small></span>
-              <em><ZonedTimestamp value={data.latest_candles.D1} newYorkPrefix="New York close" /></em>
+              <span className="kpi-icon amber">{filterTimeframe}</span>
+              <span><b>{activeFilterMode}</b><small>{filterTimeframe} Filter Authority</small></span>
+              <em>{activeFilterMode === "MICRO" ? "Micro — Daily Filter" : "Macro — Weekly Filter"}</em>
             </article>
             <article className="kpi">
               <span className="kpi-icon green">0</span>
@@ -489,7 +538,13 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             </dl>
           </section>
 
-          {data.daily_filter ? (
+          {activeFilterMode === "MACRO" ? (
+            data.weekly_filter ? (
+              <SharedWeeklyFilter snapshot={data.weekly_filter} />
+            ) : (
+              <section className="panel filter-audit-unavailable" role="status"><strong>Current Weekly Filter</strong><span>Unavailable until completed canonical H1 history produces a valid W1 snapshot.</span></section>
+            )
+          ) : data.daily_filter ? (
             <SharedDailyFilter snapshot={data.daily_filter} />
           ) : (
             <section className="panel filter-audit-unavailable" role="status"><strong>Current Daily Filter</strong><span>Unavailable until a valid completed H1 produces a V2 snapshot.</span></section>

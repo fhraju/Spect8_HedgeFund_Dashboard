@@ -3,12 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from ..domain import Bar, Timeframe
+from ..domain import Bar, FilterMode, Timeframe
 from ..engine.models import StrategyRequest
-from ..engine.models import CURRENT_D1_FILTER_V2, DailyFilterSnapshot
+from ..engine.models import (
+    CURRENT_D1_FILTER_V2,
+    CURRENT_W1_FILTER_V1,
+    DailyFilterSnapshot,
+    WeeklyFilterSnapshot,
+)
 from ..engine.current_daily_filter import (
     DailyFilterUnavailableError,
     build_daily_filter_snapshot,
+)
+from ..engine.current_w1_filter import (
+    WeeklyFilterUnavailableError,
+    build_w1_filter_snapshot,
 )
 from ..repository import SQLiteProjectionRepository
 from ..service import ProcessingOutcome, WalkingSkeletonService
@@ -90,6 +99,10 @@ class MarketDataCoordinator:
 
     def poll_once(self) -> PollResult:
         now = self._clock.now()
+        filter_mode = self._repository.active_filter_mode()
+        mode_setter = getattr(self.provider, "set_filter_mode", None)
+        if callable(mode_setter):
+            mode_setter(filter_mode)
         self._seed_resume_cursors()
         provider_health = self.provider.health(now)
         profile_enabled = not self.provider.identity.synthetic
@@ -261,7 +274,10 @@ class MarketDataCoordinator:
 
         history_cache: dict[tuple[str, str, datetime], object] = {}
         h4_cache: dict[tuple[str, str, datetime], object] = {}
-        snapshot_cache: dict[tuple[str, str, datetime], DailyFilterSnapshot] = {}
+        daily_snapshot_cache: dict[tuple[str, str, datetime], DailyFilterSnapshot] = {}
+        weekly_snapshot_cache: dict[
+            tuple[str, str, datetime], WeeklyFilterSnapshot
+        ] = {}
         for closed, trigger in prepared:
             instrument = self.registry.get(
                 closed.candle.provider_id,
@@ -308,7 +324,14 @@ class MarketDataCoordinator:
                         timeframe=trigger.timeframe,
                     )
                 else:
-                    history = self.provider.fetch_required_history(closed, now)
+                    mode_fetch = getattr(
+                        self.provider, "fetch_required_history_for_filter_mode", None
+                    )
+                    history = (
+                        mode_fetch(closed, now, filter_mode)
+                        if filter_mode is FilterMode.MACRO and callable(mode_fetch)
+                        else self.provider.fetch_required_history(closed, now)
+                    )
                     if profile_enabled and trigger.timeframe is Timeframe.H1:
                         history_cache[cache_key] = history
             except MarketDataProviderError as error:
@@ -475,9 +498,11 @@ class MarketDataCoordinator:
             )
             issues = tuple(sorted(set((*issues, *validation.issues))))
             snapshot: DailyFilterSnapshot | None = None
+            weekly_snapshot: WeeklyFilterSnapshot | None = None
             if profile_enabled and not issues:
-                snapshot = snapshot_cache.get(cache_key)
-                if snapshot is None:
+                snapshot = daily_snapshot_cache.get(cache_key)
+                weekly_snapshot = weekly_snapshot_cache.get(cache_key)
+                if filter_mode is FilterMode.MICRO and snapshot is None:
                     try:
                         snapshot = build_daily_filter_snapshot(
                             provider=instrument.provider_id,
@@ -492,8 +517,24 @@ class MarketDataCoordinator:
                     except DailyFilterUnavailableError as error:
                         issues = (str(error),)
                     else:
-                        snapshot_cache[cache_key] = snapshot
+                        daily_snapshot_cache[cache_key] = snapshot
                         self._repository.persist_daily_filter_snapshot(snapshot)
+                elif filter_mode is FilterMode.MACRO and weekly_snapshot is None:
+                    try:
+                        weekly_snapshot = build_w1_filter_snapshot(
+                            provider=instrument.provider_id,
+                            instrument=instrument.instrument_id,
+                            as_of_h1_close=trigger.close_time,
+                            h1_bars=daily_source,
+                            sparse_actual_h1=(
+                                instrument.instrument_kind is InstrumentKind.ETF
+                            ),
+                        )
+                    except WeeklyFilterUnavailableError as error:
+                        issues = (str(error),)
+                    else:
+                        weekly_snapshot_cache[cache_key] = weekly_snapshot
+                        self._repository.persist_w1_filter_snapshot(weekly_snapshot)
             if issues:
                 state = (
                     HealthState.INSUFFICIENT_HISTORY
@@ -527,7 +568,13 @@ class MarketDataCoordinator:
             request = StrategyRequest(
                 case_id=history.source_id,
                 strategy_id=(
-                    CURRENT_D1_FILTER_V2 if profile_enabled else instrument.strategy_id
+                    (
+                        CURRENT_W1_FILTER_V1
+                        if filter_mode is FilterMode.MACRO
+                        else CURRENT_D1_FILTER_V2
+                    )
+                    if profile_enabled
+                    else instrument.strategy_id
                 ),
                 timeframe=history.timeframe,
                 evaluation_time=history.evaluation_time,
@@ -535,11 +582,17 @@ class MarketDataCoordinator:
                 daily_bars=validation.daily_bars,
                 instrument=instrument.to_strategy_metadata(),
                 strategy_version=(
-                    CURRENT_D1_FILTER_V2
+                    (
+                        CURRENT_W1_FILTER_V1
+                        if filter_mode is FilterMode.MACRO
+                        else CURRENT_D1_FILTER_V2
+                    )
                     if profile_enabled
                     else "SPECT8_MICRO_DAILY_V1_0_3"
                 ),
                 daily_filter_snapshot=snapshot,
+                filter_mode=(filter_mode if profile_enabled else FilterMode.MICRO),
+                w1_filter_snapshot=weekly_snapshot,
             )
             projection = self._service.process_request(request)
             outcomes.append(self._outcome(projection, provider_health.state))

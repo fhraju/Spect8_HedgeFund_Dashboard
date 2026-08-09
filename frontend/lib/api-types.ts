@@ -1,3 +1,5 @@
+export type FilterMode = "MICRO" | "MACRO";
+
 export type FilterResult = {
   buy_matched: boolean;
   sell_matched: boolean;
@@ -146,6 +148,7 @@ export type InstrumentStatus = {
   filter_audit?: FilterAudit | null;
   strategy_version?: string;
   daily_filter_snapshot_id?: string | null;
+  filter_mode?: FilterMode;
 };
 
 export type DailyFilterSnapshot = {
@@ -181,6 +184,60 @@ export type DailyFilterSnapshot = {
   atr_period: number;
   atr_value: string;
   atr_source_d1_ids: string[];
+  atr_source_checksum: string;
+  buffer_percentage: string;
+  buffer_value: string;
+  buy_threshold: string;
+  sell_threshold: string;
+  buy_left_value: string;
+  buy_operator: "<=";
+  buy_right_value: string;
+  buy_matched: boolean;
+  sell_left_value: string;
+  sell_operator: ">=";
+  sell_right_value: string;
+  sell_matched: boolean;
+  final_classification: "NONE" | "BUY" | "SELL" | "BUY_AND_SELL";
+  data_quality_status: string;
+  ingestion_run_id: string | null;
+  created_at: string;
+};
+
+export type WeeklyFilterSnapshot = {
+  snapshot_id: string;
+  filter_mode: "MACRO";
+  strategy_version: string;
+  canonical_profile_version: string;
+  provider: string;
+  instrument: string;
+  evaluation_time_utc: string;
+  as_of_h1_close_time_utc: string;
+  current_partial_w1: {
+    session_identifier: string;
+    session_open_utc: string;
+    session_close_utc: string;
+    first_h1_open_time_utc: string;
+    last_h1_close_time_utc: string;
+    h1_count: number;
+    source_h1_ids: string[];
+    source_checksum: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    quality_status: string;
+  };
+  previous_w1_candle_id: string;
+  previous_w1_session_id: string;
+  previous_w1_open_utc: string;
+  previous_w1_close_utc: string;
+  previous_w1_open: string;
+  previous_w1_high: string;
+  previous_w1_low: string;
+  previous_w1_close: string;
+  atr_period: number;
+  atr_value: string;
+  atr_source_w1_ids: string[];
   atr_source_checksum: string;
   buffer_percentage: string;
   buffer_value: string;
@@ -257,7 +314,10 @@ export type DashboardData = {
     D1: string | null;
   };
   evaluations: InstrumentStatus[];
+  active_filter_mode?: FilterMode;
+  filter_timeframe?: "D1" | "W1";
   daily_filter?: DailyFilterSnapshot | null;
+  weekly_filter?: WeeklyFilterSnapshot | null;
   recent_events: EventRecord[];
   execution: {
     enabled: false;
@@ -287,6 +347,7 @@ export type ScannerInstrument = {
   display_name: string;
   asset_class: string;
   enabled: boolean;
+  polling_enabled?: boolean;
   provider_symbol: string;
   provider?: string;
   exchange?: string | null;
@@ -324,6 +385,8 @@ export type ScannerSnapshot = {
   notice: string;
   data: {
     generated_at: string;
+    active_filter_mode?: FilterMode;
+    filter_timeframe?: "D1" | "W1";
     instruments: ScannerInstrument[];
     credit_budget?: {
       state: string;

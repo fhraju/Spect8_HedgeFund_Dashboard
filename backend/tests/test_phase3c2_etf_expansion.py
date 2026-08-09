@@ -70,16 +70,17 @@ def _bar(instrument_id: str, opened: datetime, value: str = "100") -> Bar:
     )
 
 
-def test_registry_has_exact_twenty_five_target_ids_and_preserves_direct_markets() -> None:
+def test_registry_preserves_phase3c_targets_and_current_visible_universe() -> None:
     registry = CanonicalInstrumentRegistry(twelve_data_instruments())
     assert len(TARGET_INSTRUMENT_IDS) == 25
     assert TARGET_INSTRUMENT_IDS[:12] == PHASE3C1_ENABLED_INSTRUMENT_IDS
     assert TARGET_INSTRUMENT_IDS[12:] == ETF_INSTRUMENT_IDS
     assert tuple(item.instrument_id for item in registry.all()) == ALL_INSTRUMENT_IDS
-    assert len(registry.all()) == 38
-    assert len({item.instrument_id for item in registry.all()}) == 38
+    assert len(registry.all()) == 50
+    assert len({item.instrument_id for item in registry.all()}) == 50
     assert tuple(item.instrument_id for item in registry.enabled()) == DEFAULT_ENABLED_INSTRUMENT_IDS
-    assert len(registry.enabled()) == 24
+    assert len(registry.enabled()) == 29
+    assert len(registry.pollable()) == 26
     assert not registry.by_id("TLT_US_ETF").enabled
     assert all(not registry.by_id(item).enabled for item in DISABLED_DIRECT_MARKET_IDS)
     for instrument_id in ETF_INSTRUMENT_IDS:

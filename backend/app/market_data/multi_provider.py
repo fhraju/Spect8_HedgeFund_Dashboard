@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..domain import Timeframe
+from ..domain import FilterMode, Timeframe
 from .models import (
     CanonicalInstrument,
     HealthState,
@@ -62,7 +62,15 @@ class MultiInstrumentTwelveDataProvider:
         if max_retries_per_instrument < 0 or max_retries_per_instrument > 2:
             raise ValueError("scanner retries must be between 0 and 2")
         self._instruments = instruments
-        self._enabled = tuple(item for item in instruments if item.enabled)
+        self._visible = tuple(item for item in instruments if item.enabled)
+        self._enabled = tuple(
+            item for item in self._visible if item.polling_enabled
+        )
+        self._unavailable = {
+            item.instrument_id: item
+            for item in self._visible
+            if not item.polling_enabled
+        }
         self._limiter = limiter or SlidingWindowRateLimiter(
             max_requests=max_requests_per_minute,
             # A small monotonic guard keeps independently observed UTC starts
@@ -129,7 +137,9 @@ class MultiInstrumentTwelveDataProvider:
                     setter(
                         "retry"
                         if retry
-                        else ("bootstrap" if not self._startup_complete else "scheduled")
+                        else (
+                            "bootstrap" if not self._startup_complete else "scheduled"
+                        )
                     )
                 try:
                     found = provider.fetch_completed_bars(as_of)
@@ -143,11 +153,9 @@ class MultiInstrumentTwelveDataProvider:
         self._startup_complete = True
         return tuple(results)
 
-    def _eligible_instruments(
-        self, as_of: datetime
-    ) -> tuple[CanonicalInstrument, ...]:
+    def _eligible_instruments(self, as_of: datetime) -> tuple[CanonicalInstrument, ...]:
         if self._repository is None:
-            return self._instruments
+            return self._enabled
         eligible: list[CanonicalInstrument] = []
         self._skipped_fresh.clear()
         self._persisted_latest.clear()
@@ -182,6 +190,24 @@ class MultiInstrumentTwelveDataProvider:
             closed_bar, as_of
         )
 
+    def fetch_required_history_for_filter_mode(
+        self,
+        closed_bar: ProviderClosedBar,
+        as_of: datetime,
+        filter_mode: FilterMode,
+    ) -> ProviderHistory:
+        provider = self._providers[closed_bar.instrument_id]
+        mode_fetch = getattr(provider, "fetch_required_history_for_filter_mode", None)
+        if callable(mode_fetch):
+            return mode_fetch(closed_bar, as_of, filter_mode)
+        return provider.fetch_required_history(closed_bar, as_of)
+
+    def set_filter_mode(self, filter_mode: FilterMode) -> None:
+        for provider in self._providers.values():
+            setter = getattr(provider, "set_filter_mode", None)
+            if callable(setter):
+                setter(filter_mode)
+
     def set_resume_cursor(
         self,
         instrument_id: str,
@@ -193,6 +219,20 @@ class MultiInstrumentTwelveDataProvider:
             provider.set_resume_cursor(timeframe, close_time)
 
     def instrument_health(self, instrument_id: str, as_of: datetime) -> ProviderHealth:
+        unavailable = self._unavailable.get(instrument_id)
+        if unavailable is not None:
+            return ProviderHealth(
+                provider_id=self.identity.provider_id,
+                state=HealthState.DATA_UNAVAILABLE,
+                checked_at=as_of,
+                latest_completed_close=None,
+                freshness_seconds=None,
+                detail=(
+                    f"{unavailable.display_name} is scanner-visible but unavailable "
+                    "from the configured provider; no request was made."
+                ),
+                synthetic=False,
+            )
         if instrument_id in self._skipped_fresh:
             latest = self._persisted_latest[instrument_id]
             return ProviderHealth(
@@ -230,7 +270,7 @@ class MultiInstrumentTwelveDataProvider:
 
     def health(self, as_of: datetime) -> ProviderHealth:
         health = [
-            self.instrument_health(item.instrument_id, as_of) for item in self._enabled
+            self.instrument_health(item.instrument_id, as_of) for item in self._visible
         ]
         priority = {
             HealthState.QUARANTINED: 5,
@@ -259,7 +299,7 @@ class MultiInstrumentTwelveDataProvider:
             ),
             detail=(
                 f"{sum(item.state in {HealthState.HEALTHY, HealthState.RECOVERED} for item in health)}"
-                f"/{len(health)} enabled instruments healthy."
+                f"/{len(health)} scanner-visible instruments healthy."
             ),
             synthetic=False,
         )

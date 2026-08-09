@@ -67,7 +67,12 @@ const snapshot: ScannerSnapshot = {
   synthetic: false,
   source: "TWELVE_DATA_PROVIDER",
   notice: "Read only",
-  data: { generated_at: "2026-08-05T10:02:00Z", instruments: rows },
+  data: {
+    generated_at: "2026-08-05T10:02:00Z",
+    active_filter_mode: "MICRO",
+    filter_timeframe: "D1",
+    instruments: rows,
+  },
 };
 
 describe("multi-instrument market scanner", () => {
@@ -78,6 +83,11 @@ describe("multi-instrument market scanner", () => {
       expect(html).toContain(`/instruments/${value}`);
     }
     expect(html).toContain("Current D1 Filter");
+    expect(html).toContain("Micro");
+    expect(html).toContain("Daily Filter");
+    expect(html).toContain('aria-label="Filter mode"');
+    expect(html).toContain('action="/api/auth/logout"');
+    expect(html).toContain("Logout</button>");
     expect(html).not.toContain("H1 Filter");
     expect(html).not.toContain("H4 Filter");
     expect(html).toContain("H4 Signal");
@@ -94,6 +104,60 @@ describe("multi-instrument market scanner", () => {
     expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
     expect(html).not.toContain(">Home</a>");
     expect(html).not.toContain("Historical Replay");
+  });
+
+  it("renders the authoritative Macro selector and W1 scanner labels", () => {
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{
+          ...snapshot,
+          data: {
+            ...snapshot.data,
+            active_filter_mode: "MACRO",
+            filter_timeframe: "W1",
+          },
+        }}
+      />,
+    );
+    expect(html).toContain("Current W1 Filter");
+    expect(html).toContain("Macro");
+    expect(html).toContain("Weekly Filter");
+    expect(html).toContain("W1 authority active");
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  it("shows provider-unavailable direct indices without an instrument link", () => {
+    const unavailable: ScannerInstrument = {
+      ...rows[0],
+      instrument_id: "SP_500",
+      display_symbol: "S&P 500",
+      display_name: "S&P 500 Index",
+      asset_class: "EQUITY_INDEX",
+      provider_symbol: "",
+      polling_enabled: false,
+      validation_status: "DISCOVERY_UNAVAILABLE",
+      instrument_kind: "DIRECT_MARKET",
+      exposure_category: "US_LARGE_CAP_EQUITY",
+      is_proxy: false,
+      proxy_for: null,
+      data_status: "DATA_UNAVAILABLE",
+      provider_health: "DATA_UNAVAILABLE",
+      latest_error_summary:
+        "Unavailable from the configured provider; no market-data request is made.",
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{
+          ...snapshot,
+          data: { ...snapshot.data, instruments: [unavailable] },
+        }}
+      />,
+    );
+
+    expect(html).toContain("S&amp;P 500 Index");
+    expect(html).toContain("DATA UNAVAILABLE");
+    expect(html).toContain("DISCOVERY UNAVAILABLE");
+    expect(html).not.toContain("/instruments/SP_500");
   });
 
   it("filters by asset, timeframe direction, confirmed signal, and health", () => {

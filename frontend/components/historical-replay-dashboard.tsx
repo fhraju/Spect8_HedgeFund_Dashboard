@@ -6,6 +6,7 @@ import type {
   HistoricalReplayRun,
   HistoricalReplaySummary,
 } from "@/lib/api-types";
+import { LogoutButton } from "./logout-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 
 type ReplayFilters = {
@@ -63,9 +64,7 @@ export function HistoricalReplayDashboard({
           <span className="active"><i>◷</i>Historical Replay</span>
         </nav>
         <div className="sidebar-bottom">
-          <form action="/api/auth/logout" method="post">
-            <button className="logout-button" type="submit"><i>↪</i> Logout</button>
-          </form>
+          <LogoutButton />
           <div className="connection-card replay-connection">
             <div><i /> REPLAY ONLY</div>
             <small>Twelve Data · EUR/USD</small>
@@ -73,6 +72,7 @@ export function HistoricalReplayDashboard({
           </div>
         </div>
       </aside>
+      <LogoutButton className="mobile-logout" />
 
       <section className="workspace">
         <header className="topbar">

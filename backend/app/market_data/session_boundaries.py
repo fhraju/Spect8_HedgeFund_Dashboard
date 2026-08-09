@@ -27,6 +27,33 @@ def new_york_session_bounds(session_date: date) -> tuple[datetime, datetime]:
     return start, end
 
 
+def new_york_weekly_session_bounds(close_date: date) -> tuple[datetime, datetime]:
+    """Return Friday 17:00 New York weekly boundaries in canonical UTC."""
+
+    if close_date.weekday() != 4:
+        raise ValueError("weekly close_date must be a Friday")
+    return (
+        new_york_session_close(close_date - timedelta(days=7)),
+        new_york_session_close(close_date),
+    )
+
+
+def active_new_york_weekly_session(
+    as_of_h1_close: datetime,
+) -> tuple[date, datetime, datetime]:
+    """Return the trading-week identity/bounds containing an H1 close."""
+
+    if as_of_h1_close.tzinfo is None:
+        raise ValueError("as_of_h1_close must be timezone-aware")
+    local = as_of_h1_close.astimezone(NEW_YORK)
+    days_until_friday = (4 - local.weekday()) % 7
+    close_date = local.date() + timedelta(days=days_until_friday)
+    if local.weekday() == 4 and local.time().replace(tzinfo=None) > NEW_YORK_CLOSE_TIME:
+        close_date += timedelta(days=7)
+    start, end = new_york_weekly_session_bounds(close_date)
+    return close_date, start, end
+
+
 def completed_forex_session_dates(
     first_source_open: datetime,
     last_source_close: datetime,

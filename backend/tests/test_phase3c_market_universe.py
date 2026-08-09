@@ -9,11 +9,14 @@ from pathlib import Path
 from backend.app.market_data.rate_limiter import SlidingWindowRateLimiter
 from backend.app.market_data.multi_provider import MultiInstrumentTwelveDataProvider
 from backend.app.market_data.registry import (
+    ADDITIONAL_FOREX_INSTRUMENT_IDS,
     ALL_INSTRUMENT_IDS,
     CANDIDATE_INSTRUMENT_IDS,
     DEFAULT_ENABLED_INSTRUMENT_IDS,
     DISABLED_DIRECT_MARKET_IDS,
     ETF_INSTRUMENT_IDS,
+    LEGACY_DIRECT_MARKET_IDS,
+    SCANNER_UNAVAILABLE_INSTRUMENT_IDS,
     TARGET_INSTRUMENT_IDS,
     CanonicalInstrumentRegistry,
     twelve_data_instruments,
@@ -174,7 +177,7 @@ class ScanProvider:
         )
 
 
-def test_registry_preserves_current_twelve_and_enables_only_live_validated_etfs() -> None:
+def test_registry_preserves_history_and_exposes_requested_current_universe() -> None:
     registry = CanonicalInstrumentRegistry(twelve_data_instruments())
     assert tuple(item.instrument_id for item in registry.all()) == ALL_INSTRUMENT_IDS
     assert tuple(item.instrument_id for item in registry.enabled()) == DEFAULT_ENABLED_INSTRUMENT_IDS
@@ -184,20 +187,27 @@ def test_registry_preserves_current_twelve_and_enables_only_live_validated_etfs(
         "ETH_USD",
     )
     assert "TLT_US_ETF" not in DEFAULT_ENABLED_INSTRUMENT_IDS
-    assert len(registry.enabled()) == 24
+    assert len(registry.enabled()) == 29
+    assert len(registry.pollable()) == 26
     assert tuple(item.instrument_id for item in registry.all()[:25]) == TARGET_INSTRUMENT_IDS
-    assert tuple(item.instrument_id for item in registry.all()[25:]) == DISABLED_DIRECT_MARKET_IDS
-    assert len(registry.enabled()) <= 25
-    assert len({item.instrument_id for item in registry.all()}) == 38
-    assert [item.registry_order for item in registry.all()] == list(range(1, 39))
-    assert {item.asset_class for item in registry.all()[25:]} == {
+    assert tuple(item.instrument_id for item in registry.all()[25:40]) == LEGACY_DIRECT_MARKET_IDS
+    assert tuple(item.instrument_id for item in registry.all()[40:50]) == ADDITIONAL_FOREX_INSTRUMENT_IDS
+    assert len(registry.enabled()) <= 30
+    assert len({item.instrument_id for item in registry.all()}) == 50
+    assert [item.registry_order for item in registry.all()] == list(range(1, 51))
+    assert {item.asset_class for item in registry.all()[25:40]} == {
         "PRECIOUS_METAL",
         "EQUITY_INDEX",
+        "CURRENCY_INDEX",
         "ENERGY",
         "INDUSTRIAL_METAL",
         "VOLATILITY",
         "INTEREST_RATE",
     }
+    assert all(
+        registry.by_id(item).enabled and not registry.by_id(item).polling_enabled
+        for item in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
+    )
 
 
 def test_unvalidated_candidate_cannot_be_enabled() -> None:

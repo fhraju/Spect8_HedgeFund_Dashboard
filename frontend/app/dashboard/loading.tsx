@@ -1,6 +1,9 @@
+import { LogoutButton } from "@/components/logout-button";
+
 export default function DashboardLoading() {
   return (
     <main className="loading-shell" aria-busy="true">
+      <LogoutButton className="standalone-logout" />
       <section>
         <p className="section-kicker">Protected manager workspace</p>
         <h1>Loading EUR/USD scanner state</h1>

@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 from .market_data.models import CanonicalInstrument, HealthState
 from .repository import SQLiteProjectionRepository
-from .engine.models import CURRENT_D1_FILTER_V2
+from .domain import FilterMode
+from .engine.models import CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1
 
 
 class ProviderHealthView(BaseModel):
@@ -227,6 +228,62 @@ class DailyFilterSnapshotView(BaseModel):
     created_at: datetime
 
 
+class CurrentPartialW1View(BaseModel):
+    session_identifier: str
+    session_open_utc: datetime
+    session_close_utc: datetime
+    first_h1_open_time_utc: datetime
+    last_h1_close_time_utc: datetime
+    h1_count: int
+    source_h1_ids: list[str]
+    source_checksum: str
+    open: str
+    high: str
+    low: str
+    close: str
+    quality_status: str
+
+
+class WeeklyFilterSnapshotView(BaseModel):
+    snapshot_id: str
+    filter_mode: Literal["MACRO"]
+    strategy_version: str
+    canonical_profile_version: str
+    provider: str
+    instrument: str
+    evaluation_time_utc: datetime
+    as_of_h1_close_time_utc: datetime
+    current_partial_w1: CurrentPartialW1View
+    previous_w1_candle_id: str
+    previous_w1_session_id: str
+    previous_w1_open_utc: datetime
+    previous_w1_close_utc: datetime
+    previous_w1_open: str
+    previous_w1_high: str
+    previous_w1_low: str
+    previous_w1_close: str
+    atr_period: int
+    atr_value: str
+    atr_source_w1_ids: list[str]
+    atr_source_checksum: str
+    buffer_percentage: str
+    buffer_value: str
+    buy_threshold: str
+    sell_threshold: str
+    buy_left_value: str
+    buy_operator: Literal["<="]
+    buy_right_value: str
+    buy_matched: bool
+    sell_left_value: str
+    sell_operator: Literal[">="]
+    sell_right_value: str
+    sell_matched: bool
+    final_classification: Literal["NONE", "BUY", "SELL", "BUY_AND_SELL"]
+    data_quality_status: str
+    ingestion_run_id: str | None
+    created_at: datetime
+
+
 class StrategyEvaluationView(BaseModel):
     strategy_id: str
     provider: str
@@ -287,7 +344,10 @@ class DashboardData(BaseModel):
     instrument: InstrumentView
     latest_candles: CandleTimesView
     evaluations: list[StrategyEvaluationView]
+    active_filter_mode: Literal["MICRO", "MACRO"] = "MICRO"
+    filter_timeframe: Literal["D1", "W1"] = "D1"
     daily_filter: DailyFilterSnapshotView | None = None
+    weekly_filter: WeeklyFilterSnapshotView | None = None
     recent_events: list[EventView]
     execution: ExecutionView
 
@@ -319,6 +379,7 @@ class ScannerInstrumentView(BaseModel):
     display_name: str
     asset_class: str
     enabled: bool
+    polling_enabled: bool
     provider_symbol: str
     provider: str
     exchange: str | None
@@ -347,6 +408,8 @@ class ScannerInstrumentView(BaseModel):
 
 class ScannerData(BaseModel):
     generated_at: datetime
+    active_filter_mode: Literal["MICRO", "MACRO"] = "MICRO"
+    filter_timeframe: Literal["D1", "W1"] = "D1"
     instruments: list[ScannerInstrumentView]
     credit_budget: dict[str, Any] | None = None
 
@@ -365,6 +428,13 @@ def scanner_snapshot(
     *,
     credit_budget: dict[str, Any] | None = None,
 ) -> ScannerData:
+    mode_reader = getattr(repository, "active_filter_mode", None)
+    active_mode = mode_reader() if callable(mode_reader) else FilterMode.MICRO
+    selected_version = (
+        CURRENT_W1_FILTER_V1
+        if active_mode is FilterMode.MACRO
+        else CURRENT_D1_FILTER_V2
+    )
     statuses = repository.statuses()
     rows: list[ScannerInstrumentView] = []
     for instrument in instruments:
@@ -382,12 +452,20 @@ def scanner_snapshot(
             if item["provider"] == instrument.provider_id
             and item["instrument_id"] == instrument.instrument_id
             and item["timeframe"] in {"H1", "H4"}
-            and item.get("strategy_version") == CURRENT_D1_FILTER_V2
+            and item.get("strategy_version") == selected_version
         }
-        latest_filter = repository.latest_daily_filter_snapshot(
-            instrument.provider_id,
-            instrument.instrument_id,
-            CURRENT_D1_FILTER_V2,
+        latest_filter = (
+            repository.latest_weekly_filter_snapshot(
+                instrument.provider_id,
+                instrument.instrument_id,
+                CURRENT_W1_FILTER_V1,
+            )
+            if active_mode is FilterMode.MACRO
+            else repository.latest_daily_filter_snapshot(
+                instrument.provider_id,
+                instrument.instrument_id,
+                CURRENT_D1_FILTER_V2,
+            )
         )
 
         if latest_filter is None:
@@ -433,7 +511,11 @@ def scanner_snapshot(
                 latest_filter_snapshot_id=status.get("daily_filter_snapshot_id"),
             )
 
-        state = str(health["state"]) if health else "BOOTSTRAPPING"
+        state = (
+            HealthState.DATA_UNAVAILABLE.value
+            if not instrument.polling_enabled
+            else (str(health["state"]) if health else "BOOTSTRAPPING")
+        )
         rows.append(
             ScannerInstrumentView(
                 instrument_id=instrument.instrument_id,
@@ -443,6 +525,7 @@ def scanner_snapshot(
                 display_name=instrument.display_name,
                 asset_class=instrument.asset_class,
                 enabled=instrument.enabled,
+                polling_enabled=instrument.polling_enabled,
                 provider_symbol=instrument.provider_symbol,
                 provider=instrument.provider_id,
                 exchange=instrument.exchange,
@@ -468,7 +551,12 @@ def scanner_snapshot(
                 H1=timeframe("H1"),
                 H4=timeframe("H4"),
                 latest_error_summary=(
-                    health["latest_error_summary"] if health else None
+                    (
+                        "Unavailable from the configured provider; no market-data "
+                        "request is made."
+                        if not instrument.polling_enabled
+                        else (health["latest_error_summary"] if health else None)
+                    )
                 ),
                 last_successful_provider_update=(
                     health["last_success_at"] if health else None
@@ -477,6 +565,8 @@ def scanner_snapshot(
         )
     return ScannerData(
         generated_at=generated_at,
+        active_filter_mode=active_mode,
+        filter_timeframe=("W1" if active_mode is FilterMode.MACRO else "D1"),
         instruments=rows,
         credit_budget=credit_budget,
     )
@@ -497,6 +587,13 @@ def dashboard_snapshot(
     instrument: CanonicalInstrument,
     generated_at: datetime,
 ) -> DashboardData:
+    mode_reader = getattr(repository, "active_filter_mode", None)
+    active_mode = mode_reader() if callable(mode_reader) else FilterMode.MICRO
+    selected_version = (
+        CURRENT_W1_FILTER_V1
+        if active_mode is FilterMode.MACRO
+        else CURRENT_D1_FILTER_V2
+    )
     instrument_health = repository.instrument_health(
         instrument.provider_id, instrument.instrument_id
     )
@@ -523,13 +620,13 @@ def dashboard_snapshot(
         and status["timeframe"] in {"H1", "H4"}
     ]
     statuses.sort(key=lambda item: item["timeframe"])
-    v2_statuses = [
+    selected_statuses = [
         status
         for status in statuses
-        if status.get("strategy_version") == CURRENT_D1_FILTER_V2
+        if status.get("strategy_version") == selected_version
     ]
-    if v2_statuses:
-        statuses = v2_statuses
+    if selected_statuses or active_mode is FilterMode.MACRO:
+        statuses = selected_statuses
     for status in statuses:
         status.setdefault("reason_codes", [])
         status.setdefault("market_values", None)
@@ -566,10 +663,17 @@ def dashboard_snapshot(
             instrument.provider_id, instrument.instrument_id
         ),
         evaluations=statuses,
+        active_filter_mode=active_mode,
+        filter_timeframe=("W1" if active_mode is FilterMode.MACRO else "D1"),
         daily_filter=repository.latest_daily_filter_snapshot(
             instrument.provider_id,
             instrument.instrument_id,
             CURRENT_D1_FILTER_V2,
+        ),
+        weekly_filter=repository.latest_weekly_filter_snapshot(
+            instrument.provider_id,
+            instrument.instrument_id,
+            CURRENT_W1_FILTER_V1,
         ),
         recent_events=repository.recent_events(instrument_id=instrument.instrument_id),
         execution=ExecutionView(),

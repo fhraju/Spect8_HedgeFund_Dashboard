@@ -18,6 +18,11 @@ class Direction(StrEnum):
     SELL = "SELL"
 
 
+class FilterMode(StrEnum):
+    MICRO = "MICRO"
+    MACRO = "MACRO"
+
+
 class EventType(StrEnum):
     BAR_CLOSED = "BAR_CLOSED"
     FILTER_EVALUATED = "FILTER_EVALUATED"

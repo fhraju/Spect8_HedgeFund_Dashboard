@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlencode
 
-from ..domain import Timeframe
+from ..domain import FilterMode, Timeframe
 from ..engine.strategy import STRATEGY_ID
 from .closed_bar import (
     MIN_DAILY_HISTORY,
@@ -48,6 +48,7 @@ PROVIDER_ID = "TWELVE_DATA"
 PROVIDER_SYMBOL = "EUR/USD"
 SUPPORTED_TIMEFRAMES = (Timeframe.H1, Timeframe.H4, Timeframe.D1)
 DAILY_AGGREGATION_H1_BARS = (24 * 21) + 1
+WEEKLY_AGGREGATION_H1_BARS = (24 * 49) + 1
 INTERVALS = {
     Timeframe.H1: "1h",
     Timeframe.H4: "4h",
@@ -221,6 +222,7 @@ class TwelveDataProvider:
         self._credit_budget = credit_budget
         self._request_category = request_category
         self._max_catchup_bars = max_catchup_bars
+        self._filter_mode = FilterMode.MICRO
         self._identity = ProviderIdentity(
             provider_id=PROVIDER_ID,
             display_name="Twelve Data",
@@ -440,15 +442,15 @@ class TwelveDataProvider:
         if expected > 5_000:
             raise ValueError("historical request exceeds 5000 candles")
         params = {
-                "symbol": self._instrument.provider_symbol,
-                "interval": INTERVALS[timeframe],
-                "start_date": self._provider_datetime(start - step),
-                "end_date": self._provider_datetime(end),
-                "outputsize": str(expected),
-                "order": "desc",
-                "timezone": "UTC",
-                "format": "JSON",
-            }
+            "symbol": self._instrument.provider_symbol,
+            "interval": INTERVALS[timeframe],
+            "start_date": self._provider_datetime(start - step),
+            "end_date": self._provider_datetime(end),
+            "outputsize": str(expected),
+            "order": "desc",
+            "timezone": "UTC",
+            "format": "JSON",
+        }
         self._add_market_identity(params)
         payload = self._request_json(params, end)
         candles = self._parse_payload(payload, timeframe, end)
@@ -471,9 +473,14 @@ class TwelveDataProvider:
                 continue
             outputsize = MIN_SIGNAL_HISTORY + self._max_catchup_bars
             if timeframe is Timeframe.H1:
+                aggregation_bars = (
+                    WEEKLY_AGGREGATION_H1_BARS
+                    if self._filter_mode is FilterMode.MACRO
+                    else DAILY_AGGREGATION_H1_BARS
+                )
                 outputsize = max(
                     outputsize,
-                    DAILY_AGGREGATION_H1_BARS + self._max_catchup_bars,
+                    aggregation_bars + self._max_catchup_bars,
                 )
             candles = self._fetch_series(
                 timeframe,
@@ -493,14 +500,11 @@ class TwelveDataProvider:
                 )
                 if candidates:
                     first_close = self._parse_utc(candidates[0].raw_close_time)
-                    if (
-                        first_close > cursor + TIMEFRAME_STEP[timeframe]
-                        and not (
-                            self._instrument.instrument_kind is InstrumentKind.ETF
-                            and is_expected_us_equity_gap(
-                                cursor - TIMEFRAME_STEP[timeframe],
-                                first_close - TIMEFRAME_STEP[timeframe],
-                            )
+                    if first_close > cursor + TIMEFRAME_STEP[timeframe] and not (
+                        self._instrument.instrument_kind is InstrumentKind.ETF
+                        and is_expected_us_equity_gap(
+                            cursor - TIMEFRAME_STEP[timeframe],
+                            first_close - TIMEFRAME_STEP[timeframe],
                         )
                     ):
                         error = MarketDataProviderError(
@@ -574,9 +578,17 @@ class TwelveDataProvider:
                     candle
                     for candle in reversed(h1_series)
                     if (
-                        (session := session_for_instant(candle.open_time_utc or self._parse_utc(candle.raw_open_time)))
+                        (
+                            session := session_for_instant(
+                                candle.open_time_utc
+                                or self._parse_utc(candle.raw_open_time)
+                            )
+                        )
                         is not None
-                        and (candle.open_time_utc or self._parse_utc(candle.raw_open_time))
+                        and (
+                            candle.open_time_utc
+                            or self._parse_utc(candle.raw_open_time)
+                        )
                         in session.valid_h1_opens
                         and (
                             session.valid_h1_opens.index(
@@ -627,16 +639,34 @@ class TwelveDataProvider:
             )
         )
 
+    def set_filter_mode(self, filter_mode: FilterMode) -> None:
+        self._filter_mode = filter_mode
+
     def fetch_required_history(
         self,
         closed_bar: ProviderClosedBar,
         as_of: datetime,
     ) -> ProviderHistory:
+        return self.fetch_required_history_for_filter_mode(
+            closed_bar, as_of, FilterMode.MICRO
+        )
+
+    def fetch_required_history_for_filter_mode(
+        self,
+        closed_bar: ProviderClosedBar,
+        as_of: datetime,
+        filter_mode: FilterMode,
+    ) -> ProviderHistory:
         checked_at = self._aware_utc(as_of)
         self._validate_closed_bar(closed_bar)
         trigger_close = self._parse_utc(closed_bar.candle.raw_close_time)
         daily: tuple[RawProviderCandle, ...] = ()
-        history_size = DAILY_AGGREGATION_H1_BARS + self._max_catchup_bars
+        aggregation_bars = (
+            WEEKLY_AGGREGATION_H1_BARS
+            if filter_mode is FilterMode.MACRO
+            else DAILY_AGGREGATION_H1_BARS
+        )
+        history_size = aggregation_bars + self._max_catchup_bars
         daily_source = tuple(
             candle
             for candle in self._fetch_series(
@@ -645,7 +675,7 @@ class TwelveDataProvider:
                 history_size,
             )
             if self._parse_utc(candle.raw_close_time) <= trigger_close
-        )[-DAILY_AGGREGATION_H1_BARS:]
+        )[-aggregation_bars:]
         signal = (
             daily_source[-MIN_SIGNAL_HISTORY:]
             if closed_bar.candle.timeframe is Timeframe.H1
@@ -673,7 +703,11 @@ class TwelveDataProvider:
         )
         if self._instrument.instrument_kind is InstrumentKind.ETF:
             expected_latest = latest_expected_etf_h1_close(checked_at)
-            stale = expected_latest is not None and latest is not None and latest < expected_latest
+            stale = (
+                expected_latest is not None
+                and latest is not None
+                and latest < expected_latest
+            )
         else:
             stale = latest is not None and checked_at - latest > timedelta(hours=2)
         if latest is not None and state is HealthState.HEALTHY and stale:
@@ -717,13 +751,13 @@ class TwelveDataProvider:
             return latest_series[-outputsize:]
         self._series_attempts[timeframe.value] += 1
         params = {
-                "symbol": self._instrument.provider_symbol,
-                "interval": INTERVALS[timeframe],
-                "outputsize": str(outputsize),
-                "order": "desc",
-                "timezone": "UTC",
-                "format": "JSON",
-            }
+            "symbol": self._instrument.provider_symbol,
+            "interval": INTERVALS[timeframe],
+            "outputsize": str(outputsize),
+            "order": "desc",
+            "timezone": "UTC",
+            "format": "JSON",
+        }
         self._add_market_identity(params)
         payload = self._request_json(params, as_of)
         candles = self._parse_payload(payload, timeframe, as_of)
@@ -988,9 +1022,8 @@ class TwelveDataProvider:
         if (
             self._instrument.instrument_kind is not InstrumentKind.ETF
             and self._instrument.exchange
-            and self._normalize_identity(
-            meta.get("exchange")
-            ) != self._normalize_identity(self._instrument.exchange)
+            and self._normalize_identity(meta.get("exchange"))
+            != self._normalize_identity(self._instrument.exchange)
         ):
             self._raise_data_error(self._malformed_error())
         if self._instrument.mic_code and str(meta.get("mic_code") or "") != str(
@@ -1224,7 +1257,9 @@ class TwelveDataProvider:
         latest = self._parse_utc(series[-1].raw_close_time)
         return latest < self._expected_completed_close(timeframe, as_of)
 
-    def _expected_completed_close(self, timeframe: Timeframe, as_of: datetime) -> datetime:
+    def _expected_completed_close(
+        self, timeframe: Timeframe, as_of: datetime
+    ) -> datetime:
         checked_at = TwelveDataProvider._aware_utc(as_of)
         if timeframe is Timeframe.H1:
             if self._instrument.instrument_kind is InstrumentKind.ETF:

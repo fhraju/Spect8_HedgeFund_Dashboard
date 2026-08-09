@@ -14,6 +14,7 @@ from fastapi import (
     Query,
     Request,
 )
+from pydantic import BaseModel
 
 from .config import Settings
 from .dashboard_api import (
@@ -22,7 +23,7 @@ from .dashboard_api import (
     dashboard_snapshot,
     scanner_snapshot,
 )
-from .domain import primitive
+from .domain import FilterMode, primitive
 from .engine.strategy import Spect8StrategyEvaluator
 from .historical_replay import (
     HistoricalReplayRepository,
@@ -61,6 +62,15 @@ from .service import WalkingSkeletonService
 SYNTHETIC_NOTICE = "SYNTHETIC REPLAY MARKET DATA — no live provider is connected."
 
 
+class FilterModeRequest(BaseModel):
+    mode: FilterMode
+
+
+class FilterModeView(BaseModel):
+    active_filter_mode: FilterMode
+    filter_timeframe: str
+
+
 def create_app(
     settings: Settings | None = None,
     historical_replay_service: HistoricalReplayService | None = None,
@@ -80,9 +90,7 @@ def create_app(
         operational_budget=configured.market_data_daily_operational_budget,
         reserve=configured.market_data_credit_reserve,
     )
-    configured_instruments = twelve_data_instruments(
-        configured.enabled_instrument_ids
-    )
+    configured_instruments = twelve_data_instruments(configured.enabled_instrument_ids)
     if configured.market_data_provider == "twelve_data":
         assert configured.twelve_data_api_key is not None
         provider = MultiInstrumentTwelveDataProvider(
@@ -128,10 +136,7 @@ def create_app(
             max_bytes=configured.runtime_log_max_bytes,
             backup_count=configured.runtime_log_backup_count,
         )
-        if (
-            not provider.identity.synthetic
-            and configured.effective_polling_enabled
-        )
+        if (not provider.identity.synthetic and configured.effective_polling_enabled)
         else None
     )
     runtime = MarketDataRuntime(
@@ -233,10 +238,7 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, Any]:
         provider_health = coordinator.current_health()
-        if (
-            not provider.identity.synthetic
-            and not configured.effective_polling_enabled
-        ):
+        if not provider.identity.synthetic and not configured.effective_polling_enabled:
             provider_health = {
                 "provider": provider.identity.provider_id,
                 "state": "POLLING_DISABLED",
@@ -283,6 +285,7 @@ def create_app(
                     else "TWELVE_DATA_MARKET_SCANNER"
                 ),
                 "database": "sqlite",
+                "active_filter_mode": repository.active_filter_mode().value,
                 "provider": primitive(provider.identity),
                 "provider_health": provider_health,
                 "credit_budget": primitive(credit_budget.status(as_of=clock.now())),
@@ -297,9 +300,7 @@ def create_app(
                             else "STARTING"
                         )
                     ),
-                    "startup_backfill_enabled": (
-                        configured.startup_backfill_enabled
-                    ),
+                    "startup_backfill_enabled": (configured.startup_backfill_enabled),
                     "provider_discovery_enabled": (
                         configured.provider_discovery_enabled
                     ),
@@ -383,9 +384,7 @@ def create_app(
                 "runtime": runtime.status(),
                 "configuration": {
                     "polling_enabled": configured.effective_polling_enabled,
-                    "startup_backfill_enabled": (
-                        configured.startup_backfill_enabled
-                    ),
+                    "startup_backfill_enabled": (configured.startup_backfill_enabled),
                     "provider_discovery_enabled": (
                         configured.provider_discovery_enabled
                     ),
@@ -394,6 +393,22 @@ def create_app(
                     instrument.provider_id, instrument.instrument_id
                 ),
             }
+        )
+
+    @app.get("/filter-mode", dependencies=[protected], response_model=FilterModeView)
+    def filter_mode() -> FilterModeView:
+        mode = repository.active_filter_mode()
+        return FilterModeView(
+            active_filter_mode=mode,
+            filter_timeframe="W1" if mode is FilterMode.MACRO else "D1",
+        )
+
+    @app.patch("/filter-mode", dependencies=[protected], response_model=FilterModeView)
+    def select_filter_mode(selection: FilterModeRequest) -> FilterModeView:
+        mode = repository.set_active_filter_mode(selection.mode, updated_at=clock.now())
+        return FilterModeView(
+            active_filter_mode=mode,
+            filter_timeframe="W1" if mode is FilterMode.MACRO else "D1",
         )
 
     @app.get(

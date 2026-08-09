@@ -244,6 +244,20 @@ _CANDIDATES = (
         symbol_aliases=("US10Y", "US 10Y", "US 10-Year Treasury Yield"),
         allowed_provider_types=("bond", "index"),
     ),
+    CandidateDefinition(
+        "DXY",
+        "US Dollar Index Market",
+        DiscoveryKind.INDEX_CATALOG_AND_ALIASES,
+        symbol_aliases=("DXY", "US Dollar Index"),
+        allowed_provider_types=("index",),
+    ),
+    CandidateDefinition(
+        "AUS_200",
+        "Australia 200 Index",
+        DiscoveryKind.INDEX_CATALOG_AND_ALIASES,
+        symbol_aliases=("AUS200", "ASX 200", "S&P/ASX 200"),
+        allowed_provider_types=("index",),
+    ),
 )
 
 

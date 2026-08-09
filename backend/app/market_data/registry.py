@@ -25,6 +25,19 @@ BASELINE_ENABLED_INSTRUMENT_IDS = (
     "XAU_USD",
 )
 
+ADDITIONAL_FOREX_INSTRUMENT_IDS = (
+    "EUR_CHF",
+    "EUR_AUD",
+    "GBP_AUD",
+    "NZD_CAD",
+    "GBP_CAD",
+    "EUR_CAD",
+    "AUD_CAD",
+    "NZD_JPY",
+    "AUD_NZD",
+    "USD_CHF",
+)
+
 PHASE3C1_ENABLED_INSTRUMENT_IDS = BASELINE_ENABLED_INSTRUMENT_IDS + (
     "BTC_USD",
     "ETH_USD",
@@ -73,15 +86,39 @@ CANDIDATE_INSTRUMENT_IDS = (
     "ETH_USD",
     "VIX",
     "US_10Y_YIELD",
+    "DXY",
+    "AUS_200",
 )
-DISABLED_DIRECT_MARKET_IDS = tuple(
+LEGACY_DIRECT_MARKET_IDS = tuple(
     item for item in CANDIDATE_INSTRUMENT_IDS if item not in {"BTC_USD", "ETH_USD"}
 )
-ALL_INSTRUMENT_IDS = TARGET_INSTRUMENT_IDS + DISABLED_DIRECT_MARKET_IDS
+SCANNER_UNAVAILABLE_INSTRUMENT_IDS = ("SP_500", "DXY", "AUS_200")
+DISABLED_DIRECT_MARKET_IDS = tuple(
+    item
+    for item in LEGACY_DIRECT_MARKET_IDS
+    if item not in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
+)
+ALL_INSTRUMENT_IDS = (
+    TARGET_INSTRUMENT_IDS
+    + LEGACY_DIRECT_MARKET_IDS
+    + ADDITIONAL_FOREX_INSTRUMENT_IDS
+)
 
 # The 2026-08-06 controlled live report validated 12 ETF listings. TLT remains
 # disabled because one malformed OHLC row was quarantined.
-DEFAULT_ENABLED_INSTRUMENT_IDS = PHASE3C2_ENABLED_INSTRUMENT_IDS
+DEFAULT_ENABLED_INSTRUMENT_IDS = (
+    *BASELINE_ENABLED_INSTRUMENT_IDS,
+    "BTC_USD",
+    "ETH_USD",
+    "HYG_US_ETF",
+    "SLV_US_ETF",
+    "USO_US_ETF",
+    "UNG_US_ETF",
+    "SP_500",
+    "DXY",
+    "AUS_200",
+    *ADDITIONAL_FOREX_INSTRUMENT_IDS,
+)
 
 _ETF_PRICE_PRECISION = {
     "SPY_US_ETF": 7,
@@ -114,6 +151,7 @@ class _InstrumentSpec:
     provider_instrument_type: str | None = None
     provider_timezone: str | None = None
     validation_status: str = "PENDING_LIVE_VALIDATION"
+    polling_enabled: bool = True
     instrument_kind: InstrumentKind = InstrumentKind.DIRECT_MARKET
     exposure_category: ExposureCategory = ExposureCategory.CURRENCY
     underlying_description: str | None = None
@@ -246,7 +284,7 @@ _INSTRUMENT_SPECS = (
     _etf("DBA_US_ETF", "DBA", "Agriculture ETF Basket", ExposureCategory.AGRICULTURE, "Agricultural commodity futures through the Invesco DB Agriculture Fund ETF price series.", None, "NYSE Arca", "ARCX"),
     _etf("VIXM_US_ETF", "VIXM", "Volatility ETF Proxy", ExposureCategory.VOLATILITY, "Mid-term VIX futures exposure through the ProShares VIX Mid-Term Futures ETF price series.", "VIX", "CBOE BZX", "BATS"),
     _InstrumentSpec("XAG_USD", "XAG/USD", "Silver Spot / US Dollar", "PRECIOUS_METAL", "XAG/USD", quote_currency="USD", provider_instrument_type="Commodity", provider_timezone="UTC", validation_status="PLAN_RESTRICTED", instrument_kind=InstrumentKind.SPOT_METAL, exposure_category=ExposureCategory.PRECIOUS_METAL),
-    _InstrumentSpec("SP_500", "S&P 500", "S&P 500 Index", "EQUITY_INDEX", validation_status="DISCOVERY_UNAVAILABLE", exposure_category=ExposureCategory.US_LARGE_CAP_EQUITY),
+    _InstrumentSpec("SP_500", "S&P 500", "S&P 500 Index", "EQUITY_INDEX", validation_status="DISCOVERY_UNAVAILABLE", polling_enabled=False, provider_instrument_type="Index", exposure_category=ExposureCategory.US_LARGE_CAP_EQUITY),
     _InstrumentSpec("NASDAQ_100", "Nasdaq 100", "Nasdaq 100 Index", "EQUITY_INDEX", validation_status="DISCOVERY_UNAVAILABLE", exposure_category=ExposureCategory.US_TECH_EQUITY),
     _InstrumentSpec("DOW_30", "Dow 30", "Dow Jones Industrial Average", "EQUITY_INDEX", validation_status="DISCOVERY_UNAVAILABLE", exposure_category=ExposureCategory.US_LARGE_CAP_EQUITY),
     _InstrumentSpec("DAX_40", "DAX 40", "DAX 40 Index", "EQUITY_INDEX", quote_currency="EUR", validation_status="PROVIDER_ERROR", exposure_category=ExposureCategory.EUROPE_EQUITY),
@@ -258,6 +296,18 @@ _INSTRUMENT_SPECS = (
     _InstrumentSpec("COPPER", "HG1", "Copper Spot", "INDUSTRIAL_METAL", "HG1", quote_currency="USD", provider_instrument_type="Commodity", provider_timezone="UTC", validation_status="PLAN_RESTRICTED"),
     _InstrumentSpec("VIX", "VIX", "CBOE Volatility Index", "VOLATILITY", validation_status="DISCOVERY_UNAVAILABLE", exposure_category=ExposureCategory.VOLATILITY),
     _InstrumentSpec("US_10Y_YIELD", "US 10Y Yield", "US 10-Year Treasury Yield", "INTEREST_RATE", validation_status="DISCOVERY_UNAVAILABLE", exposure_category=ExposureCategory.GOVERNMENT_BONDS),
+    _InstrumentSpec("DXY", "DXY", "US Dollar Index Market", "CURRENCY_INDEX", "", validation_status="DISCOVERY_UNAVAILABLE", polling_enabled=False, provider_instrument_type="Index", exposure_category=ExposureCategory.CURRENCY),
+    _InstrumentSpec("AUS_200", "AUS200", "Australia 200 Index", "EQUITY_INDEX", "", quote_currency="AUD", validation_status="DISCOVERY_UNAVAILABLE", polling_enabled=False, provider_instrument_type="Index", exposure_category=ExposureCategory.ASIA_PACIFIC_EQUITY),
+    _forex("EUR_CHF", "EUR/CHF", "Euro / Swiss Franc", "0.00001", 5, "CHF"),
+    _forex("EUR_AUD", "EUR/AUD", "Euro / Australian Dollar", "0.00001", 5, "AUD"),
+    _forex("GBP_AUD", "GBP/AUD", "British Pound / Australian Dollar", "0.00001", 5, "AUD"),
+    _forex("NZD_CAD", "NZD/CAD", "New Zealand Dollar / Canadian Dollar", "0.00001", 5, "CAD"),
+    _forex("GBP_CAD", "GBP/CAD", "British Pound / Canadian Dollar", "0.00001", 5, "CAD"),
+    _forex("EUR_CAD", "EUR/CAD", "Euro / Canadian Dollar", "0.00001", 5, "CAD"),
+    _forex("AUD_CAD", "AUD/CAD", "Australian Dollar / Canadian Dollar", "0.00001", 5, "CAD"),
+    _forex("NZD_JPY", "NZD/JPY", "New Zealand Dollar / Japanese Yen", "0.001", 3, "JPY"),
+    _forex("AUD_NZD", "AUD/NZD", "Australian Dollar / New Zealand Dollar", "0.00001", 5, "NZD"),
+    _forex("USD_CHF", "USD/CHF", "US Dollar / Swiss Franc", "0.00001", 5, "CHF"),
 )
 
 
@@ -275,7 +325,9 @@ def twelve_data_instruments(
     not_validated = {
         item.instrument_id
         for item in _INSTRUMENT_SPECS
-        if item.instrument_id in enabled and item.validation_status != "LIVE_VALIDATED"
+        if item.instrument_id in enabled
+        and item.polling_enabled
+        and item.validation_status != "LIVE_VALIDATED"
     }
     if not_validated:
         raise ValueError(
@@ -310,6 +362,7 @@ def twelve_data_instruments(
             strategy_id="SPECT8_MICRO_DAILY_V1_0",
             display_symbol=spec.display_symbol,
             enabled=spec.instrument_id in enabled,
+            polling_enabled=spec.polling_enabled,
             exchange=(
                 crypto_policy.exchange_for(spec.instrument_id)
                 if spec.instrument_kind is InstrumentKind.CRYPTO
@@ -346,14 +399,19 @@ class CanonicalInstrumentRegistry:
         orders = [item.registry_order for item in self._instruments]
         if len(orders) != len(set(orders)):
             raise ValueError("duplicate registry order")
-        if len(self.enabled()) > 25:
-            raise ValueError("at most 25 instruments may be enabled")
+        if len(self.enabled()) > 30:
+            raise ValueError("at most 30 instruments may be enabled")
 
     def all(self) -> tuple[CanonicalInstrument, ...]:
         return self._instruments
 
     def enabled(self) -> tuple[CanonicalInstrument, ...]:
         return tuple(item for item in self._instruments if item.enabled)
+
+    def pollable(self) -> tuple[CanonicalInstrument, ...]:
+        return tuple(
+            item for item in self._instruments if item.enabled and item.polling_enabled
+        )
 
     def by_id(self, instrument_id: str) -> CanonicalInstrument:
         for instrument in self._instruments:

@@ -1,5 +1,7 @@
 "use client";
 
+import { LogoutButton } from "@/components/logout-button";
+
 export default function DashboardError({
   reset,
 }: {
@@ -7,6 +9,7 @@ export default function DashboardError({
 }) {
   return (
     <main className="loading-shell">
+      <LogoutButton className="standalone-logout" />
       <section className="error-panel">
         <p className="section-kicker">Data unavailable</p>
         <h1>Dashboard projection could not be loaded</h1>

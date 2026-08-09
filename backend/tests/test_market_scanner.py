@@ -27,11 +27,13 @@ from backend.app.market_data.models import RawProviderCandle
 from backend.app.market_data.normalizer import CandleNormalizer
 from backend.app.market_data.rate_limiter import SlidingWindowRateLimiter
 from backend.app.market_data.registry import (
+    ADDITIONAL_FOREX_INSTRUMENT_IDS,
     ALL_INSTRUMENT_IDS,
     CANDIDATE_INSTRUMENT_IDS,
     DEFAULT_ENABLED_INSTRUMENT_IDS,
     DISABLED_DIRECT_MARKET_IDS,
     ETF_INSTRUMENT_IDS,
+    SCANNER_UNAVAILABLE_INSTRUMENT_IDS,
     TARGET_INSTRUMENT_IDS,
     CanonicalInstrumentRegistry,
     twelve_data_instruments,
@@ -54,25 +56,33 @@ class FakeTime:
         return datetime.fromtimestamp(self.current, timezone.utc)
 
 
-def test_default_registry_contains_target_twenty_five_and_twenty_four_enabled() -> None:
+def test_default_registry_contains_requested_twenty_nine_visible_instruments() -> None:
     instruments = twelve_data_instruments()
     registry = CanonicalInstrumentRegistry(instruments)
     assert tuple(item.instrument_id for item in registry.all()) == ALL_INSTRUMENT_IDS
     assert tuple(item.instrument_id for item in registry.enabled()) == DEFAULT_ENABLED_INSTRUMENT_IDS
     assert len(TARGET_INSTRUMENT_IDS) == 25
-    assert len({item.instrument_id for item in instruments}) == 38
+    assert len({item.instrument_id for item in instruments}) == 50
     assert all(item.enabled and item.provider_symbol for item in instruments[:10])
     assert tuple(item.instrument_id for item in registry.enabled()[10:12]) == (
         "BTC_USD",
         "ETH_USD",
     )
     assert all(item.exchange == "Binance" for item in registry.enabled()[10:12])
-    assert len(registry.enabled()) == 24
+    assert len(registry.enabled()) == 29
+    assert len(registry.pollable()) == 26
     assert registry.by_id("TLT_US_ETF").enabled is False
+    assert all(registry.by_id(item).enabled is False for item in (
+        "SPY_US_ETF", "QQQ_US_ETF", "IWM_US_ETF", "FEZ_US_ETF",
+        "EWJ_US_ETF", "EEM_US_ETF", "DBA_US_ETF", "VIXM_US_ETF",
+    ))
+    assert all(registry.by_id(item).enabled for item in (
+        "HYG_US_ETF", "SLV_US_ETF", "USO_US_ETF", "UNG_US_ETF",
+    ))
+    assert all(registry.by_id(item).enabled for item in ADDITIONAL_FOREX_INSTRUMENT_IDS)
     assert all(
-        registry.by_id(item).enabled
-        for item in ETF_INSTRUMENT_IDS
-        if item != "TLT_US_ETF"
+        registry.by_id(item).enabled and not registry.by_id(item).polling_enabled
+        for item in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
     )
     assert all(not registry.by_id(item).enabled for item in DISABLED_DIRECT_MARKET_IDS)
     assert registry.by_id("XAU_USD").asset_class == "METAL"
@@ -91,6 +101,22 @@ def test_registry_can_disable_without_reordering() -> None:
         "GBP_USD",
         "XAU_USD",
     )
+
+
+def test_registry_allows_twenty_nine_but_rejects_more_than_thirty_visible() -> None:
+    registry = CanonicalInstrumentRegistry(twelve_data_instruments())
+    assert len(registry.enabled()) == 29
+
+    over_limit = tuple(
+        replace(item, enabled=index <= 31)
+        for index, item in enumerate(registry.all(), start=1)
+    )
+    try:
+        CanonicalInstrumentRegistry(over_limit)
+    except ValueError as error:
+        assert str(error) == "at most 30 instruments may be enabled"
+    else:
+        raise AssertionError("31 scanner-visible instruments must be rejected")
 
 
 def test_xau_h1_uses_the_approved_canonical_profile() -> None:
@@ -258,6 +284,37 @@ def test_retry_is_rate_limited_and_requeued_after_other_instruments() -> None:
     assert provider.scan_failures() == {}
 
 
+def test_scanner_visible_unavailable_indices_never_create_provider_requests() -> None:
+    selected_ids = ("EUR_USD", *SCANNER_UNAVAILABLE_INSTRUMENT_IDS)
+    instruments = twelve_data_instruments(selected_ids)
+    fake = FakeTime()
+    limiter = SlidingWindowRateLimiter(
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+        wall_clock=fake.wall,
+    )
+    calls: list[str] = []
+    provider = MultiInstrumentTwelveDataProvider(
+        "test-key",
+        instruments,
+        limiter=limiter,
+        providers={
+            "EUR_USD": FakeInstrumentProvider("EUR_USD", calls, limiter),
+        },
+    )
+
+    checked_at = datetime(2026, 8, 5, tzinfo=timezone.utc)
+    provider.fetch_completed_bars(checked_at)
+
+    assert calls == ["EUR_USD"]
+    assert limiter.starts() == (0.0,)
+    assert all(
+        provider.instrument_health(instrument_id, checked_at).state
+        is HealthState.DATA_UNAVAILABLE
+        for instrument_id in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
+    )
+
+
 def test_sqlite_partitioning_and_instrument_error_recovery(tmp_path: Path) -> None:
     repository = SQLiteProjectionRepository(tmp_path / "scanner.sqlite3")
     repository.initialize()
@@ -344,7 +401,14 @@ def test_scanner_api_returns_enabled_typed_ordered_bootstrap_rows(
     assert [item["instrument_id"] for item in rows] == list(
         DEFAULT_ENABLED_INSTRUMENT_IDS
     )
-    assert all(item["data_status"] == "BOOTSTRAPPING" for item in rows)
+    assert all(
+        item["data_status"] == (
+            "DATA_UNAVAILABLE"
+            if item["instrument_id"] in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
+            else "BOOTSTRAPPING"
+        )
+        for item in rows
+    )
     assert all(item["H1"]["signal_status"] == "WAITING" for item in rows)
     assert all(item["current_filter"] == {
         "status": "WAITING",
@@ -352,14 +416,17 @@ def test_scanner_api_returns_enabled_typed_ordered_bootstrap_rows(
         "snapshot_id": None,
         "source": "WAITING",
     } for item in rows)
-    assert len(rows) == 24
-    spy = next(item for item in rows if item["instrument_id"] == "SPY_US_ETF")
-    assert spy["instrument_kind"] == "ETF"
-    assert spy["exposure_category"] == "US_LARGE_CAP_EQUITY"
-    assert spy["is_proxy"] is True
-    assert spy["proxy_for"] == "SP_500"
-    assert spy["provider_symbol"] == "SPY"
-    assert spy["provider_exchange"] == "NYSE Arca"
+    assert len(rows) == 29
+    assert not {"QQQ_US_ETF", "IWM_US_ETF", "FEZ_US_ETF", "EWJ_US_ETF", "EEM_US_ETF", "DBA_US_ETF", "VIXM_US_ETF", "SPY_US_ETF"}.intersection(
+        item["instrument_id"] for item in rows
+    )
+    sp500 = next(item for item in rows if item["instrument_id"] == "SP_500")
+    assert sp500["instrument_kind"] == "DIRECT_MARKET"
+    assert sp500["exposure_category"] == "US_LARGE_CAP_EQUITY"
+    assert sp500["is_proxy"] is False
+    assert sp500["polling_enabled"] is False
+    assert sp500["data_status"] == "DATA_UNAVAILABLE"
+    assert "no market-data request" in sp500["latest_error_summary"]
     assert payload["data"]["credit_budget"]["reserve_preserved"] is True
     assert "provider-secret-that-must-not-leak" not in response.text
 
@@ -415,6 +482,8 @@ def test_scanner_current_filter_uses_latest_completed_h1_snapshot() -> None:
     )
     row = data.instruments[0]
 
+    assert data.active_filter_mode == "MICRO"
+    assert data.filter_timeframe == "D1"
     assert row.H1.filter_status == "BUY"
     assert row.H4.filter_status == "NONE"
     assert row.current_filter.status == "SELL"
