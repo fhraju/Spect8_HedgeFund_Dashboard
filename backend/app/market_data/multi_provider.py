@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..domain import FilterMode, Timeframe
+from ..engine.models import CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1
 from .models import (
     CanonicalInstrument,
     HealthState,
@@ -172,7 +173,28 @@ class MultiInstrumentTwelveDataProvider:
                 if latest_text
                 else None
             )
-            if instrument_needs_poll(
+            evaluation_caught_up = True
+            for timeframe in (Timeframe.H1, Timeframe.H4):
+                canonical = self._repository.latest_canonical_close(
+                    instrument.provider_id,
+                    instrument.instrument_id,
+                    timeframe.value,
+                )
+                if canonical is None:
+                    continue
+                for strategy_id in (CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1):
+                    evaluated = self._repository.latest_evaluation_close(
+                        instrument.provider_id,
+                        instrument.instrument_id,
+                        timeframe.value,
+                        strategy_id,
+                    )
+                    if evaluated is None or evaluated < canonical:
+                        evaluation_caught_up = False
+                        break
+                if not evaluation_caught_up:
+                    break
+            if not evaluation_caught_up or instrument_needs_poll(
                 instrument,
                 latest_completed_close=latest,
                 as_of=as_of,
@@ -270,7 +292,7 @@ class MultiInstrumentTwelveDataProvider:
 
     def health(self, as_of: datetime) -> ProviderHealth:
         health = [
-            self.instrument_health(item.instrument_id, as_of) for item in self._visible
+            self.instrument_health(item.instrument_id, as_of) for item in self._enabled
         ]
         priority = {
             HealthState.QUARANTINED: 5,
@@ -299,7 +321,7 @@ class MultiInstrumentTwelveDataProvider:
             ),
             detail=(
                 f"{sum(item.state in {HealthState.HEALTHY, HealthState.RECOVERED} for item in health)}"
-                f"/{len(health)} scanner-visible instruments healthy."
+                f"/{len(health)} pollable instruments healthy."
             ),
             synthetic=False,
         )

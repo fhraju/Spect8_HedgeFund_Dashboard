@@ -390,6 +390,9 @@ class TwelveDataProvider:
         if timeframe not in (Timeframe.H1, Timeframe.H4):
             raise ValueError("resume cursor supports only H1 and H4")
         if close_time is None:
+            # A missing durable projection cursor must rewind an adapter that
+            # may have discovered bars before a previous poll was interrupted.
+            self._last_trigger_close.pop(timeframe, None)
             return
         self._last_trigger_close[timeframe] = self._aware_utc(close_time)
 
@@ -469,8 +472,6 @@ class TwelveDataProvider:
         # The certified Forex strategy runtime polls H1 only. Canonical H4 and
         # New-York-close D1 are derived locally from this single source stream.
         for timeframe in (Timeframe.H1,):
-            if not self._needs_refresh(timeframe, checked_at):
-                continue
             outputsize = MIN_SIGNAL_HISTORY + self._max_catchup_bars
             if timeframe is Timeframe.H1:
                 aggregation_bars = (

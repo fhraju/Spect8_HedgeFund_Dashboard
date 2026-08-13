@@ -399,6 +399,10 @@ export type ScannerSnapshot = {
       estimated_total_remaining: number;
       reserve_preserved: boolean;
       request_count: number;
+      provider_quota_limit?: number | null;
+      provider_quota_used?: number | null;
+      provider_quota_remaining?: number | null;
+      provider_quota_window?: "MINUTE" | null;
     } | null;
   };
 };

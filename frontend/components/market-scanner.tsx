@@ -189,6 +189,10 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const exposureCategories = Array.from(
     new Set(snapshot.data.instruments.map((row) => row.exposure_category).filter(Boolean)),
   );
+  const creditBudget = snapshot.data.credit_budget;
+  const creditSummary = creditBudget
+    ? ` · ${creditBudget.estimated_operational_remaining} app operational credits · ${creditBudget.estimated_total_remaining} estimated provider-day credits remaining`
+    : "";
 
   return (
     <main className="app-shell scanner-shell">
@@ -211,7 +215,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           <div>
             <span className="section-kicker">Completed H1 bars · read only</span>
             <h1>Multi-instrument market scanner</h1>
-            <p>{snapshot.data.instruments.length} enabled instruments · {unhealthy} require attention{snapshot.data.credit_budget ? ` · ${snapshot.data.credit_budget.estimated_operational_remaining} operational credits remaining` : ""}</p>
+            <p>{snapshot.data.instruments.length} enabled instruments · {unhealthy} require attention{creditSummary}</p>
           </div>
           <div className="scanner-header-actions">
             <FilterModeSelector activeMode={activeFilterMode} />

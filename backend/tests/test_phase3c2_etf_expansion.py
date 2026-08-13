@@ -299,6 +299,51 @@ def test_credit_budget_persists_usage_and_preserves_reserve(tmp_path: Path) -> N
     assert status.reserve_preserved
 
 
+def test_credit_budget_resets_at_provider_midnight_and_records_documented_headers(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteProjectionRepository(tmp_path / "daily-budget.sqlite3")
+    repository.initialize()
+    clock = _FakeTime(datetime(2026, 8, 9, 23, 59, 59, tzinfo=UTC))
+    guard = DailyCreditBudgetGuard(
+        repository,
+        daily_limit=800,
+        operational_budget=700,
+        reserve=100,
+        clock=clock.wall,
+    )
+
+    previous_day = guard.reserve_request("/time_series", "scheduled")
+    guard.finalize_request(previous_day, status="HTTP_200", http_status=200)
+    assert guard.status().estimated_credits_used == 1
+
+    clock.sleep(1)
+    current_day = guard.reserve_request("/time_series", "scheduled")
+    guard.finalize_request(
+        current_day,
+        status="HTTP_200",
+        http_status=200,
+        headers={"api-credits-used": "4", "api-credits-left": "4"},
+    )
+    clock.sleep(1)
+    latest = guard.reserve_request("/time_series", "scheduled")
+    guard.finalize_request(
+        latest,
+        status="HTTP_200",
+        http_status=200,
+        headers={"api-credits-used": "5", "api-credits-left": "3"},
+    )
+
+    status = guard.status()
+    assert status.window == "UTC_CALENDAR_DAY"
+    assert status.estimated_credits_used == 2
+    assert status.estimated_operational_remaining == 698
+    assert status.provider_quota_limit == 8
+    assert status.provider_quota_used == 5
+    assert status.provider_quota_remaining == 3
+    assert status.provider_quota_window == "MINUTE"
+
+
 class _NoCallProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -321,7 +366,16 @@ class _NoCallProvider:
         })()
 
 
-def test_repeated_startup_skips_current_etf_without_credit_use(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("evaluations_current", "expected_calls"),
+    ((True, 0), (False, 2)),
+)
+def test_repeated_startup_only_skips_etf_when_both_filter_modes_are_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    evaluations_current: bool,
+    expected_calls: int,
+) -> None:
     repository = SQLiteProjectionRepository(tmp_path / "fresh.sqlite3")
     repository.initialize()
     source = CanonicalInstrumentRegistry(twelve_data_instruments()).by_id("SPY_US_ETF")
@@ -334,7 +388,16 @@ def test_repeated_startup_skips_current_etf_without_credit_use(tmp_path: Path) -
     )
     session = us_regular_session(date(2026, 8, 6))
     assert session
-    repository.persist_canonical_bars((_bar(instrument.instrument_id, session.valid_h1_opens[-1]),))
+    bar = _bar(instrument.instrument_id, session.valid_h1_opens[-1])
+    repository.persist_canonical_bars((bar,))
+    if evaluations_current:
+        monkeypatch.setattr(
+            repository,
+            "latest_evaluation_close",
+            lambda *_args, **_kwargs: bar.close_time.isoformat().replace(
+                "+00:00", "Z"
+            ),
+        )
     stub = _NoCallProvider()
     provider = MultiInstrumentTwelveDataProvider(
         "ignored-test-key",
@@ -345,8 +408,12 @@ def test_repeated_startup_skips_current_etf_without_credit_use(tmp_path: Path) -
     as_of = session.close_utc + timedelta(minutes=5)
     assert provider.fetch_completed_bars(as_of) == ()
     assert provider.fetch_completed_bars(as_of) == ()
-    assert stub.calls == 0
-    assert provider.instrument_health(instrument.instrument_id, as_of).state is HealthState.HEALTHY
+    assert stub.calls == expected_calls
+    if evaluations_current:
+        assert (
+            provider.instrument_health(instrument.instrument_id, as_of).state
+            is HealthState.HEALTHY
+        )
 
 
 def test_phase3c1_twelve_checkpoint_reproduces_offline(tmp_path: Path) -> None:

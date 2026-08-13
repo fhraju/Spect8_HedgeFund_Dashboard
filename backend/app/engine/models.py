@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Mapping
 
 from ..domain import Bar, Direction, FilterMode, Timeframe
 
@@ -123,6 +124,140 @@ class WeeklyFilterSnapshot:
     data_quality_status: str
     ingestion_run_id: str | None
     created_at: datetime
+
+
+def _snapshot_datetime(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("snapshot datetime must be an ISO-8601 string")
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _snapshot_decimal(value: object) -> Decimal:
+    return Decimal(str(value))
+
+
+def daily_filter_snapshot_from_payload(
+    value: Mapping[str, Any],
+) -> DailyFilterSnapshot:
+    """Restore the exact immutable snapshot used by an interrupted projection."""
+
+    partial = value["current_partial_d1"]
+    if not isinstance(partial, Mapping):
+        raise ValueError("daily snapshot partial candle is malformed")
+    return DailyFilterSnapshot(
+        snapshot_id=str(value["snapshot_id"]),
+        strategy_version=str(value["strategy_version"]),
+        canonical_profile_version=str(value["canonical_profile_version"]),
+        provider=str(value["provider"]),
+        instrument=str(value["instrument"]),
+        evaluation_time_utc=_snapshot_datetime(value["evaluation_time_utc"]),
+        as_of_h1_close_time_utc=_snapshot_datetime(value["as_of_h1_close_time_utc"]),
+        current_partial_d1=CurrentPartialDailyCandle(
+            session_identifier=str(partial["session_identifier"]),
+            session_open_utc=_snapshot_datetime(partial["session_open_utc"]),
+            session_close_utc=_snapshot_datetime(partial["session_close_utc"]),
+            first_h1_open_time_utc=_snapshot_datetime(partial["first_h1_open_time_utc"]),
+            last_h1_close_time_utc=_snapshot_datetime(partial["last_h1_close_time_utc"]),
+            h1_count=int(partial["h1_count"]),
+            source_h1_ids=tuple(str(item) for item in partial["source_h1_ids"]),
+            source_checksum=str(partial["source_checksum"]),
+            open=_snapshot_decimal(partial["open"]),
+            high=_snapshot_decimal(partial["high"]),
+            low=_snapshot_decimal(partial["low"]),
+            close=_snapshot_decimal(partial["close"]),
+            quality_status=str(partial["quality_status"]),
+        ),
+        previous_d1_candle_id=str(value["previous_d1_candle_id"]),
+        previous_d1_session_id=str(value["previous_d1_session_id"]),
+        previous_d1_open_utc=_snapshot_datetime(value["previous_d1_open_utc"]),
+        previous_d1_close_utc=_snapshot_datetime(value["previous_d1_close_utc"]),
+        previous_d1_high=_snapshot_decimal(value["previous_d1_high"]),
+        previous_d1_low=_snapshot_decimal(value["previous_d1_low"]),
+        previous_d1_close=_snapshot_decimal(value["previous_d1_close"]),
+        atr_period=int(value["atr_period"]),
+        atr_value=_snapshot_decimal(value["atr_value"]),
+        atr_source_d1_ids=tuple(str(item) for item in value["atr_source_d1_ids"]),
+        atr_source_checksum=str(value["atr_source_checksum"]),
+        buffer_percentage=_snapshot_decimal(value["buffer_percentage"]),
+        buffer_value=_snapshot_decimal(value["buffer_value"]),
+        buy_threshold=_snapshot_decimal(value["buy_threshold"]),
+        sell_threshold=_snapshot_decimal(value["sell_threshold"]),
+        buy_left_value=_snapshot_decimal(value["buy_left_value"]),
+        buy_operator=str(value["buy_operator"]),
+        buy_right_value=_snapshot_decimal(value["buy_right_value"]),
+        buy_matched=bool(value["buy_matched"]),
+        sell_left_value=_snapshot_decimal(value["sell_left_value"]),
+        sell_operator=str(value["sell_operator"]),
+        sell_right_value=_snapshot_decimal(value["sell_right_value"]),
+        sell_matched=bool(value["sell_matched"]),
+        final_classification=str(value["final_classification"]),
+        data_quality_status=str(value["data_quality_status"]),
+        ingestion_run_id=(str(value["ingestion_run_id"]) if value.get("ingestion_run_id") is not None else None),
+        created_at=_snapshot_datetime(value["created_at"]),
+    )
+
+
+def w1_snapshot_from_payload(
+    value: Mapping[str, Any],
+) -> WeeklyFilterSnapshot:
+    """Restore the exact immutable weekly snapshot used by a projection."""
+
+    partial = value["current_partial_w1"]
+    if not isinstance(partial, Mapping):
+        raise ValueError("weekly snapshot partial candle is malformed")
+    return WeeklyFilterSnapshot(
+        snapshot_id=str(value["snapshot_id"]),
+        filter_mode=FilterMode(str(value["filter_mode"])),
+        strategy_version=str(value["strategy_version"]),
+        canonical_profile_version=str(value["canonical_profile_version"]),
+        provider=str(value["provider"]),
+        instrument=str(value["instrument"]),
+        evaluation_time_utc=_snapshot_datetime(value["evaluation_time_utc"]),
+        as_of_h1_close_time_utc=_snapshot_datetime(value["as_of_h1_close_time_utc"]),
+        current_partial_w1=CurrentPartialWeeklyCandle(
+            session_identifier=str(partial["session_identifier"]),
+            session_open_utc=_snapshot_datetime(partial["session_open_utc"]),
+            session_close_utc=_snapshot_datetime(partial["session_close_utc"]),
+            first_h1_open_time_utc=_snapshot_datetime(partial["first_h1_open_time_utc"]),
+            last_h1_close_time_utc=_snapshot_datetime(partial["last_h1_close_time_utc"]),
+            h1_count=int(partial["h1_count"]),
+            source_h1_ids=tuple(str(item) for item in partial["source_h1_ids"]),
+            source_checksum=str(partial["source_checksum"]),
+            open=_snapshot_decimal(partial["open"]),
+            high=_snapshot_decimal(partial["high"]),
+            low=_snapshot_decimal(partial["low"]),
+            close=_snapshot_decimal(partial["close"]),
+            quality_status=str(partial["quality_status"]),
+        ),
+        previous_w1_candle_id=str(value["previous_w1_candle_id"]),
+        previous_w1_session_id=str(value["previous_w1_session_id"]),
+        previous_w1_open_utc=_snapshot_datetime(value["previous_w1_open_utc"]),
+        previous_w1_close_utc=_snapshot_datetime(value["previous_w1_close_utc"]),
+        previous_w1_open=_snapshot_decimal(value["previous_w1_open"]),
+        previous_w1_high=_snapshot_decimal(value["previous_w1_high"]),
+        previous_w1_low=_snapshot_decimal(value["previous_w1_low"]),
+        previous_w1_close=_snapshot_decimal(value["previous_w1_close"]),
+        atr_period=int(value["atr_period"]),
+        atr_value=_snapshot_decimal(value["atr_value"]),
+        atr_source_w1_ids=tuple(str(item) for item in value["atr_source_w1_ids"]),
+        atr_source_checksum=str(value["atr_source_checksum"]),
+        buffer_percentage=_snapshot_decimal(value["buffer_percentage"]),
+        buffer_value=_snapshot_decimal(value["buffer_value"]),
+        buy_threshold=_snapshot_decimal(value["buy_threshold"]),
+        sell_threshold=_snapshot_decimal(value["sell_threshold"]),
+        buy_left_value=_snapshot_decimal(value["buy_left_value"]),
+        buy_operator=str(value["buy_operator"]),
+        buy_right_value=_snapshot_decimal(value["buy_right_value"]),
+        buy_matched=bool(value["buy_matched"]),
+        sell_left_value=_snapshot_decimal(value["sell_left_value"]),
+        sell_operator=str(value["sell_operator"]),
+        sell_right_value=_snapshot_decimal(value["sell_right_value"]),
+        sell_matched=bool(value["sell_matched"]),
+        final_classification=str(value["final_classification"]),
+        data_quality_status=str(value["data_quality_status"]),
+        ingestion_run_id=(str(value["ingestion_run_id"]) if value.get("ingestion_run_id") is not None else None),
+        created_at=_snapshot_datetime(value["created_at"]),
+    )
 
 
 @dataclass(frozen=True, slots=True)

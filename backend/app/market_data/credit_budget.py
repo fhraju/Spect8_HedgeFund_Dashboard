@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable, Mapping
 
 from ..repository import SQLiteProjectionRepository
@@ -40,10 +40,16 @@ class CreditBudgetStatus:
     provider_quota_limit: int | None = None
     provider_quota_used: int | None = None
     provider_quota_remaining: int | None = None
+    provider_quota_window: str | None = None
 
 
 class DailyCreditBudgetGuard:
-    """Persistent conservative rolling-24-hour request-credit guard."""
+    """Persistent conservative UTC-calendar-day request-credit guard.
+
+    Twelve Data's Basic daily allowance resets at 00:00 UTC.  Using a rolling
+    24-hour window would continue counting requests from the previous provider
+    day after that reset and can incorrectly stop otherwise permitted scans.
+    """
 
     def __init__(
         self,
@@ -81,12 +87,12 @@ class DailyCreditBudgetGuard:
             endpoint=endpoint,
             request_category=category,
             estimated_credits=credits,
-            window_start=now - timedelta(hours=24),
+            window_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
             operational_budget=self.operational_budget,
         )
         if reservation is None:
             raise CreditBudgetExhausted(
-                "Twelve Data rolling-24-hour operational credit budget is exhausted; reserve preserved."
+                "Twelve Data UTC-day operational credit budget is exhausted; reserve preserved."
             )
         return reservation
 
@@ -109,27 +115,46 @@ class DailyCreditBudgetGuard:
                     return int(value)
             return None
 
+        quota_used = integer(
+            "api-credits-used", "x-api-credits-used", "x-ratelimit-used"
+        )
+        quota_remaining = integer(
+            "api-credits-left",
+            "api-credits-remaining",
+            "x-api-credits-remaining",
+            "x-ratelimit-remaining",
+        )
+        quota_limit = integer(
+            "api-credits-limit", "x-api-credits-limit", "x-ratelimit-limit"
+        )
+        if (
+            quota_limit is None
+            and quota_used is not None
+            and quota_remaining is not None
+        ):
+            quota_limit = quota_used + quota_remaining
+
         self._repository.finalize_provider_credit(
             reservation_id,
             request_status=status,
             http_status=http_status,
-            quota_limit=integer("x-api-credits-limit", "x-ratelimit-limit"),
-            quota_used=integer("x-api-credits-used", "x-ratelimit-used"),
-            quota_remaining=integer("x-api-credits-remaining", "x-ratelimit-remaining"),
+            quota_limit=quota_limit,
+            quota_used=quota_used,
+            quota_remaining=quota_remaining,
         )
 
     def status(self, *, as_of: datetime | None = None) -> CreditBudgetStatus:
         now = (as_of or self._clock()).astimezone(timezone.utc)
         usage = self._repository.provider_credit_usage(
             PROVIDER_ID,
-            window_start=now - timedelta(hours=24),
+            window_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
         )
         used = int(usage["estimated_credits_used"])
         operational_remaining = max(0, self.operational_budget - used)
         total_remaining = max(0, self.daily_limit - used)
         return CreditBudgetStatus(
             provider=PROVIDER_ID,
-            window="ROLLING_24_HOURS",
+            window="UTC_CALENDAR_DAY",
             daily_limit=self.daily_limit,
             operational_budget=self.operational_budget,
             reserve=self.reserve,
@@ -146,4 +171,11 @@ class DailyCreditBudgetGuard:
             provider_quota_limit=usage["provider_quota_limit"],
             provider_quota_used=usage["provider_quota_used"],
             provider_quota_remaining=usage["provider_quota_remaining"],
+            provider_quota_window=(
+                "MINUTE"
+                if usage["provider_quota_limit"] is not None
+                or usage["provider_quota_used"] is not None
+                or usage["provider_quota_remaining"] is not None
+                else None
+            ),
         )

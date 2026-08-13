@@ -10,6 +10,8 @@ from ..engine.models import (
     CURRENT_W1_FILTER_V1,
     DailyFilterSnapshot,
     WeeklyFilterSnapshot,
+    daily_filter_snapshot_from_payload,
+    w1_snapshot_from_payload,
 )
 from ..engine.current_daily_filter import (
     DailyFilterUnavailableError,
@@ -99,10 +101,12 @@ class MarketDataCoordinator:
 
     def poll_once(self) -> PollResult:
         now = self._clock.now()
-        filter_mode = self._repository.active_filter_mode()
         mode_setter = getattr(self.provider, "set_filter_mode", None)
         if callable(mode_setter):
-            mode_setter(filter_mode)
+            # The UI selector controls presentation only. Acquisition always
+            # requests the larger weekly history so every completed bar can be
+            # evaluated under both Micro and Macro authority.
+            mode_setter(FilterMode.MACRO)
         self._seed_resume_cursors()
         provider_health = self.provider.health(now)
         profile_enabled = not self.provider.identity.synthetic
@@ -328,8 +332,8 @@ class MarketDataCoordinator:
                         self.provider, "fetch_required_history_for_filter_mode", None
                     )
                     history = (
-                        mode_fetch(closed, now, filter_mode)
-                        if filter_mode is FilterMode.MACRO and callable(mode_fetch)
+                        mode_fetch(closed, now, FilterMode.MACRO)
+                        if callable(mode_fetch)
                         else self.provider.fetch_required_history(closed, now)
                     )
                     if profile_enabled and trigger.timeframe is Timeframe.H1:
@@ -497,44 +501,6 @@ class MarketDataCoordinator:
                 session_profile=instrument.session_profile,
             )
             issues = tuple(sorted(set((*issues, *validation.issues))))
-            snapshot: DailyFilterSnapshot | None = None
-            weekly_snapshot: WeeklyFilterSnapshot | None = None
-            if profile_enabled and not issues:
-                snapshot = daily_snapshot_cache.get(cache_key)
-                weekly_snapshot = weekly_snapshot_cache.get(cache_key)
-                if filter_mode is FilterMode.MICRO and snapshot is None:
-                    try:
-                        snapshot = build_daily_filter_snapshot(
-                            provider=instrument.provider_id,
-                            instrument=instrument.instrument_id,
-                            as_of_h1_close=trigger.close_time,
-                            h1_bars=daily_source,
-                            completed_d1_bars=daily_bars,
-                            sparse_actual_h1=(
-                                instrument.instrument_kind is InstrumentKind.ETF
-                            ),
-                        )
-                    except DailyFilterUnavailableError as error:
-                        issues = (str(error),)
-                    else:
-                        daily_snapshot_cache[cache_key] = snapshot
-                        self._repository.persist_daily_filter_snapshot(snapshot)
-                elif filter_mode is FilterMode.MACRO and weekly_snapshot is None:
-                    try:
-                        weekly_snapshot = build_w1_filter_snapshot(
-                            provider=instrument.provider_id,
-                            instrument=instrument.instrument_id,
-                            as_of_h1_close=trigger.close_time,
-                            h1_bars=daily_source,
-                            sparse_actual_h1=(
-                                instrument.instrument_kind is InstrumentKind.ETF
-                            ),
-                        )
-                    except WeeklyFilterUnavailableError as error:
-                        issues = (str(error),)
-                    else:
-                        weekly_snapshot_cache[cache_key] = weekly_snapshot
-                        self._repository.persist_w1_filter_snapshot(weekly_snapshot)
             if issues:
                 state = (
                     HealthState.INSUFFICIENT_HISTORY
@@ -565,37 +531,194 @@ class MarketDataCoordinator:
             inserted += self._repository.persist_canonical_bars(
                 tuple(canonical_history)
             )
-            request = StrategyRequest(
-                case_id=history.source_id,
-                strategy_id=(
-                    (
-                        CURRENT_W1_FILTER_V1
-                        if filter_mode is FilterMode.MACRO
-                        else CURRENT_D1_FILTER_V2
+            if not profile_enabled:
+                request = StrategyRequest(
+                    case_id=history.source_id,
+                    strategy_id=instrument.strategy_id,
+                    timeframe=history.timeframe,
+                    evaluation_time=history.evaluation_time,
+                    signal_bars=validation.signal_bars,
+                    daily_bars=validation.daily_bars,
+                    instrument=instrument.to_strategy_metadata(),
+                    strategy_version="SPECT8_MICRO_DAILY_V1_0_3",
+                )
+                projection = self._service.process_request(request)
+                outcomes.append(self._outcome(projection, provider_health.state))
+                continue
+
+            for evaluation_mode in (FilterMode.MICRO, FilterMode.MACRO):
+                strategy_version = (
+                    CURRENT_W1_FILTER_V1
+                    if evaluation_mode is FilterMode.MACRO
+                    else CURRENT_D1_FILTER_V2
+                )
+                latest_evaluated = self._repository.latest_evaluation_close(
+                    instrument.provider_id,
+                    instrument.instrument_id,
+                    trigger.timeframe.value,
+                    strategy_version,
+                )
+                if latest_evaluated is not None:
+                    latest_evaluated_at = datetime.fromisoformat(
+                        latest_evaluated.replace("Z", "+00:00")
                     )
-                    if profile_enabled
-                    else instrument.strategy_id
-                ),
-                timeframe=history.timeframe,
-                evaluation_time=history.evaluation_time,
-                signal_bars=validation.signal_bars,
-                daily_bars=validation.daily_bars,
-                instrument=instrument.to_strategy_metadata(),
-                strategy_version=(
-                    (
-                        CURRENT_W1_FILTER_V1
-                        if filter_mode is FilterMode.MACRO
-                        else CURRENT_D1_FILTER_V2
+                    if latest_evaluated_at >= trigger.close_time:
+                        # Each filter mode owns an independent projection cursor.
+                        # During catch-up, do not rebuild or reprocess the mode
+                        # that is already current: a duplicate snapshot conflict
+                        # in that mode must not abort the mode that is behind.
+                        continue
+
+                snapshot: DailyFilterSnapshot | None = None
+                weekly_snapshot: WeeklyFilterSnapshot | None = None
+                mode_issues: tuple[str, ...] = ()
+                if evaluation_mode is FilterMode.MICRO:
+                    snapshot = daily_snapshot_cache.get(cache_key)
+                    if snapshot is None:
+                        stored = self._repository.daily_filter_snapshot_at(
+                            instrument.provider_id,
+                            instrument.instrument_id,
+                            strategy_version,
+                            trigger.close_time.isoformat().replace("+00:00", "Z"),
+                        )
+                        if stored is not None:
+                            try:
+                                snapshot = daily_filter_snapshot_from_payload(stored)
+                            except (KeyError, TypeError, ValueError) as error:
+                                mode_issues = (
+                                    "STORED_DAILY_SNAPSHOT_INVALID:"
+                                    f"{type(error).__name__}",
+                                )
+                            else:
+                                daily_snapshot_cache[cache_key] = snapshot
+                        else:
+                            try:
+                                snapshot = build_daily_filter_snapshot(
+                                    provider=instrument.provider_id,
+                                    instrument=instrument.instrument_id,
+                                    as_of_h1_close=trigger.close_time,
+                                    h1_bars=daily_source,
+                                    completed_d1_bars=daily_bars,
+                                    sparse_actual_h1=(
+                                        instrument.instrument_kind
+                                        is InstrumentKind.ETF
+                                    ),
+                                )
+                                self._repository.persist_daily_filter_snapshot(
+                                    snapshot
+                                )
+                            except DailyFilterUnavailableError as error:
+                                mode_issues = (str(error),)
+                            except ValueError as error:
+                                mode_issues = (
+                                    "DAILY_SNAPSHOT_CONFLICT:"
+                                    f"{type(error).__name__}",
+                                )
+                            else:
+                                daily_snapshot_cache[cache_key] = snapshot
+                else:
+                    weekly_snapshot = weekly_snapshot_cache.get(cache_key)
+                    if weekly_snapshot is None:
+                        stored = self._repository.w1_snapshot_at(
+                            instrument.provider_id,
+                            instrument.instrument_id,
+                            strategy_version,
+                            trigger.close_time.isoformat().replace("+00:00", "Z"),
+                        )
+                        if stored is not None:
+                            try:
+                                weekly_snapshot = w1_snapshot_from_payload(stored)
+                            except (KeyError, TypeError, ValueError) as error:
+                                mode_issues = (
+                                    "STORED_WEEKLY_SNAPSHOT_INVALID:"
+                                    f"{type(error).__name__}",
+                                )
+                            else:
+                                weekly_snapshot_cache[cache_key] = weekly_snapshot
+                        else:
+                            try:
+                                weekly_snapshot = build_w1_filter_snapshot(
+                                    provider=instrument.provider_id,
+                                    instrument=instrument.instrument_id,
+                                    as_of_h1_close=trigger.close_time,
+                                    h1_bars=daily_source,
+                                    sparse_actual_h1=(
+                                        instrument.instrument_kind
+                                        is InstrumentKind.ETF
+                                    ),
+                                )
+                                self._repository.persist_w1_filter_snapshot(
+                                    weekly_snapshot
+                                )
+                            except WeeklyFilterUnavailableError as error:
+                                mode_issues = (str(error),)
+                            except ValueError as error:
+                                mode_issues = (
+                                    "WEEKLY_SNAPSHOT_CONFLICT:"
+                                    f"{type(error).__name__}",
+                                )
+                            else:
+                                weekly_snapshot_cache[cache_key] = weekly_snapshot
+                if mode_issues:
+                    state = (
+                        HealthState.INSUFFICIENT_HISTORY
+                        if any(
+                            issue.startswith("INSUFFICIENT_")
+                            for issue in mode_issues
+                        )
+                        else HealthState.QUARANTINED
                     )
-                    if profile_enabled
-                    else "SPECT8_MICRO_DAILY_V1_0_3"
-                ),
-                daily_filter_snapshot=snapshot,
-                filter_mode=(filter_mode if profile_enabled else FilterMode.MICRO),
-                w1_filter_snapshot=weekly_snapshot,
-            )
-            projection = self._service.process_request(request)
-            outcomes.append(self._outcome(projection, provider_health.state))
+                    override_state = state
+                    instrument_overrides[instrument.instrument_id] = (
+                        state,
+                        ", ".join(mode_issues),
+                    )
+                    outcomes.append(
+                        PollOutcome(
+                            source_case_id=closed.source_id,
+                            idempotency_key=None,
+                            replayed=False,
+                            events_created=0,
+                            health_state=state,
+                            issues=mode_issues,
+                        )
+                    )
+                    continue
+
+                request = StrategyRequest(
+                    case_id=history.source_id,
+                    strategy_id=strategy_version,
+                    timeframe=history.timeframe,
+                    evaluation_time=history.evaluation_time,
+                    signal_bars=validation.signal_bars,
+                    daily_bars=validation.daily_bars,
+                    instrument=instrument.to_strategy_metadata(),
+                    strategy_version=strategy_version,
+                    daily_filter_snapshot=snapshot,
+                    filter_mode=evaluation_mode,
+                    w1_filter_snapshot=weekly_snapshot,
+                )
+                try:
+                    projection = self._service.process_request(request)
+                except Exception as error:
+                    issue = f"PROJECTION_FAILURE:{type(error).__name__}"
+                    override_state = HealthState.QUARANTINED
+                    instrument_overrides[instrument.instrument_id] = (
+                        HealthState.QUARANTINED,
+                        issue,
+                    )
+                    outcomes.append(
+                        PollOutcome(
+                            source_case_id=closed.source_id,
+                            idempotency_key=None,
+                            replayed=False,
+                            events_created=0,
+                            health_state=HealthState.QUARANTINED,
+                            issues=(issue,),
+                        )
+                    )
+                    continue
+                outcomes.append(self._outcome(projection, provider_health.state))
 
         provider_health = self.provider.health(now)
         final_health = replace(
@@ -642,10 +765,25 @@ class MarketDataCoordinator:
             return
         for instrument in self.registry.all():
             for timeframe in (Timeframe.H1, Timeframe.H4):
-                value = self._repository.latest_evaluation_close(
-                    instrument.provider_id,
-                    instrument.instrument_id,
-                    timeframe.value,
+                strategy_values = tuple(
+                    self._repository.latest_evaluation_close(
+                        instrument.provider_id,
+                        instrument.instrument_id,
+                        timeframe.value,
+                        strategy_id,
+                    )
+                    for strategy_id in (
+                        CURRENT_D1_FILTER_V2,
+                        CURRENT_W1_FILTER_V1,
+                    )
+                )
+                # A missing mode must replay the latest completed trigger. If
+                # both exist, resume after the older one so neither mode can
+                # permanently skip a bar while the other advances.
+                value = (
+                    min(item for item in strategy_values if item is not None)
+                    if all(item is not None for item in strategy_values)
+                    else None
                 )
                 cursor = (
                     datetime.fromisoformat(value.replace("Z", "+00:00"))

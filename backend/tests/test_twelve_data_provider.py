@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -288,6 +289,72 @@ def test_resume_cursor_returns_every_unseen_completed_h1_in_order() -> None:
         "2026-07-31T12:00:00Z",
     ]
     assert provider.telemetry().completed_discoveries["H1"] == 4
+
+
+def test_rewound_database_cursor_replays_current_cached_h1_without_network() -> None:
+    start = datetime(2026, 7, 30, tzinfo=timezone.utc)
+    values = [
+        {
+            "datetime": (start + timedelta(hours=index)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "open": "1.10000",
+            "high": "1.10100",
+            "low": "1.09900",
+            "close": "1.10050",
+            "volume": "100",
+        }
+        for index in range(36)
+    ]
+    provider, transport = _provider(
+        _standard_routes(
+            h1=_response(
+                {
+                    "meta": {"symbol": "EUR/USD", "interval": "1h"},
+                    "values": list(reversed(values)),
+                    "status": "ok",
+                }
+            ),
+            h4=_empty("4h"),
+        )
+    )
+    as_of = datetime(2026, 7, 31, 12, 0, 30, tzinfo=timezone.utc)
+    cursor = datetime(2026, 7, 31, 10, tzinfo=timezone.utc)
+    provider.set_resume_cursor(Timeframe.H1, cursor)
+
+    first = provider.fetch_completed_bars(as_of)
+    calls_after_first = len(transport.calls)
+    provider.set_resume_cursor(Timeframe.H1, cursor)
+    replayed = provider.fetch_completed_bars(as_of)
+
+    assert [item.candle.raw_close_time for item in first] == [
+        "2026-07-31T11:00:00Z",
+        "2026-07-31T12:00:00Z",
+    ]
+    assert [item.candle.raw_close_time for item in replayed] == [
+        "2026-07-31T11:00:00Z",
+        "2026-07-31T12:00:00Z",
+    ]
+    assert len(transport.calls) == calls_after_first
+
+
+def test_missing_database_cursor_replays_latest_cached_h1_without_network() -> None:
+    provider, transport = _provider(
+        _standard_routes(
+            h1=_response(_fixture("reverse_ordered.json")),
+            h4=_empty("4h"),
+        )
+    )
+
+    provider.fetch_completed_bars(AS_OF)
+    calls_after_first = len(transport.calls)
+    provider.set_resume_cursor(Timeframe.H1, None)
+    replayed = provider.fetch_completed_bars(AS_OF)
+
+    assert [item.candle.raw_close_time for item in replayed] == [
+        "2026-07-30T10:00:00Z"
+    ]
+    assert len(transport.calls) == calls_after_first
 
 
 def test_reverse_provider_order_is_normalized_to_utc_chronological_order() -> None:
@@ -621,13 +688,14 @@ def _golden_payload(case_id: str, filename: str, interval: str) -> HttpResponse:
 def _combined_h1_payload(
     *,
     terminal_close: datetime = datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
+    history_hours: int = 505,
 ) -> HttpResponse:
     path = ROOT / "golden" / "cases" / "confirmed_buy_h1_01" / "signal_bars.csv"
     with path.open(encoding="utf-8", newline="") as handle:
         signal = {row["open_time"]: row for row in csv.DictReader(handle)}
-    start = terminal_close - timedelta(hours=505)
+    start = terminal_close - timedelta(hours=history_hours)
     values = []
-    for index in range(505):
+    for index in range(history_hours):
         opened = start + timedelta(hours=index)
         key = opened.isoformat().replace("+00:00", "Z")
         row = signal.get(key)
@@ -727,7 +795,7 @@ def _integration_coordinator(
 ) -> tuple[MarketDataCoordinator, SQLiteProjectionRepository, RecordingEvaluator,]:
     provider, _ = _provider(
         {
-            "1h": [_combined_h1_payload()],
+            "1h": [_combined_h1_payload(history_hours=1345)],
             "4h": [_empty("4h")],
             "1day": [_empty("1day")],
         }
@@ -754,7 +822,7 @@ def test_coordinator_catches_up_each_unseen_completed_trigger(
 ) -> None:
     provider, _ = _provider(
         {
-            "1h": [_combined_h1_payload()],
+            "1h": [_combined_h1_payload(history_hours=1345)],
             "4h": [_empty("4h")],
             "1day": [_empty("1day")],
         }
@@ -807,25 +875,214 @@ def test_coordinator_catches_up_each_unseen_completed_trigger(
     monkeypatch.setattr(coordinator._h4_aggregator, "aggregate", aggregate_h4)
     monkeypatch.setattr(repository, "persist_daily_filter_snapshot", persist_snapshot)
     monkeypatch.setattr(evaluator, "evaluate", evaluate)
+    monkeypatch.setattr(coordinator, "_seed_resume_cursors", lambda: None)
 
     result = coordinator.poll_once()
 
-    assert len(result.outcomes) == 3
+    assert len(result.outcomes) == 6
     assert [
-        (request.timeframe, request.signal_bars[-1].close_time)
+        (
+            request.strategy_version,
+            request.timeframe,
+            request.signal_bars[-1].close_time,
+        )
         for request in evaluator.requests
     ] == [
-        (Timeframe.H1, datetime(2026, 2, 3, 10, tzinfo=timezone.utc)),
-        (Timeframe.H4, datetime(2026, 2, 3, 10, tzinfo=timezone.utc)),
-        (Timeframe.H1, datetime(2026, 2, 3, 11, tzinfo=timezone.utc)),
+        (
+            "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+            Timeframe.H1,
+            datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
+        ),
+        (
+            "MACRO_WEEKLY_FILTER_CURRENT_W1_V1",
+            Timeframe.H1,
+            datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
+        ),
+        (
+            "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+            Timeframe.H4,
+            datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
+        ),
+        (
+            "MACRO_WEEKLY_FILTER_CURRENT_W1_V1",
+            Timeframe.H4,
+            datetime(2026, 2, 3, 10, tzinfo=timezone.utc),
+        ),
+        (
+            "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+            Timeframe.H1,
+            datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
+        ),
+        (
+            "MACRO_WEEKLY_FILTER_CURRENT_W1_V1",
+            Timeframe.H1,
+            datetime(2026, 2, 3, 11, tzinfo=timezone.utc),
+        ),
     ]
-    assert repository.processed_count() == 3
+    assert repository.processed_count() == 6
     assert order.index("persist_H1") < order.index("aggregate_H4")
     assert order.index("aggregate_H4") < order.index("persist_snapshot")
     assert order.index("persist_snapshot") < order.index("evaluate_H1")
     assert order.index("evaluate_H1") < order.index("evaluate_H4")
     assert order.count("persist_snapshot") == 2
-    assert len({event["idempotency_key"] for event in repository.events()}) == 3
+    assert len({event["idempotency_key"] for event in repository.events()}) == 6
+
+
+def test_coordinator_catches_up_only_the_filter_mode_that_is_behind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, _ = _provider(
+        {
+            "1h": [_combined_h1_payload(history_hours=1345)],
+            "4h": [_empty("4h")],
+            "1day": [_empty("1day")],
+        }
+    )
+    provider.set_resume_cursor(
+        Timeframe.H1,
+        datetime(2026, 2, 3, 9, tzinfo=timezone.utc),
+    )
+    repository = SQLiteProjectionRepository(tmp_path / "one-mode-catchup.sqlite3")
+    repository.initialize()
+    evaluator = RecordingEvaluator()
+    coordinator = MarketDataCoordinator(
+        provider=provider,
+        registry=CanonicalInstrumentRegistry(provider.discover_instruments()),
+        normalizer=CandleNormalizer(),
+        detector=ClosedBarDetector(),
+        service=WalkingSkeletonService(evaluator, None, repository),
+        repository=repository,
+        clock=FixedClock(datetime(2026, 2, 3, 11, 0, 1, tzinfo=timezone.utc)),
+    )
+
+    monkeypatch.setattr(coordinator, "_seed_resume_cursors", lambda: None)
+    monkeypatch.setattr(
+        repository,
+        "latest_evaluation_close",
+        lambda _provider, _instrument, _timeframe, strategy_id=None: (
+            "2026-02-03T11:00:00Z"
+            if strategy_id == "MACRO_WEEKLY_FILTER_CURRENT_W1_V1"
+            else None
+        ),
+    )
+
+    result = coordinator.poll_once()
+
+    assert not [outcome for outcome in result.outcomes if outcome.issues]
+    assert [request.strategy_version for request in evaluator.requests] == [
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+    ]
+    assert [request.timeframe for request in evaluator.requests] == [
+        Timeframe.H1,
+        Timeframe.H4,
+        Timeframe.H1,
+    ]
+
+
+def test_coordinator_reuses_orphan_snapshot_when_projection_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "orphan-snapshot.sqlite3"
+    first, repository, _ = _integration_coordinator(database)
+    first.poll_once()
+    key = (
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2:TWELVE_DATA:EUR/USD:"
+        "H1:2026-02-03T11:00:00Z"
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM event_history WHERE idempotency_key = ?", (key,))
+        connection.execute("DELETE FROM processed_bars WHERE idempotency_key = ?", (key,))
+        connection.execute(
+            """DELETE FROM instrument_status
+                 WHERE strategy_id = 'MICRO_DAILY_FILTER_CURRENT_D1_V2'
+                   AND provider = 'TWELVE_DATA'
+                   AND instrument_id = 'EUR/USD'
+                   AND timeframe = 'H1'"""
+        )
+        connection.commit()
+    assert repository.daily_filter_snapshot_at(
+        "TWELVE_DATA",
+        "EUR/USD",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+        "2026-02-03T11:00:00Z",
+    ) is not None
+
+    def forbidden_rebuild(**_: Any) -> Any:
+        raise AssertionError("an immutable orphan snapshot must be reused")
+
+    monkeypatch.setattr(
+        "backend.app.market_data.coordinator.build_daily_filter_snapshot",
+        forbidden_rebuild,
+    )
+    restarted, _, evaluator = _integration_coordinator(database)
+
+    result = restarted.poll_once()
+
+    assert not [outcome for outcome in result.outcomes if outcome.issues]
+    assert [request.strategy_version for request in evaluator.requests] == [
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2"
+    ]
+    assert [request.timeframe for request in evaluator.requests] == [Timeframe.H1]
+    assert evaluator.requests[0].daily_filter_snapshot is not None
+    assert evaluator.requests[0].daily_filter_snapshot.snapshot_id.startswith("dfs_")
+
+
+def test_projection_failure_isolated_by_mode_and_next_poll_self_heals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, repository, evaluator = _integration_coordinator(
+        tmp_path / "mode-isolation.sqlite3"
+    )
+    original = coordinator._service.process_request
+
+    def fail_micro(request: Any) -> Any:
+        if request.strategy_version == "MICRO_DAILY_FILTER_CURRENT_D1_V2":
+            raise RuntimeError("injected interrupted micro projection")
+        return original(request)
+
+    monkeypatch.setattr(coordinator._service, "process_request", fail_micro)
+    first = coordinator.poll_once()
+
+    assert any(
+        outcome.issues == ("PROJECTION_FAILURE:RuntimeError",)
+        for outcome in first.outcomes
+    )
+    assert [request.strategy_version for request in evaluator.requests] == [
+        "MACRO_WEEKLY_FILTER_CURRENT_W1_V1"
+    ]
+    assert repository.latest_evaluation_close(
+        "TWELVE_DATA",
+        "EUR/USD",
+        "H1",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+    ) is None
+    assert repository.latest_evaluation_close(
+        "TWELVE_DATA",
+        "EUR/USD",
+        "H1",
+        "MACRO_WEEKLY_FILTER_CURRENT_W1_V1",
+    ) == "2026-02-03T11:00:00Z"
+
+    monkeypatch.setattr(coordinator._service, "process_request", original)
+    second = coordinator.poll_once()
+
+    assert not [outcome for outcome in second.outcomes if outcome.issues]
+    assert [request.strategy_version for request in evaluator.requests] == [
+        "MACRO_WEEKLY_FILTER_CURRENT_W1_V1",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+    ]
+    assert repository.latest_evaluation_close(
+        "TWELVE_DATA",
+        "EUR/USD",
+        "H1",
+        "MICRO_DAILY_FILTER_CURRENT_D1_V2",
+    ) == "2026-02-03T11:00:00Z"
+    assert coordinator.provider.telemetry().cache_hits >= 1
 
 
 def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
@@ -840,15 +1097,15 @@ def test_provider_normalizer_replay_and_strategy_pipeline_is_idempotent(
     third = restarted.poll_once()
 
     assert first.provider_health.state is HealthState.HEALTHY
-    assert len(first.outcomes) == 1
-    assert first.outcomes[0].replayed is False
-    assert first.outcomes[0].events_created == 7
+    assert len(first.outcomes) == 2
+    assert all(outcome.replayed is False for outcome in first.outcomes)
+    assert all(outcome.events_created == 7 for outcome in first.outcomes)
     assert second.outcomes == ()
     assert third.outcomes == ()
-    assert repository.event_count() == 7
-    assert reopened.event_count() == 7
-    assert repository.processed_count() == 1
-    assert reopened.processed_count() == 1
+    assert repository.event_count() == 14
+    assert reopened.event_count() == 14
+    assert repository.processed_count() == 2
+    assert reopened.processed_count() == 2
     assert all(bar["provider"] == "TWELVE_DATA" for bar in repository.canonical_bars())
     assert all(bar["synthetic"] is False for bar in repository.canonical_bars())
     assert repository.statuses()[0]["synthetic"] is False

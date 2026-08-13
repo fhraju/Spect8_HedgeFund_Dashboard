@@ -313,6 +313,8 @@ def test_scanner_visible_unavailable_indices_never_create_provider_requests() ->
         is HealthState.DATA_UNAVAILABLE
         for instrument_id in SCANNER_UNAVAILABLE_INSTRUMENT_IDS
     )
+    assert provider.health(checked_at).state is HealthState.HEALTHY
+    assert provider.health(checked_at).detail == "1/1 pollable instruments healthy."
 
 
 def test_sqlite_partitioning_and_instrument_error_recovery(tmp_path: Path) -> None:

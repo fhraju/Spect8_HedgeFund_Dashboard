@@ -849,6 +849,20 @@ class SQLiteProjectionRepository:
             ).fetchone()
         return json.loads(row["payload_json"]) if row is not None else None
 
+    def w1_snapshot_at(
+        self,
+        provider: str,
+        instrument_id: str,
+        strategy_version: str,
+        as_of_h1_close_time_utc: str,
+    ) -> dict[str, Any] | None:
+        return self.weekly_filter_snapshot_at(
+            provider,
+            instrument_id,
+            strategy_version,
+            as_of_h1_close_time_utc,
+        )
+
     def active_filter_mode(self) -> FilterMode:
         with closing(self._connect()) as connection:
             row = connection.execute(
@@ -1752,22 +1766,29 @@ class SQLiteProjectionRepository:
         provider_id: str,
         instrument_id: str,
         timeframe: str,
+        strategy_id: str | None = None,
     ) -> str | None:
         with closing(self._connect()) as connection:
-            row = connection.execute(
-                """
-                SELECT status_json
+            query = """
+                SELECT MAX(json_extract(status_json, '$.signal_bar_close_time'))
+                       AS signal_bar_close_time
                 FROM instrument_status
                 WHERE provider = ?
                   AND instrument_id = ?
                   AND timeframe = ?
-                LIMIT 1
-                """,
-                (provider_id, instrument_id, timeframe),
-            ).fetchone()
-        if row is None:
+            """
+            parameters: tuple[object, ...] = (
+                provider_id,
+                instrument_id,
+                timeframe,
+            )
+            if strategy_id is not None:
+                query += " AND strategy_id = ?"
+                parameters = (*parameters, strategy_id)
+            row = connection.execute(query, parameters).fetchone()
+        if row is None or row["signal_bar_close_time"] is None:
             return None
-        return json.loads(row["status_json"]).get("signal_bar_close_time")
+        return str(row["signal_bar_close_time"])
 
     def latest_canonical_close(
         self,
@@ -1803,7 +1824,7 @@ class SQLiteProjectionRepository:
                 """
                 SELECT COALESCE(SUM(estimated_credits), 0) AS used
                 FROM provider_credit_ledger
-                WHERE provider = ? AND request_started_at > ?
+                WHERE provider = ? AND request_started_at >= ?
                 """,
                 (provider, primitive(window_start)),
             ).fetchone()["used"]
@@ -1868,21 +1889,34 @@ class SQLiteProjectionRepository:
             row = connection.execute(
                 """
                 SELECT COALESCE(SUM(estimated_credits), 0) AS used,
-                       COUNT(*) AS request_count,
-                       MAX(provider_quota_limit) AS provider_quota_limit,
-                       MAX(provider_quota_used) AS provider_quota_used,
-                       MIN(provider_quota_remaining) AS provider_quota_remaining
+                       COUNT(*) AS request_count
                 FROM provider_credit_ledger
-                WHERE provider = ? AND request_started_at > ?
+                WHERE provider = ? AND request_started_at >= ?
+                """,
+                (provider, primitive(window_start)),
+            ).fetchone()
+            quota = connection.execute(
+                """
+                SELECT provider_quota_limit, provider_quota_used,
+                       provider_quota_remaining
+                FROM provider_credit_ledger
+                WHERE provider = ? AND request_started_at >= ?
+                  AND (provider_quota_limit IS NOT NULL
+                       OR provider_quota_used IS NOT NULL
+                       OR provider_quota_remaining IS NOT NULL)
+                ORDER BY request_started_at DESC, id DESC
+                LIMIT 1
                 """,
                 (provider, primitive(window_start)),
             ).fetchone()
         return {
             "estimated_credits_used": int(row["used"]),
             "request_count": int(row["request_count"]),
-            "provider_quota_limit": row["provider_quota_limit"],
-            "provider_quota_used": row["provider_quota_used"],
-            "provider_quota_remaining": row["provider_quota_remaining"],
+            "provider_quota_limit": quota["provider_quota_limit"] if quota else None,
+            "provider_quota_used": quota["provider_quota_used"] if quota else None,
+            "provider_quota_remaining": (
+                quota["provider_quota_remaining"] if quota else None
+            ),
         }
 
     def observation_report(

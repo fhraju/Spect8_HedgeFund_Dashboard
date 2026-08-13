@@ -15,7 +15,10 @@ from backend.app.engine.current_daily_filter import (
     build_daily_filter_snapshot,
 )
 from backend.app.engine.indicators import wilder_atr
-from backend.app.engine.models import CURRENT_D1_FILTER_V2
+from backend.app.engine.models import (
+    CURRENT_D1_FILTER_V2,
+    daily_filter_snapshot_from_payload,
+)
 from backend.app.engine.models import InstrumentMetadata, StrategyRequest
 from backend.app.engine.strategy import Spect8StrategyEvaluator
 from backend.app.market_data.profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
@@ -274,6 +277,22 @@ def test_snapshot_persistence_is_exact_and_idempotent(tmp_path) -> None:
         repository.daily_filter_snapshot_count("TEST", "EUR/USD", CURRENT_D1_FILTER_V2)
         == 1
     )
+
+
+def test_persisted_snapshot_payload_restores_exact_engine_model(tmp_path) -> None:
+    repository = SQLiteProjectionRepository(tmp_path / "snapshot-restore.sqlite3")
+    repository.initialize()
+    value = snapshot()
+    repository.persist_daily_filter_snapshot(value)
+    payload = repository.daily_filter_snapshot_at(
+        value.provider,
+        value.instrument,
+        value.strategy_version,
+        value.as_of_h1_close_time_utc.isoformat().replace("+00:00", "Z"),
+    )
+
+    assert payload is not None
+    assert daily_filter_snapshot_from_payload(payload) == value
 
 
 def test_frozen_v2_fixture_checksum_and_full_precision_cases() -> None:

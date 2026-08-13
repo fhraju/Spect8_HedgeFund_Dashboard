@@ -65,7 +65,7 @@ parameters, is in
 
 ## Limits and credit evidence
 
-The persistent rolling-24-hour guard is configured for an 800-credit account,
+The persistent UTC-calendar-day guard is configured for an 800-credit account,
 a 700-credit operational budget, and a protected 100-credit reserve. The
 controlled work used 135 recorded credits: validation and preserved corrective
 runs plus the diagnostic and final 24-instrument scans. The successful pipeline

@@ -207,7 +207,7 @@ class MarketDataRuntime:
             while not self._stop.is_set():
                 try:
                     await asyncio.to_thread(self.run_once)
-                except Exception:
+                except Exception as error:
                     exit_reason = "POLL_FAILURE_RECOVERED"
                     attempted_at = primitive(self._clock.now())
                     self._repository.record_provider_sync(
@@ -221,7 +221,8 @@ class MarketDataRuntime:
                         "poll_failed",
                         {
                             "provider": provider_id,
-                            "detail": "Unexpected runtime failure.",
+                            "error_type": type(error).__name__,
+                            "detail": str(error) or "Unexpected runtime failure.",
                         },
                         level=logging.ERROR,
                     )

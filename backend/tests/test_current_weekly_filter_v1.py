@@ -15,7 +15,11 @@ from backend.app.engine.current_w1_filter import (
 )
 from backend.app.engine.current_daily_filter import build_daily_filter_snapshot
 from backend.app.engine.indicators import wilder_atr
-from backend.app.engine.models import CURRENT_W1_FILTER_V1, StrategyRequest
+from backend.app.engine.models import (
+    CURRENT_W1_FILTER_V1,
+    StrategyRequest,
+    w1_snapshot_from_payload,
+)
 from backend.app.engine.strategy import Spect8StrategyEvaluator
 from backend.app.market_data.profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 from backend.app.market_data.daily_aggregator import NewYorkDailyAggregator
@@ -428,3 +432,27 @@ def test_macro_event_trace_contains_one_filter_event_with_mode_and_version(
     assert filter_events[0].payload["strategy_version"] == CURRENT_W1_FILTER_V1
     assert filter_events[0].payload["filter_snapshot_id"] == macro.snapshot_id
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+
+
+def test_persisted_weekly_snapshot_payload_restores_exact_engine_model(
+    tmp_path: Path,
+) -> None:
+    as_of = daily_snapshot().as_of_h1_close_time_utc
+    value = build_w1_filter_snapshot(
+        provider=PROVIDER,
+        instrument=INSTRUMENT,
+        as_of_h1_close=as_of,
+        h1_bars=weekly_history(active_new_york_weekly_session(as_of)[0], as_of=as_of),
+    )
+    repository = SQLiteProjectionRepository(tmp_path / "weekly-restore.sqlite3")
+    repository.initialize()
+    repository.persist_w1_filter_snapshot(value)
+    payload = repository.weekly_filter_snapshot_at(
+        value.provider,
+        value.instrument,
+        value.strategy_version,
+        value.as_of_h1_close_time_utc.isoformat().replace("+00:00", "Z"),
+    )
+
+    assert payload is not None
+    assert w1_snapshot_from_payload(payload) == value
