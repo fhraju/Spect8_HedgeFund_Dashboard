@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import asdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from threading import RLock
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from .domain import Bar, DomainEvent, FilterMode, InstrumentStatus, Timeframe, primitive
@@ -249,6 +249,52 @@ class SQLiteProjectionRepository:
                     provider_quota_remaining INTEGER
                 );
 
+                CREATE TABLE IF NOT EXISTS platform_integration_state (
+                    source TEXT PRIMARY KEY
+                        CHECK (source = 'MARKET_DATA_PLATFORM'),
+                    watermark_canonical_bar_id INTEGER NOT NULL
+                        CHECK (watermark_canonical_bar_id >= 0),
+                    instrument_master_checksum TEXT NOT NULL,
+                    session_calendar_checksum TEXT NOT NULL,
+                    timezone_data_version TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS platform_canonical_consumption (
+                    logical_identity TEXT PRIMARY KEY,
+                    immutable_identity TEXT NOT NULL UNIQUE,
+                    canonical_bar_id INTEGER NOT NULL UNIQUE
+                        CHECK (canonical_bar_id > 0),
+                    platform_instrument_id TEXT NOT NULL,
+                    spect8_instrument_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL CHECK (timeframe IN ('H1', 'D1')),
+                    price_type TEXT NOT NULL CHECK (price_type = 'BID'),
+                    open_time_utc TEXT NOT NULL,
+                    close_time_utc TEXT NOT NULL,
+                    policy_id TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    version_number INTEGER NOT NULL CHECK (version_number > 0),
+                    semantic_hash TEXT NOT NULL,
+                    semantic_available_at TEXT NOT NULL,
+                    evaluation_keys_json TEXT NOT NULL,
+                    consumed_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS platform_canonical_revisions (
+                    revised_canonical_bar_id INTEGER PRIMARY KEY
+                        CHECK (revised_canonical_bar_id > 0),
+                    logical_identity TEXT NOT NULL,
+                    first_canonical_bar_id INTEGER NOT NULL,
+                    revised_version_number INTEGER NOT NULL
+                        CHECK (revised_version_number > 0),
+                    revised_semantic_hash TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    action TEXT NOT NULL
+                        CHECK (action = 'DETECTED_NO_AUTOMATIC_REPLAY'),
+                    FOREIGN KEY (logical_identity)
+                        REFERENCES platform_canonical_consumption(logical_identity)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_canonical_bars_instrument_time
                 ON canonical_bars (
                     instrument_id, timeframe, close_time_utc DESC
@@ -271,6 +317,12 @@ class SQLiteProjectionRepository:
                 ON event_history (instrument_id, timeframe, occurred_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_credit_ledger_provider_time
                 ON provider_credit_ledger (provider, request_started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_platform_consumption_series
+                ON platform_canonical_consumption (
+                    spect8_instrument_id, timeframe, close_time_utc
+                );
+                CREATE INDEX IF NOT EXISTS idx_platform_revisions_identity
+                ON platform_canonical_revisions (logical_identity, observed_at);
                 """
             )
             self._migrate_synthetic_constraints(connection)
@@ -870,6 +922,209 @@ class SQLiteProjectionRepository:
                    WHERE configuration_key = 'active_filter_mode'"""
             ).fetchone()
         return FilterMode(row["configuration_value"] if row is not None else "MICRO")
+
+    def platform_integration_state(self) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT source, watermark_canonical_bar_id,
+                          instrument_master_checksum,
+                          session_calendar_checksum, timezone_data_version,
+                          updated_at
+                   FROM platform_integration_state
+                   WHERE source = 'MARKET_DATA_PLATFORM'"""
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def platform_consumed_identity(
+        self, logical_identity: str
+    ) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM platform_canonical_consumption
+                   WHERE logical_identity = ?""",
+                (logical_identity,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = dict(row)
+        value["evaluation_keys"] = tuple(
+            json.loads(value.pop("evaluation_keys_json"))
+        )
+        return value
+
+    def record_platform_consumption(
+        self,
+        *,
+        logical_identity: str,
+        immutable_identity: str,
+        canonical_bar_id: int,
+        platform_instrument_id: str,
+        spect8_instrument_id: str,
+        timeframe: str,
+        price_type: str,
+        open_time: datetime,
+        close_time: datetime,
+        policy_id: str,
+        policy_version: str,
+        version_number: int,
+        semantic_hash: str,
+        semantic_available_at: datetime,
+        evaluation_keys: tuple[str, ...],
+        consumed_at: datetime,
+    ) -> bool:
+        values = (
+            logical_identity,
+            immutable_identity,
+            canonical_bar_id,
+            platform_instrument_id,
+            spect8_instrument_id,
+            timeframe,
+            price_type,
+            _exact_value(open_time),
+            _exact_value(close_time),
+            policy_id,
+            policy_version,
+            version_number,
+            semantic_hash,
+            _exact_value(semantic_available_at),
+            json.dumps(evaluation_keys, separators=(",", ":")),
+            _exact_value(consumed_at),
+        )
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO platform_canonical_consumption (
+                       logical_identity, immutable_identity, canonical_bar_id,
+                       platform_instrument_id, spect8_instrument_id, timeframe,
+                       price_type, open_time_utc, close_time_utc, policy_id,
+                       policy_version, version_number, semantic_hash,
+                       semantic_available_at, evaluation_keys_json, consumed_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    """SELECT immutable_identity, canonical_bar_id,
+                              version_number, semantic_hash
+                       FROM platform_canonical_consumption
+                       WHERE logical_identity = ?""",
+                    (logical_identity,),
+                ).fetchone()
+                if row is None or (
+                    row["immutable_identity"] != immutable_identity
+                    or int(row["canonical_bar_id"]) != canonical_bar_id
+                    or int(row["version_number"]) != version_number
+                    or row["semantic_hash"] != semantic_hash
+                ):
+                    raise ValueError("Platform canonical consumption identity conflict")
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def record_platform_revision(
+        self,
+        *,
+        logical_identity: str,
+        first_canonical_bar_id: int,
+        revised_canonical_bar_id: int,
+        revised_version_number: int,
+        revised_semantic_hash: str,
+        observed_at: datetime,
+    ) -> bool:
+        values = (
+            revised_canonical_bar_id,
+            logical_identity,
+            first_canonical_bar_id,
+            revised_version_number,
+            revised_semantic_hash,
+            _exact_value(observed_at),
+            "DETECTED_NO_AUTOMATIC_REPLAY",
+        )
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO platform_canonical_revisions (
+                       revised_canonical_bar_id, logical_identity,
+                       first_canonical_bar_id, revised_version_number,
+                       revised_semantic_hash, observed_at, action
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    """SELECT logical_identity, first_canonical_bar_id,
+                              revised_version_number, revised_semantic_hash
+                       FROM platform_canonical_revisions
+                       WHERE revised_canonical_bar_id = ?""",
+                    (revised_canonical_bar_id,),
+                ).fetchone()
+                if row is None or (
+                    row["logical_identity"] != logical_identity
+                    or int(row["first_canonical_bar_id"])
+                    != first_canonical_bar_id
+                    or int(row["revised_version_number"])
+                    != revised_version_number
+                    or row["revised_semantic_hash"] != revised_semantic_hash
+                ):
+                    raise ValueError("Platform canonical revision identity conflict")
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def platform_revisions(self) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM platform_canonical_revisions
+                   ORDER BY revised_canonical_bar_id"""
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def advance_platform_watermark(
+        self,
+        *,
+        watermark_canonical_bar_id: int,
+        instrument_master_checksum: str,
+        session_calendar_checksum: str,
+        timezone_data_version: str,
+        updated_at: datetime,
+    ) -> None:
+        if watermark_canonical_bar_id < 0:
+            raise ValueError("Platform watermark cannot be negative")
+        authority = (
+            instrument_master_checksum,
+            session_calendar_checksum,
+            timezone_data_version,
+        )
+        if any(not value for value in authority):
+            raise ValueError("Platform authority metadata must be non-empty")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT watermark_canonical_bar_id,
+                          instrument_master_checksum,
+                          session_calendar_checksum, timezone_data_version
+                   FROM platform_integration_state
+                   WHERE source = 'MARKET_DATA_PLATFORM'"""
+            ).fetchone()
+            if row is not None:
+                previous = int(row["watermark_canonical_bar_id"])
+                if watermark_canonical_bar_id < previous:
+                    raise ValueError("Platform watermark cannot move backwards")
+            connection.execute(
+                """INSERT INTO platform_integration_state (
+                       source, watermark_canonical_bar_id,
+                       instrument_master_checksum, session_calendar_checksum,
+                       timezone_data_version, updated_at
+                   ) VALUES ('MARKET_DATA_PLATFORM', ?, ?, ?, ?, ?)
+                   ON CONFLICT(source) DO UPDATE SET
+                       watermark_canonical_bar_id = excluded.watermark_canonical_bar_id,
+                       instrument_master_checksum = excluded.instrument_master_checksum,
+                       session_calendar_checksum = excluded.session_calendar_checksum,
+                       timezone_data_version = excluded.timezone_data_version,
+                       updated_at = excluded.updated_at""",
+                (
+                    watermark_canonical_bar_id,
+                    *authority,
+                    _exact_value(updated_at),
+                ),
+            )
+            connection.commit()
 
     def set_active_filter_mode(
         self, mode: FilterMode, *, updated_at: datetime

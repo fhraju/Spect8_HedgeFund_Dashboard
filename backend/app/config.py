@@ -25,6 +25,8 @@ class Settings:
         Timeframe.D1,
     )
     twelve_data_api_key: str | None = field(default=None, repr=False)
+    market_data_platform_shadow_enabled: bool = False
+    market_data_platform_database_url: str | None = field(default=None, repr=False)
     market_data_runtime_enabled: bool = False
     market_scan_enabled: bool = False
     market_scan_after_hour_seconds: int = 60
@@ -91,6 +93,18 @@ class Settings:
             if not self.twelve_data_api_key:
                 raise ValueError(
                     "TWELVE_DATA_API_KEY is required for twelve_data provider."
+                )
+        if self.market_data_platform_shadow_enabled:
+            if not self.market_data_platform_database_url:
+                raise ValueError(
+                    "MARKET_DATA_PLATFORM_DATABASE_URL is required when the "
+                    "Platform shadow adapter is enabled."
+                )
+            if not self.market_data_platform_database_url.startswith(
+                "postgresql+psycopg://"
+            ):
+                raise ValueError(
+                    "MARKET_DATA_PLATFORM_DATABASE_URL must use postgresql+psycopg."
                 )
         if not 60 <= self.market_data_poll_seconds <= 900:
             raise ValueError(
@@ -183,6 +197,13 @@ class Settings:
             instrument=os.environ.get("SPECT8_INSTRUMENT", "EUR/USD"),
             timeframes=timeframes,
             twelve_data_api_key=os.environ.get("TWELVE_DATA_API_KEY"),
+            market_data_platform_shadow_enabled=os.environ.get(
+                "SPECT8_MARKET_DATA_PLATFORM_SHADOW_ENABLED", "false"
+            ).lower()
+            == "true",
+            market_data_platform_database_url=os.environ.get(
+                "MARKET_DATA_PLATFORM_DATABASE_URL"
+            ),
             market_data_runtime_enabled=os.environ.get(
                 "SPECT8_MARKET_DATA_RUNTIME_ENABLED", "true"
             ).lower()
