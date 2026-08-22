@@ -82,4 +82,6 @@ path and values.
 
 Phase 22A-2 does not implement live cutover, execution, spread semantics,
 forming signals, lower-timeframe evaluation, or automatic revision-driven
-strategy recomputation.
+strategy recomputation. Phase 22A-3 supplies the concrete read-only PostgreSQL
+runtime while preserving these contracts; see
+`PHASE22A3_POSTGRESQL_SHADOW_VALIDATION.md`.

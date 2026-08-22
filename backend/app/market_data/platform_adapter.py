@@ -127,16 +127,10 @@ class PlatformCanonicalBar:
 
     @property
     def logical_identity(self) -> str:
-        return "|".join(
-            (
-                self.instrument_id,
-                self.timeframe,
-                self.price_type,
-                self.open_time.isoformat(),
-                self.close_time.isoformat(),
-                self.policy_id,
-                self.policy_version,
-            )
+        return (
+            f"{self.instrument_id}|{self.timeframe}|{self.price_type}|"
+            f"{self.open_time.isoformat()}|{self.close_time.isoformat()}|"
+            f"{self.policy_id}|{self.policy_version}"
         )
 
     @property
@@ -189,6 +183,11 @@ class PlatformCanonicalReadGateway(Protocol):
     ) -> PlatformReadBatch:
         ...
 
+    def read_canonical_ids(
+        self, canonical_bar_ids: tuple[int, ...]
+    ) -> tuple[PlatformCanonicalBar, ...]:
+        ...
+
 
 class Spect8CanonicalReadServiceGateway:
     """Thin optional-dependency wrapper around the Platform read service."""
@@ -239,6 +238,17 @@ class Spect8CanonicalReadServiceGateway:
             instrument_master_checksum=result.instrument_master_checksum,
             session_calendar_checksum=result.session_calendar_checksum,
             timezone_data_version=result.timezone_data_version,
+        )
+
+    def read_canonical_ids(
+        self, canonical_bar_ids: tuple[int, ...]
+    ) -> tuple[PlatformCanonicalBar, ...]:
+        reader = getattr(self._service, "read_canonical_ids", None)
+        if not callable(reader):
+            raise TypeError("service must provide a callable read_canonical_ids method")
+        return tuple(
+            PlatformCanonicalBar(**_public_fields(bar))
+            for bar in reader(canonical_bar_ids)
         )
 
 

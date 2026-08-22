@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain import primitive
+from ..domain import Bar, primitive
 from ..engine.models import StrategyRequest
 from ..service import WalkingSkeletonService
 
@@ -68,6 +68,54 @@ class ParityReport:
             f"strategy parity mismatch at {first.path}: "
             f"old={first.old_value!r}, platform={first.platform_value!r}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderDataDifference:
+    timeframe: str
+    open_time: str
+    close_time: str
+    old_ohlc: tuple[str, str, str, str] | None
+    platform_bid_ohlc: tuple[str, str, str, str] | None
+    classification: str = "PROVIDER_DATA_DIFFERENCE"
+
+
+def classify_provider_data_differences(
+    old_bars: tuple[Bar, ...],
+    platform_bid_bars: tuple[Bar, ...],
+) -> tuple[ProviderDataDifference, ...]:
+    """Report source OHLC differences without calling them semantic parity failures."""
+
+    def key(bar: Bar) -> tuple[str, str, str]:
+        return (
+            bar.timeframe.value,
+            bar.open_time.isoformat(),
+            bar.close_time.isoformat(),
+        )
+
+    def ohlc(bar: Bar | None) -> tuple[str, str, str, str] | None:
+        if bar is None:
+            return None
+        return tuple(str(value) for value in (bar.open, bar.high, bar.low, bar.close))
+
+    old = {key(bar): bar for bar in old_bars}
+    platform = {key(bar): bar for bar in platform_bid_bars}
+    differences: list[ProviderDataDifference] = []
+    for identity in sorted(set(old) | set(platform)):
+        old_bar = old.get(identity)
+        platform_bar = platform.get(identity)
+        if ohlc(old_bar) == ohlc(platform_bar):
+            continue
+        differences.append(
+            ProviderDataDifference(
+                timeframe=identity[0],
+                open_time=identity[1],
+                close_time=identity[2],
+                old_ohlc=ohlc(old_bar),
+                platform_bid_ohlc=ohlc(platform_bar),
+            )
+        )
+    return tuple(differences)
 
 
 class DeterministicParityHarness:

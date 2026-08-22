@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
 from backend.app.domain import Bar, FilterMode, Timeframe
@@ -38,7 +39,10 @@ from backend.app.market_data.platform_adapter import (
     spect8_instrument_id,
     to_spect8_bar,
 )
-from backend.app.market_data.platform_parity import DeterministicParityHarness
+from backend.app.market_data.platform_parity import (
+    DeterministicParityHarness,
+    classify_provider_data_differences,
+)
 from backend.app.market_data.session_boundaries import active_new_york_weekly_session
 from backend.app.repository import SQLiteProjectionRepository
 from backend.app.service import WalkingSkeletonService
@@ -66,7 +70,7 @@ def _canonical(
     high: str = "1.1010",
     low: str = "1.0990",
     close: str = "1.1005",
-    volume: Decimal | None = Decimal("100"),
+    volume: Decimal | None = Decimal(100),
     version_number: int = 1,
     semantic_hash: str | None = None,
     instrument_id: str = "FX_EUR_USD",
@@ -406,6 +410,51 @@ def test_twelve_data_coordinator_path_remains_constructible(tmp_path: Path) -> N
     application = create_app(settings)
     assert isinstance(application.state.provider, MultiInstrumentTwelveDataProvider)
     assert application.state.coordinator is not None
+    assert application.state.platform_shadow_runtime is None
+    assert application.state.platform_shadow_repository is None
+
+
+def test_enabled_shadow_runs_isolated_without_becoming_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    class FakeShadow:
+        def run_once(self, *, available_as_of: datetime) -> dict[str, str]:
+            calls.append(f"run:{available_as_of.tzinfo is not None}")
+            return {"source": "PLATFORM_SHADOW"}
+
+        def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr(
+        "backend.app.main.PlatformShadowRuntime.from_database_url",
+        lambda *_args: FakeShadow(),
+    )
+    settings = Settings(
+        repository_root=ROOT,
+        database_path=tmp_path / "shadow-app.sqlite3",
+        internal_api_key="test",
+        market_data_provider="replay",
+        market_data_platform_shadow_enabled=True,
+        market_data_platform_database_url="postgresql+psycopg://user:pass@host/db",
+    )
+    application = create_app(settings)
+    with TestClient(application):
+        assert application.state.provider.identity.synthetic is True
+        assert application.state.platform_shadow_repository.database_path == (
+            tmp_path / "shadow-app.platform-shadow.sqlite3"
+        )
+        assert application.state.platform_shadow_repository.database_path != (
+            application.state.repository.database_path
+        )
+        assert application.state.platform_shadow_result == {
+            "source": "PLATFORM_SHADOW"
+        }
+        assert {
+            item["provider"] for item in application.state.repository.statuses()
+        } == {application.state.provider.identity.provider_id}
+    assert calls == ["run:True", "close"]
 
 
 def _adapt_request(case_id: str):
@@ -454,7 +503,7 @@ def _adapt_request(case_id: str):
 
 def _adapt_broker_h4_request():
     request = SyntheticCaseInputLoader(ROOT).load("confirmed_sell_h4_01")
-    wall = datetime(2026, 1, 19)
+    wall = datetime.combine(date(2026, 1, 19), time.min)
     aligned: list[Bar] = []
     for source in request.signal_bars:
         while wall.weekday() >= 5:
@@ -489,7 +538,7 @@ def _adapt_broker_h4_request():
                     low=str(source.low),
                     close=str(source.close if offset == 3 else source.open),
                     volume=(
-                        source.volume / Decimal("4")
+                        source.volume / Decimal(4)
                         if source.volume is not None
                         else None
                     ),
@@ -697,3 +746,16 @@ def test_parity_harness_reports_exact_field_mismatch(tmp_path: Path) -> None:
     report = DeterministicParityHarness(service).compare(old, changed)
     assert report.matched is False
     assert report.mismatches
+
+
+def test_provider_ohlc_difference_is_classified_separately_from_parity() -> None:
+    old, platform = _adapt_request("confirmed_buy_h1_01")
+    selected = platform.signal_bars[-2]
+    changed = replace(selected, high=selected.high + Decimal("0.0001"))
+    differences = classify_provider_data_differences(
+        old.signal_bars,
+        (*platform.signal_bars[:-2], changed, platform.signal_bars[-1]),
+    )
+    assert len(differences) == 1
+    assert differences[0].classification == "PROVIDER_DATA_DIFFERENCE"
+    assert differences[0].old_ohlc != differences[0].platform_bid_ohlc

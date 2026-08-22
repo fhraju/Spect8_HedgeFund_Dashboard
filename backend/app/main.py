@@ -38,16 +38,17 @@ from .historical_replay_api import (
     ReplayDeleteView,
     ReplayEvaluationDetail,
     ReplayEvaluationPage,
-    ReplayRunView,
     ReplayRunsView,
+    ReplayRunView,
     ReplaySummaryView,
 )
 from .market_data.clock import FixedClock, SystemClock
 from .market_data.closed_bar import ClosedBarDetector
-from .market_data.credit_budget import DailyCreditBudgetGuard
 from .market_data.coordinator import MarketDataCoordinator
-from .market_data.normalizer import CandleNormalizer
+from .market_data.credit_budget import DailyCreditBudgetGuard
 from .market_data.multi_provider import MultiInstrumentTwelveDataProvider
+from .market_data.normalizer import CandleNormalizer
+from .market_data.platform_shadow import PlatformShadowRuntime
 from .market_data.registry import (
     CanonicalInstrumentRegistry,
     twelve_data_instruments,
@@ -120,6 +121,25 @@ def create_app(
     registry = CanonicalInstrumentRegistry(discovered_instruments)
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
+    platform_shadow_repository = (
+        SQLiteProjectionRepository(
+            configured.database_path.with_name(
+                f"{configured.database_path.stem}.platform-shadow"
+                f"{configured.database_path.suffix}"
+            )
+        )
+        if configured.market_data_platform_shadow_enabled
+        else None
+    )
+    platform_shadow_runtime = (
+        PlatformShadowRuntime.from_database_url(
+            configured.market_data_platform_database_url or "",
+            platform_shadow_repository,
+            WalkingSkeletonService(evaluator, None, platform_shadow_repository),
+        )
+        if platform_shadow_repository is not None
+        else None
+    )
     coordinator = MarketDataCoordinator(
         provider=provider,
         registry=registry,
@@ -174,6 +194,12 @@ def create_app(
     async def lifespan(_: FastAPI):
         repository.initialize()
         replay_service.repository.initialize()
+        if platform_shadow_repository is not None:
+            platform_shadow_repository.initialize()
+        if platform_shadow_runtime is not None:
+            app.state.platform_shadow_result = platform_shadow_runtime.run_once(
+                available_as_of=SystemClock().now()
+            )
         runtime_task: asyncio.Task[None] | None = None
         if configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
@@ -187,6 +213,8 @@ def create_app(
             if runtime_task is not None:
                 runtime.stop()
                 await runtime_task
+            if platform_shadow_runtime is not None:
+                platform_shadow_runtime.close()
 
     app = FastAPI(
         title="Spect8 HedgeFund Market Scanner",
@@ -206,6 +234,9 @@ def create_app(
     app.state.clock = clock
     app.state.coordinator = coordinator
     app.state.market_data_runtime = runtime
+    app.state.platform_shadow_runtime = platform_shadow_runtime
+    app.state.platform_shadow_repository = platform_shadow_repository
+    app.state.platform_shadow_result = None
     app.state.credit_budget = credit_budget
     app.state.historical_replay_service = replay_service
 
