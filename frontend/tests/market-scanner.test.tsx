@@ -88,9 +88,10 @@ describe("multi-instrument market scanner", () => {
     expect(html).toContain('aria-label="Filter mode"');
     expect(html).toContain('action="/api/auth/logout"');
     expect(html).toContain("Logout</button>");
-    expect(html).not.toContain("H1 Filter");
-    expect(html).not.toContain("H4 Filter");
-    expect(html).toContain("H4 Signal");
+    // In MICRO mode, we show M30 and H1 signals (not H4)
+    expect(html).toContain("M30 Signal");
+    expect(html).toContain("H1 Signal");
+    expect(html).not.toContain("H4 Signal");
     expect(html).toContain("BUY");
     expect(html).toContain("SELL");
     expect(html).toContain("NO FILTER");
@@ -160,18 +161,16 @@ describe("multi-instrument market scanner", () => {
     expect(html).not.toContain("/instruments/SP_500");
   });
 
-  it("filters by asset, timeframe direction, confirmed signal, and health", () => {
+  it("filters by asset, direction, confirmed signal, and health", () => {
     const common = {
       asset: "ALL",
-      timeframe: "ALL" as const,
       match: "ALL",
       confirmed: "ALL",
       health: "ALL",
     };
     expect(filterScannerRows(rows, { ...common, asset: "METAL" })).toHaveLength(1);
-    expect(filterScannerRows(rows, { ...common, timeframe: "H1", match: "SELL" })).toEqual([rows[0]]);
-    expect(filterScannerRows(rows, { ...common, timeframe: "H4", match: "SELL" })).toEqual([rows[0]]);
-    expect(filterScannerRows(rows, { ...common, timeframe: "H1", match: "BUY" })).toEqual([]);
+    expect(filterScannerRows(rows, { ...common, match: "SELL" })).toEqual([rows[0]]);
+    expect(filterScannerRows(rows, { ...common, match: "BUY" })).toEqual([]);
     expect(filterScannerRows(rows, { ...common, confirmed: "CONFIRMED" })).toEqual([rows[0]]);
     expect(filterScannerRows(rows, { ...common, health: "STALE" })).toEqual([rows[2]]);
     expect(filterScannerRows(rows, { ...common, health: "ERROR" })).toEqual([rows[1]]);

@@ -2560,3 +2560,220 @@ td:first-child span,
 .muted {
   color: var(--dim);
 }
+
+/* Signal Card — professional boxed signal card */
+.signal-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 100px;
+  max-width: 140px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: linear-gradient(145deg, #0e1d2e, #0a1520);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all 150ms ease;
+}
+
+.signal-card.buy {
+  border-color: #27d29240;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(39, 210, 146, 0.1),
+    0 0 0 1px #27d29233;
+}
+
+.signal-card.sell {
+  border-color: #ff5c6c40;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 92, 108, 0.1),
+    0 0 0 1px #ff5c6c33;
+}
+
+.signal-card.neutral {
+  border-color: var(--border-soft);
+}
+
+.signal-card.forming {
+  opacity: 0.9;
+  background: linear-gradient(145deg, #0e1d2e, #0a1520);
+}
+
+.signal-card.forming.buy {
+  border-color: #27d29266;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(39, 210, 146, 0.15),
+    0 0 0 1px #27d2924d,
+    0 0 12px #27d29226;
+}
+
+.signal-card.forming.sell {
+  border-color: #ff5c6c66;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 92, 108, 0.15),
+    0 0 0 1px #ff5c6c4d,
+    0 0 12px #ff5c6c26;
+}
+
+.signal-card.confirmed.buy {
+  border-color: #27d292;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(39, 210, 146, 0.2),
+    0 0 0 1px #27d292,
+    0 0 16px #27d29240;
+}
+
+.signal-card.confirmed.sell {
+  border-color: #ff5c6c;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 92, 108, 0.2),
+    0 0 0 1px #ff5c6c,
+    0 0 16px #ff5c6c40;
+}
+
+.signal-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.signal-icon {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.signal-icon.buy {
+  color: #27d292;
+}
+
+.signal-icon.sell {
+  color: #ff5c6c;
+}
+
+.signal-direction {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.signal-direction.buy {
+  color: #27d292;
+  text-shadow: 0 0 8px rgba(39, 210, 146, 0.4);
+}
+
+.signal-direction.sell {
+  color: #ff5c6c;
+  text-shadow: 0 0 8px rgba(255, 92, 108, 0.4);
+}
+
+.signal-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+
+.signal-status.forming {
+  background: rgba(239, 181, 51, 0.15);
+  color: #efb533;
+  border: 1px solid #efb53340;
+  font-style: italic;
+}
+
+.signal-status.confirmed {
+  background: rgba(39, 210, 146, 0.15);
+  color: #27d292;
+  border: 1px solid #27d29240;
+}
+
+.signal-status.confirmed.sell {
+  background: rgba(255, 92, 108, 0.15);
+  color: #ff5c6c;
+  border: 1px solid #ff5c6c40;
+}
+
+.signal-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--dim);
+}
+
+.signal-timeframe {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #0a1520;
+  border: 1px solid var(--border-soft);
+}
+
+.signal-mode {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.signal-visible-until {
+  font-size: 8px;
+  color: var(--dim);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.signal-card-meta .signal-visible-until {
+  margin-left: auto;
+}
+
+.signal-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--dim);
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+}
+
+.signal-fallback.neutral {
+  color: var(--dim);
+}
+
+/* Formation pulse animation for forming signals */
+@keyframes signal-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.signal-card.forming {
+  animation: signal-pulse 2s ease-in-out infinite;
+}
+
+/* Ensure minimum width for alignment */
+.signal-card {
+  min-width: 110px;
+}
+
+.signal-card .signal-card-header {
+  min-height: 22px;
+}

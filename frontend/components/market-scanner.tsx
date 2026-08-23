@@ -4,6 +4,7 @@ import type {
   ScannerInstrument,
   ScannerSnapshot,
   CurrentSignals,
+  ScannerTimeframe,
 } from "@/lib/api-types";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +13,7 @@ import { FilterModeSelector } from "./filter-mode-selector";
 import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
+import { SignalCard, SignalCardFallback } from "./signal-card";
 
 export type ScannerFilters = {
   asset: string;
@@ -106,12 +108,23 @@ export function filterScannerRows(
         : row.data_status === "BOOTSTRAPPING"
           ? "BOOTSTRAPPING"
           : "ERROR";
+
+    // Check confirmed signal filter
+    const confirmedMatch =
+      filters.confirmed === "ALL" ||
+      (filters.confirmed === "CONFIRMED" &&
+        (["H1", "H4"] as const).some((tf) => {
+          const tfData = row[tf] as ScannerTimeframe | undefined;
+          return tfData?.signal_status && !["NONE", "WAITING"].includes(tfData.signal_status ?? "NONE");
+        }));
+
     return (
       (filters.asset === "ALL" || row.asset_class === filters.asset) &&
       (!filters.kind || filters.kind === "ALL" || row.instrument_kind === filters.kind) &&
       (!filters.exposure || filters.exposure === "ALL" || row.exposure_category === filters.exposure) &&
       (!filters.proxy || filters.proxy === "ALL" || (filters.proxy === "PROXY") === Boolean(row.is_proxy)) &&
       matchesCurrentFilter(row, filters.match) &&
+      confirmedMatch &&
       (filters.health === "ALL" || healthGroup === filters.health)
     );
   });
@@ -288,16 +301,19 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                         const isForming = live.state === "FORMING";
                         return (
                           <td key={tf}>
-                            <span className={`signal-live ${isForming ? "forming" : "confirmed"}`} title={isForming ? "Provisional — incomplete bar" : `Confirmed until ${live.signal.visible_until ?? live.signal.confirmed_at}`}>
-                              <span aria-hidden="true">{live.direction === "BUY" ? "▲" : live.direction === "SELL" ? "▼" : "◆"}</span>
-                              {live.direction} {isForming ? "FORMING" : "SIGNAL"}
-                            </span>
+                            <SignalCard
+                              instrument={row.instrument_id}
+                              mode={activeFilterMode}
+                              timeframe={tf}
+                              signal={live.signal}
+                              isForming={isForming}
+                            />
                           </td>
                         );
                       }
                       // Fallback to legacy H1/H4 status for non-live timeframes (should not happen for M30)
                       const legacy = tf === "M30" ? "NONE" : row[tf as "H1" | "H4"]?.signal_status ?? "NONE";
-                      return <td key={tf}><SignalBadge status={legacy} /></td>;
+                      return <td key={tf}><SignalCardFallback status={legacy} /></td>;
                     })}
                     <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
                     <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
