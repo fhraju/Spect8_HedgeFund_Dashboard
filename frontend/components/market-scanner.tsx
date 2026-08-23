@@ -288,11 +288,13 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                         const isForming = live.state === "FORMING";
                         return (
                           <td key={tf}>
-                            <span className={`signal-live ${isForming ? "forming" : "confirmed"}`} title={isForming ? "Provisional — incomplete bar" : `Confirmed until ${live.signal.visible_until ?? live.signal.confirmed_at}`}>
-                              <SignalBadge status={live.direction} />
-                              <span className={`signal-state-inline state-${live.state.toLowerCase()}`}>{isForming ? "Forming" : "Signal"}</span>
+                            <span
+                              className={`signal-live ${isForming ? "forming" : "confirmed"}`}
+                              title={isForming ? "Provisional — incomplete bar" : `Confirmed until ${live.signal.visible_until ?? live.signal.confirmed_at}`}
+                            >
+                              <span aria-hidden="true">{live.direction === "BUY" ? "▲" : live.direction === "SELL" ? "▼" : "◆"}</span>
+                              {live.direction} {isForming ? "FORMING" : "SIGNAL"}
                             </span>
-                            {isForming && <small className="signal-forming-dot">● forming</small>}
                           </td>
                         );
                       }
