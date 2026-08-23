@@ -481,6 +481,20 @@ class PlatformIncrementalProcessor:
             after_canonical_bar_id=(previous_watermark or None),
             limits=SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
         )
+        return self.process_batch(batch, process_bar=process_bar)
+
+    def process_batch(
+        self,
+        batch: PlatformReadBatch,
+        *,
+        process_bar: Callable[
+            [PlatformCanonicalBar, str], str | tuple[str, ...] | None
+        ],
+    ) -> PlatformProcessingResult:
+        state = self._repository.platform_integration_state()
+        previous_watermark = int(state["watermark_canonical_bar_id"]) if state else 0
+        if batch.watermark_canonical_bar_id < previous_watermark:
+            raise PlatformAdapterError("Platform watermark moved backwards")
         consumed = 0
         replayed = 0
         revisions = 0

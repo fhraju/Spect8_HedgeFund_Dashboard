@@ -25,6 +25,7 @@ class Settings:
         Timeframe.D1,
     )
     twelve_data_api_key: str | None = field(default=None, repr=False)
+    market_data_source: str = "TWELVE_DATA"
     market_data_platform_shadow_enabled: bool = False
     market_data_platform_database_url: str | None = field(default=None, repr=False)
     market_data_runtime_enabled: bool = False
@@ -84,17 +85,29 @@ class Settings:
                     "SPECT8_DATABASE_PATH must be outside the Git repository "
                     "in production."
                 )
+        if self.market_data_source not in {
+            "TWELVE_DATA",
+            "MARKET_DATA_PLATFORM",
+        }:
+            raise ValueError(
+                "SPECT8_MARKET_DATA_SOURCE must be TWELVE_DATA or "
+                "MARKET_DATA_PLATFORM."
+            )
         provider = self.market_data_provider.lower()
         if provider not in {"replay", "twelve_data"}:
             raise ValueError(
                 "SPECT8_MARKET_DATA_PROVIDER must be replay or twelve_data."
             )
-        if provider == "twelve_data":
-            if not self.twelve_data_api_key:
-                raise ValueError(
-                    "TWELVE_DATA_API_KEY is required for twelve_data provider."
-                )
-        if self.market_data_platform_shadow_enabled:
+        if (
+            provider == "twelve_data"
+            and self.market_data_source == "TWELVE_DATA"
+            and not self.twelve_data_api_key
+        ):
+            raise ValueError(
+                "TWELVE_DATA_API_KEY is required for twelve_data provider."
+            )
+        platform_selected = self.market_data_source == "MARKET_DATA_PLATFORM"
+        if platform_selected or self.market_data_platform_shadow_enabled:
             if not self.market_data_platform_database_url:
                 raise ValueError(
                     "MARKET_DATA_PLATFORM_DATABASE_URL is required when the "
@@ -105,6 +118,25 @@ class Settings:
             ):
                 raise ValueError(
                     "MARKET_DATA_PLATFORM_DATABASE_URL must use postgresql+psycopg."
+                )
+        if platform_selected:
+            approved = {"EUR_USD", "GBP_USD", "USD_JPY"}
+            configured = set(self.enabled_instrument_ids or ())
+            if not configured:
+                raise ValueError(
+                    "SPECT8_ENABLED_INSTRUMENT_IDS must explicitly select a non-empty "
+                    "Platform-approved subset: EUR_USD, GBP_USD, USD_JPY."
+                )
+            unsupported = configured - approved
+            if unsupported:
+                raise ValueError(
+                    "MARKET_DATA_PLATFORM authority has no approved mapping for: "
+                    + ", ".join(sorted(unsupported))
+                )
+            if self.market_data_platform_shadow_enabled:
+                raise ValueError(
+                    "Platform shadow mode cannot be enabled while "
+                    "MARKET_DATA_PLATFORM is authoritative."
                 )
         if not 60 <= self.market_data_poll_seconds <= 900:
             raise ValueError(
@@ -164,7 +196,7 @@ class Settings:
             )
 
     @classmethod
-    def from_environment(cls) -> "Settings":
+    def from_environment(cls) -> Settings:
         repository_root = Path(__file__).resolve().parents[2]
         database_path = Path(
             os.environ.get(
@@ -197,6 +229,9 @@ class Settings:
             instrument=os.environ.get("SPECT8_INSTRUMENT", "EUR/USD"),
             timeframes=timeframes,
             twelve_data_api_key=os.environ.get("TWELVE_DATA_API_KEY"),
+            market_data_source=os.environ.get(
+                "SPECT8_MARKET_DATA_SOURCE", "TWELVE_DATA"
+            ).upper(),
             market_data_platform_shadow_enabled=os.environ.get(
                 "SPECT8_MARKET_DATA_PLATFORM_SHADOW_ENABLED", "false"
             ).lower()

@@ -795,7 +795,7 @@ class SQLiteProjectionRepository:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
-    def persist_daily_filter_snapshot(self, snapshot: "DailyFilterSnapshot") -> bool:
+    def persist_daily_filter_snapshot(self, snapshot: DailyFilterSnapshot) -> bool:
         payload = _exact_value(asdict(snapshot))
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         with self._lock, closing(self._connect()) as connection:
@@ -829,7 +829,7 @@ class SQLiteProjectionRepository:
             connection.commit()
             return cursor.rowcount > 0
 
-    def persist_w1_filter_snapshot(self, snapshot: "WeeklyFilterSnapshot") -> bool:
+    def persist_w1_filter_snapshot(self, snapshot: WeeklyFilterSnapshot) -> bool:
         payload = _exact_value(asdict(snapshot))
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         with self._lock, closing(self._connect()) as connection:
@@ -1491,10 +1491,16 @@ class SQLiteProjectionRepository:
             raise ValueError("Forex V1 candles require source provenance")
         if bar.timeframe is Timeframe.H4 and len(bar.source_candle_ids) != 4:
             raise ValueError("Forex V1 H4 requires exactly four H1 source IDs")
-        if bar.timeframe is Timeframe.D1 and len(bar.source_candle_ids) not in (
-            23,
-            24,
-            25,
+        direct_platform_d1 = (
+            bar.timeframe is Timeframe.D1
+            and bar.provider == "MARKET_DATA_PLATFORM"
+            and len(bar.source_candle_ids) == 1
+            and bar.source_candle_ids[0].startswith("MDP:")
+        )
+        if (
+            bar.timeframe is Timeframe.D1
+            and not direct_platform_d1
+            and len(bar.source_candle_ids) not in (23, 24, 25)
         ):
             raise ValueError("Forex V1 D1 requires complete DST-aware H1 provenance")
 
@@ -1562,7 +1568,7 @@ class SQLiteProjectionRepository:
             ),
         )
 
-    def update_provider_health(self, health: "ProviderHealth") -> None:
+    def update_provider_health(self, health: ProviderHealth) -> None:
         value = primitive(health)
         with self._lock, closing(self._connect()) as connection:
             previous = connection.execute(
@@ -1601,7 +1607,7 @@ class SQLiteProjectionRepository:
     def update_instrument_health(
         self,
         instrument_id: str,
-        health: "ProviderHealth",
+        health: ProviderHealth,
         *,
         error_code: str | None = None,
     ) -> None:
@@ -2044,6 +2050,38 @@ class SQLiteProjectionRepository:
         if row is None or row["signal_bar_close_time"] is None:
             return None
         return str(row["signal_bar_close_time"])
+
+    def latest_authoritative_evaluation_close(
+        self,
+        instrument_id: str,
+        timeframe: str,
+        strategy_id: str,
+    ) -> str | None:
+        """Return the cross-source cursor used only to prevent switch duplicates."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT MAX(json_extract(status_json, '$.signal_bar_close_time'))
+                          AS signal_bar_close_time
+                   FROM instrument_status
+                   WHERE instrument_id = ? AND timeframe = ? AND strategy_id = ?
+                     AND provider IN ('TWELVE_DATA', 'MARKET_DATA_PLATFORM')""",
+                (instrument_id, timeframe, strategy_id),
+            ).fetchone()
+        if row is None or row["signal_bar_close_time"] is None:
+            return None
+        return str(row["signal_bar_close_time"])
+
+    def latest_provider_evaluation_time(self, provider_id: str) -> datetime | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT MAX(updated_at) AS updated_at
+                   FROM instrument_status WHERE provider = ?""",
+                (provider_id,),
+            ).fetchone()
+        if row is None or row["updated_at"] is None:
+            return None
+        return datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
 
     def latest_canonical_close(
         self,

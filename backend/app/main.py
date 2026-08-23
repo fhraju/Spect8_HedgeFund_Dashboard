@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import (
@@ -48,6 +49,7 @@ from .market_data.coordinator import MarketDataCoordinator
 from .market_data.credit_budget import DailyCreditBudgetGuard
 from .market_data.multi_provider import MultiInstrumentTwelveDataProvider
 from .market_data.normalizer import CandleNormalizer
+from .market_data.platform_authority import PlatformAuthorityRuntime
 from .market_data.platform_shadow import PlatformShadowRuntime
 from .market_data.registry import (
     CanonicalInstrumentRegistry,
@@ -91,8 +93,17 @@ def create_app(
         operational_budget=configured.market_data_daily_operational_budget,
         reserve=configured.market_data_credit_reserve,
     )
+    platform_selected = configured.market_data_source == "MARKET_DATA_PLATFORM"
     configured_instruments = twelve_data_instruments(configured.enabled_instrument_ids)
-    if configured.market_data_provider == "twelve_data":
+    if platform_selected:
+        clock = SystemClock()
+        discovered_instruments = tuple(
+            replace(item, provider_id="MARKET_DATA_PLATFORM", synthetic=False)
+            for item in configured_instruments
+            if item.enabled
+        )
+        provider = None
+    elif configured.market_data_provider == "twelve_data":
         assert configured.twelve_data_api_key is not None
         provider = MultiInstrumentTwelveDataProvider(
             configured.twelve_data_api_key,
@@ -113,14 +124,30 @@ def create_app(
             configured.selected_cases,
         )
         clock = FixedClock(provider.initial_clock_time())
-    discovered_instruments = (
-        provider.discover_instruments()
-        if provider.identity.synthetic or configured.provider_discovery_enabled
-        else configured_instruments
-    )
+    if not platform_selected:
+        assert provider is not None
+        discovered_instruments = (
+            provider.discover_instruments()
+            if provider.identity.synthetic or configured.provider_discovery_enabled
+            else configured_instruments
+        )
     registry = CanonicalInstrumentRegistry(discovered_instruments)
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
+    platform_authority_runtime = (
+        PlatformAuthorityRuntime.from_database_url(
+            configured.market_data_platform_database_url or "",
+            repository,
+            service,
+            tuple(item.instrument_id for item in discovered_instruments),
+            stale_after_seconds=configured.market_data_stale_after_seconds,
+            poll_seconds=configured.market_data_poll_seconds,
+        )
+        if platform_selected
+        else None
+    )
+    if platform_authority_runtime is not None:
+        provider = platform_authority_runtime
     platform_shadow_repository = (
         SQLiteProjectionRepository(
             configured.database_path.with_name(
@@ -140,14 +167,19 @@ def create_app(
         if platform_shadow_repository is not None
         else None
     )
-    coordinator = MarketDataCoordinator(
-        provider=provider,
-        registry=registry,
-        normalizer=CandleNormalizer(),
-        detector=ClosedBarDetector(),
-        service=service,
-        repository=repository,
-        clock=clock,
+    coordinator = (
+        None
+        if platform_selected
+        else MarketDataCoordinator(
+            provider=provider,
+            registry=registry,
+            normalizer=CandleNormalizer(),
+            detector=ClosedBarDetector(),
+            service=service,
+            repository=repository,
+            clock=clock,
+            cross_source_continuity=True,
+        )
     )
     runtime_logger = (
         configure_runtime_logging(
@@ -159,18 +191,22 @@ def create_app(
         if (not provider.identity.synthetic and configured.effective_polling_enabled)
         else None
     )
-    runtime = MarketDataRuntime(
-        coordinator,
-        repository,
-        clock,
-        poll_seconds=configured.market_data_poll_seconds,
-        safety_delay_seconds=(
-            configured.market_scan_after_hour_seconds
-            if configured.market_scan_enabled
-            else configured.market_data_safety_delay_seconds
-        ),
-        startup_backfill_enabled=configured.startup_backfill_enabled,
-        logger=runtime_logger,
+    runtime = (
+        platform_authority_runtime
+        if platform_authority_runtime is not None
+        else MarketDataRuntime(
+            coordinator,
+            repository,
+            clock,
+            poll_seconds=configured.market_data_poll_seconds,
+            safety_delay_seconds=(
+                configured.market_scan_after_hour_seconds
+                if configured.market_scan_enabled
+                else configured.market_data_safety_delay_seconds
+            ),
+            startup_backfill_enabled=configured.startup_backfill_enabled,
+            logger=runtime_logger,
+        )
     )
     replay_database_path = (
         configured.historical_replay_database_path
@@ -185,7 +221,8 @@ def create_app(
             TwelveDataHistoricalSource(
                 TwelveDataProvider(configured.twelve_data_api_key or "")
             )
-            if configured.market_data_provider == "twelve_data"
+            if configured.market_data_source == "TWELVE_DATA"
+            and configured.market_data_provider == "twelve_data"
             else None
         ),
     )
@@ -201,7 +238,15 @@ def create_app(
                 available_as_of=SystemClock().now()
             )
         runtime_task: asyncio.Task[None] | None = None
-        if configured.auto_seed_synthetic and provider.identity.synthetic:
+        if platform_authority_runtime is not None:
+            app.state.platform_authority_result = (
+                platform_authority_runtime.run_once(available_as_of=SystemClock().now())
+            )
+            if configured.effective_polling_enabled:
+                runtime_task = asyncio.create_task(
+                    runtime.run(), name="spect8-platform-authority-runtime"
+                )
+        elif configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
         elif not provider.identity.synthetic and configured.effective_polling_enabled:
             runtime_task = asyncio.create_task(
@@ -215,6 +260,8 @@ def create_app(
                 await runtime_task
             if platform_shadow_runtime is not None:
                 platform_shadow_runtime.close()
+            if platform_authority_runtime is not None:
+                platform_authority_runtime.close()
 
     app = FastAPI(
         title="Spect8 HedgeFund Market Scanner",
@@ -222,7 +269,11 @@ def create_app(
         description=(
             SYNTHETIC_NOTICE
             if provider.identity.synthetic
-            else "READ-ONLY Twelve Data multi-instrument market scanner."
+            else (
+                "READ-ONLY Market Data Platform authoritative market scanner."
+                if platform_selected
+                else "READ-ONLY Twelve Data multi-instrument market scanner."
+            )
         ),
         lifespan=lifespan,
     )
@@ -237,6 +288,8 @@ def create_app(
     app.state.platform_shadow_runtime = platform_shadow_runtime
     app.state.platform_shadow_repository = platform_shadow_repository
     app.state.platform_shadow_result = None
+    app.state.platform_authority_runtime = platform_authority_runtime
+    app.state.platform_authority_result = None
     app.state.credit_budget = credit_budget
     app.state.historical_replay_service = replay_service
 
@@ -256,20 +309,47 @@ def create_app(
             "source": (
                 "REPLAY_MARKET_DATA_PROVIDER"
                 if provider.identity.synthetic
-                else "TWELVE_DATA_PROVIDER"
+                else (
+                    "MARKET_DATA_PLATFORM"
+                    if platform_selected
+                    else "TWELVE_DATA_PROVIDER"
+                )
             ),
             "notice": (
                 SYNTHETIC_NOTICE
                 if provider.identity.synthetic
-                else "READ-ONLY Twelve Data multi-instrument market data."
+                else (
+                    "READ-ONLY Market Data Platform PostgreSQL authority."
+                    if platform_selected
+                    else "READ-ONLY Twelve Data multi-instrument market data."
+                )
             ),
             "data": data,
         }
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        provider_health = coordinator.current_health()
-        if not provider.identity.synthetic and not configured.effective_polling_enabled:
+        if platform_authority_runtime is not None:
+            authority_status = platform_authority_runtime.status()
+            provider_health = {
+                "provider": "MARKET_DATA_PLATFORM",
+                "state": authority_status["freshness_state"],
+                "checked_at": primitive(clock.now()),
+                "latest_completed_close": authority_status[
+                    "last_processed_canonical_timestamp"
+                ],
+                "freshness_seconds": None,
+                "detail": authority_status["last_error"] or "Platform gate passed.",
+                "synthetic": False,
+            }
+        else:
+            assert coordinator is not None
+            provider_health = coordinator.current_health()
+        if (
+            not platform_selected
+            and not provider.identity.synthetic
+            and not configured.effective_polling_enabled
+        ):
             provider_health = {
                 "provider": provider.identity.provider_id,
                 "state": "POLLING_DISABLED",
@@ -308,16 +388,37 @@ def create_app(
                 "mode": (
                     "PHASE_2B_REPLAY_MARKET_DATA"
                     if provider.identity.synthetic
-                    else "PHASE_3B_TWELVE_DATA_RUNTIME"
+                    else (
+                        "PHASE_22A4_PLATFORM_AUTHORITY"
+                        if platform_selected
+                        else "PHASE_3B_TWELVE_DATA_RUNTIME"
+                    )
                 ),
                 "market_data": (
                     "REPLAY_ONLY"
                     if provider.identity.synthetic
-                    else "TWELVE_DATA_MARKET_SCANNER"
+                    else (
+                        "MARKET_DATA_PLATFORM"
+                        if platform_selected
+                        else "TWELVE_DATA_MARKET_SCANNER"
+                    )
                 ),
                 "database": "sqlite",
                 "active_filter_mode": repository.active_filter_mode().value,
                 "provider": primitive(provider.identity),
+                "authority": {
+                    "configured_source": configured.market_data_source,
+                    "active_source": (
+                        platform_authority_runtime.status()["active_source"]
+                        if platform_authority_runtime is not None
+                        else provider.identity.provider_id
+                    ),
+                    "platform": (
+                        platform_authority_runtime.status()
+                        if platform_authority_runtime is not None
+                        else None
+                    ),
+                },
                 "provider_health": provider_health,
                 "credit_budget": primitive(credit_budget.status(as_of=clock.now())),
                 "operations": {
@@ -414,6 +515,7 @@ def create_app(
             {
                 "runtime": runtime.status(),
                 "configuration": {
+                    "authoritative_source": configured.market_data_source,
                     "polling_enabled": configured.effective_polling_enabled,
                     "startup_backfill_enabled": (configured.startup_backfill_enabled),
                     "provider_discovery_enabled": (

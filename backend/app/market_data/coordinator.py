@@ -4,15 +4,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from ..domain import Bar, FilterMode, Timeframe
-from ..engine.models import StrategyRequest
-from ..engine.models import (
-    CURRENT_D1_FILTER_V2,
-    CURRENT_W1_FILTER_V1,
-    DailyFilterSnapshot,
-    WeeklyFilterSnapshot,
-    daily_filter_snapshot_from_payload,
-    w1_snapshot_from_payload,
-)
 from ..engine.current_daily_filter import (
     DailyFilterUnavailableError,
     build_daily_filter_snapshot,
@@ -21,6 +12,15 @@ from ..engine.current_w1_filter import (
     WeeklyFilterUnavailableError,
     build_w1_filter_snapshot,
 )
+from ..engine.models import (
+    CURRENT_D1_FILTER_V2,
+    CURRENT_W1_FILTER_V1,
+    DailyFilterSnapshot,
+    StrategyRequest,
+    WeeklyFilterSnapshot,
+    daily_filter_snapshot_from_payload,
+    w1_snapshot_from_payload,
+)
 from ..repository import SQLiteProjectionRepository
 from ..service import ProcessingOutcome, WalkingSkeletonService
 from .clock import Clock
@@ -28,24 +28,24 @@ from .closed_bar import DAILY_ATR_INPUT_HISTORY, ClosedBarDetector
 from .daily_aggregator import ActualDataNewYorkDailyAggregator, NewYorkDailyAggregator
 from .exchange_aggregator import ExchangeSessionH4Aggregator
 from .forex_profile import (
+    PROFILE_ID,
     BrokerAlignedH4Aggregator,
     is_broker_h4_close,
     is_valid_market_h1,
     is_valid_market_h4,
     market_h1_bars,
-    PROFILE_ID,
 )
 from .interfaces import MarketDataProvider
 from .models import (
     CanonicalInstrument,
     HealthState,
+    InstrumentKind,
     MarketDataProviderError,
     NormalizationResult,
     ProviderClosedBar,
+    ProviderErrorCode,
     ProviderHealth,
     RawProviderCandle,
-    ProviderErrorCode,
-    InstrumentKind,
 )
 from .normalizer import CandleNormalizer
 from .registry import CanonicalInstrumentRegistry
@@ -86,6 +86,8 @@ class MarketDataCoordinator:
         service: WalkingSkeletonService,
         repository: SQLiteProjectionRepository,
         clock: Clock,
+        *,
+        cross_source_continuity: bool = False,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -98,6 +100,7 @@ class MarketDataCoordinator:
         self._service = service
         self._repository = repository
         self._clock = clock
+        self._cross_source_continuity = cross_source_continuity
 
     def poll_once(self) -> PollResult:
         now = self._clock.now()
@@ -483,14 +486,12 @@ class MarketDataCoordinator:
                     )
             issues = tuple(
                 sorted(
-                    set(
-                        (
-                            *signal_issues,
-                            *daily_issues,
-                            *daily_source_issues,
-                            *aggregation_issues,
-                        )
-                    )
+                    {
+                        *signal_issues,
+                        *daily_issues,
+                        *daily_source_issues,
+                        *aggregation_issues,
+                    }
                 )
             )
             validation = self._detector.validate_history(
@@ -500,7 +501,7 @@ class MarketDataCoordinator:
                 trigger.close_time,
                 session_profile=instrument.session_profile,
             )
-            issues = tuple(sorted(set((*issues, *validation.issues))))
+            issues = tuple(sorted({*issues, *validation.issues}))
             if issues:
                 state = (
                     HealthState.INSUFFICIENT_HISTORY
@@ -552,7 +553,7 @@ class MarketDataCoordinator:
                     if evaluation_mode is FilterMode.MACRO
                     else CURRENT_D1_FILTER_V2
                 )
-                latest_evaluated = self._repository.latest_evaluation_close(
+                latest_evaluated = self._latest_evaluation_close(
                     instrument.provider_id,
                     instrument.instrument_id,
                     trigger.timeframe.value,
@@ -586,8 +587,7 @@ class MarketDataCoordinator:
                                 snapshot = daily_filter_snapshot_from_payload(stored)
                             except (KeyError, TypeError, ValueError) as error:
                                 mode_issues = (
-                                    "STORED_DAILY_SNAPSHOT_INVALID:"
-                                    f"{type(error).__name__}",
+                                    f"STORED_DAILY_SNAPSHOT_INVALID:{type(error).__name__}",
                                 )
                             else:
                                 daily_snapshot_cache[cache_key] = snapshot
@@ -611,8 +611,7 @@ class MarketDataCoordinator:
                                 mode_issues = (str(error),)
                             except ValueError as error:
                                 mode_issues = (
-                                    "DAILY_SNAPSHOT_CONFLICT:"
-                                    f"{type(error).__name__}",
+                                    f"DAILY_SNAPSHOT_CONFLICT:{type(error).__name__}",
                                 )
                             else:
                                 daily_snapshot_cache[cache_key] = snapshot
@@ -630,8 +629,7 @@ class MarketDataCoordinator:
                                 weekly_snapshot = w1_snapshot_from_payload(stored)
                             except (KeyError, TypeError, ValueError) as error:
                                 mode_issues = (
-                                    "STORED_WEEKLY_SNAPSHOT_INVALID:"
-                                    f"{type(error).__name__}",
+                                    f"STORED_WEEKLY_SNAPSHOT_INVALID:{type(error).__name__}",
                                 )
                             else:
                                 weekly_snapshot_cache[cache_key] = weekly_snapshot
@@ -654,8 +652,7 @@ class MarketDataCoordinator:
                                 mode_issues = (str(error),)
                             except ValueError as error:
                                 mode_issues = (
-                                    "WEEKLY_SNAPSHOT_CONFLICT:"
-                                    f"{type(error).__name__}",
+                                    f"WEEKLY_SNAPSHOT_CONFLICT:{type(error).__name__}",
                                 )
                             else:
                                 weekly_snapshot_cache[cache_key] = weekly_snapshot
@@ -700,7 +697,7 @@ class MarketDataCoordinator:
                 )
                 try:
                     projection = self._service.process_request(request)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - quarantine projection defects
                     issue = f"PROJECTION_FAILURE:{type(error).__name__}"
                     override_state = HealthState.QUARANTINED
                     instrument_overrides[instrument.instrument_id] = (
@@ -766,7 +763,7 @@ class MarketDataCoordinator:
         for instrument in self.registry.all():
             for timeframe in (Timeframe.H1, Timeframe.H4):
                 strategy_values = tuple(
-                    self._repository.latest_evaluation_close(
+                    self._latest_evaluation_close(
                         instrument.provider_id,
                         instrument.instrument_id,
                         timeframe.value,
@@ -794,6 +791,21 @@ class MarketDataCoordinator:
                     setter(instrument.instrument_id, timeframe, cursor)
                 else:
                     setter(timeframe, cursor)
+
+    def _latest_evaluation_close(
+        self,
+        provider_id: str,
+        instrument_id: str,
+        timeframe: str,
+        strategy_id: str,
+    ) -> str | None:
+        if self._cross_source_continuity:
+            return self._repository.latest_authoritative_evaluation_close(
+                instrument_id, timeframe, strategy_id
+            )
+        return self._repository.latest_evaluation_close(
+            provider_id, instrument_id, timeframe, strategy_id
+        )
 
     def current_health(self) -> dict[str, object] | None:
         return self._repository.provider_health(self.provider.identity.provider_id)
