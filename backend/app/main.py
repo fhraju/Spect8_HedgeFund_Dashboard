@@ -59,6 +59,7 @@ from .market_data.replay_provider import ReplayMarketDataProvider
 from .market_data.runtime import MarketDataRuntime
 from .market_data.runtime_support import configure_runtime_logging
 from .market_data.twelve_data_provider import TwelveDataProvider
+from .market_data.signal_lifecycle import SignalLifecycleService
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
 
@@ -134,6 +135,7 @@ def create_app(
     registry = CanonicalInstrumentRegistry(discovered_instruments)
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
+    signal_lifecycle = SignalLifecycleService(repository)
     platform_authority_runtime = (
         PlatformAuthorityRuntime.from_database_url(
             configured.market_data_platform_database_url or "",
@@ -285,6 +287,7 @@ def create_app(
     app.state.clock = clock
     app.state.coordinator = coordinator
     app.state.market_data_runtime = runtime
+    app.state.signal_lifecycle = signal_lifecycle
     app.state.platform_shadow_runtime = platform_shadow_runtime
     app.state.platform_shadow_repository = platform_shadow_repository
     app.state.platform_shadow_result = None
@@ -503,6 +506,33 @@ def create_app(
             or status["signal_result"]["confirmed_sell"]
         ]
         return envelope(values)
+
+    @app.get("/signals/current", dependencies=[protected])
+    def signals_current(request: Request) -> dict[str, Any]:
+        now = request.app.state.clock.now()
+        current = request.app.state.signal_lifecycle.current_confirmed(now)
+        # Forming is ephemeral and evaluated on demand from partial snapshots;
+        # for API we expose current confirmed plus an empty forming list when
+        # Platform is not HEALTHY (fail-closed). Real forming evaluation would
+        # be triggered by the live partial pipeline.
+        return envelope(
+            {
+                "confirmed": current,
+                "forming": [],
+                "as_of": primitive(now),
+            }
+        )
+
+    @app.get("/signals/confirmed", dependencies=[protected])
+    def signals_confirmed(request: Request) -> dict[str, Any]:
+        now = request.app.state.clock.now()
+        return envelope(
+            {
+                "current": request.app.state.signal_lifecycle.current_confirmed(now),
+                "all": request.app.state.signal_lifecycle.all_confirmed(),
+                "as_of": primitive(now),
+            }
+        )
 
     @app.get("/events", dependencies=[protected])
     def events(request: Request) -> dict[str, Any]:

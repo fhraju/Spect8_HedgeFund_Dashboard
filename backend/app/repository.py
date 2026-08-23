@@ -323,6 +323,36 @@ class SQLiteProjectionRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_platform_revisions_identity
                 ON platform_canonical_revisions (logical_identity, observed_at);
+
+                CREATE TABLE IF NOT EXISTS confirmed_signals (
+                    signal_id TEXT PRIMARY KEY,
+                    instrument_id TEXT NOT NULL,
+                    mode TEXT NOT NULL CHECK (mode IN ('MICRO','MACRO')),
+                    timeframe TEXT NOT NULL CHECK (timeframe IN ('M30','H1','H4')),
+                    direction TEXT NOT NULL CHECK (direction IN ('BUY','SELL')),
+                    source_bar_start TEXT NOT NULL,
+                    source_bar_end TEXT NOT NULL,
+                    formed_at TEXT,
+                    confirmed_at TEXT NOT NULL,
+                    visible_until TEXT NOT NULL,
+                    market_data_source TEXT NOT NULL,
+                    strategy_version TEXT NOT NULL,
+                    source_provider TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_confirmed_signals_instrument_time
+                ON confirmed_signals (instrument_id, mode, timeframe, visible_until);
+
+                CREATE TABLE IF NOT EXISTS forming_recovery_state (
+                    instrument_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    m30_open TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    component_open_times_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (instrument_id, timeframe, m30_open)
+                );
                 """
             )
             self._migrate_synthetic_constraints(connection)
@@ -2366,6 +2396,113 @@ class SQLiteProjectionRepository:
             "orders": 0,
             "fills": 0,
         }
+
+    def persist_confirmed_signal(
+        self,
+        *,
+        signal_id: str,
+        instrument_id: str,
+        mode: str,
+        timeframe: str,
+        direction: str,
+        source_bar_start: datetime,
+        source_bar_end: datetime,
+        formed_at: datetime | None,
+        confirmed_at: datetime,
+        visible_until: datetime,
+        market_data_source: str,
+        strategy_version: str,
+        source_provider: str,
+    ) -> bool:
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO confirmed_signals (
+                    signal_id, instrument_id, mode, timeframe, direction,
+                    source_bar_start, source_bar_end, formed_at, confirmed_at,
+                    visible_until, market_data_source, strategy_version,
+                    source_provider, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    signal_id,
+                    instrument_id,
+                    mode,
+                    timeframe,
+                    direction,
+                    _exact_value(source_bar_start),
+                    _exact_value(source_bar_end),
+                    _exact_value(formed_at) if formed_at else None,
+                    _exact_value(confirmed_at),
+                    _exact_value(visible_until),
+                    market_data_source,
+                    strategy_version,
+                    source_provider,
+                    _exact_value(confirmed_at),
+                ),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def current_confirmed_signals(self, as_of: datetime) -> tuple[dict[str, Any], ...]:
+        iso = _exact_value(as_of)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM confirmed_signals
+                   WHERE visible_until > ?
+                   ORDER BY confirmed_at DESC""",
+                (iso,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def all_confirmed_signals(self) -> tuple[dict[str, Any], ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM confirmed_signals ORDER BY confirmed_at DESC"""
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def forming_recovery_snapshot(self, instrument_id: str, timeframe: str, m30_open: datetime) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM forming_recovery_state
+                   WHERE instrument_id = ? AND timeframe = ? AND m30_open = ?""",
+                (instrument_id, timeframe, _exact_value(m30_open)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def persist_forming_recovery(
+        self,
+        *,
+        instrument_id: str,
+        timeframe: str,
+        m30_open: datetime,
+        provider: str,
+        component_open_times: tuple[datetime, ...],
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO forming_recovery_state (
+                    instrument_id, timeframe, m30_open, provider,
+                    component_open_times_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    instrument_id,
+                    timeframe,
+                    _exact_value(m30_open),
+                    provider,
+                    json.dumps([_exact_value(t) for t in component_open_times]),
+                    _exact_value(datetime.now(timezone.utc)),
+                ),
+            )
+            connection.commit()
+
+    def clear_forming_recovery(self, instrument_id: str, timeframe: str, m30_open: datetime) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """DELETE FROM forming_recovery_state
+                   WHERE instrument_id = ? AND timeframe = ? AND m30_open = ?""",
+                (instrument_id, timeframe, _exact_value(m30_open)),
+            )
+            connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=10)

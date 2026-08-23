@@ -39,6 +39,7 @@ from .spect8_signal import evaluate_spect8_signal
 STRATEGY_ID = "SPECT8_MICRO_DAILY_V1_0"
 SPECIFICATION_ID = "SPECT8_MICRO_DAILY_V1_0_3"
 TIMEFRAME_STEP = {
+    Timeframe.M30: timedelta(minutes=30),
     Timeframe.H1: timedelta(hours=1),
     Timeframe.H4: timedelta(hours=4),
     Timeframe.D1: timedelta(days=1),
@@ -131,8 +132,8 @@ class Spect8StrategyEvaluator:
             CURRENT_W1_FILTER_V1,
         ):
             raise ValueError(f"unsupported strategy: {request.strategy_id}")
-        if request.timeframe not in (Timeframe.H1, Timeframe.H4):
-            raise ValueError("strategy timeframe must be H1 or H4")
+        if request.timeframe not in (Timeframe.M30, Timeframe.H1, Timeframe.H4):
+            raise ValueError("strategy timeframe must be M30, H1 or H4")
 
         instrument = request.instrument
         selected_signal = [
