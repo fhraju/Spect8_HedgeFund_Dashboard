@@ -185,3 +185,115 @@ def test_restart_preserves_confirmed():
         assert len(r.json()["data"]["confirmed"]) == 0
         r2 = client.get("/signals/history?date=2026-08-22")
         assert len(r2.json()["data"]["confirmed"]) == 1
+
+
+def test_no_synthetic_forming_injection_when_platform_unavailable():
+    """Regression: /signals/current must never fabricate FORMING from wall clock.
+
+    Before the fix, a dev helper generated synthetic CurrentBarSnapshots with
+    hardcoded OHLC for every instrument/timeframe, producing FORMING signals
+    even when the authoritative data was 9 days stale. This test proves that
+    without a real partial-bar source there is no FORMING output at all —
+    regardless of platform health state.
+    """
+    tmp = Path(tempfile.mkdtemp())
+    settings = Settings(
+        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        database_path=tmp / "nosynth.db",
+        internal_api_key="test",
+        auto_seed_synthetic=False,
+        market_data_source="MARKET_DATA_PLATFORM",
+        market_data_provider="replay",
+        enabled_instrument_ids=("EUR_USD", "GBP_USD"),
+        market_data_platform_database_url="postgresql+psycopg://spect8_market_data_reader:fake@localhost:5432/market_data",
+        polling_enabled=False,
+    )
+    from backend.app.market_data.platform_authority import PlatformAuthorityRuntime
+
+    class HealthyRuntime:
+        from backend.app.market_data.models import ProviderIdentity
+
+        identity = ProviderIdentity(provider_id="MARKET_DATA_PLATFORM", display_name="Platform", adapter_version="test", synthetic=False)
+
+        def status(self):
+            return {"freshness_state": "HEALTHY", "connection_state": "HEALTHY", "active_source": "MARKET_DATA_PLATFORM"}
+
+        def close(self): pass
+
+        def run_once(self, **kwargs):
+            return None
+
+    monkeypatch = None  # direct patch below
+    original = PlatformAuthorityRuntime.from_database_url
+    PlatformAuthorityRuntime.from_database_url = lambda *a, **k: HealthyRuntime()
+    try:
+        app = create_app(settings)
+    finally:
+        PlatformAuthorityRuntime.from_database_url = original
+
+    with TestClient(app, headers={"X-Spect8-Internal-Key": "test"}) as client:
+        r = client.get("/signals/current")
+        assert r.status_code == 200
+        data = r.json()["data"]
+        # Even with platform HEALTHY, no real partial-bar source means no FORMING
+        assert data["forming"] == [], (
+            "FORMING must not be fabricated without real partial-bar data"
+        )
+
+
+def test_bootstrapping_scanner_state_from_stale_bars():
+    """Scanner must report STALE (not BOOTSTRAPPING) when latest bar is old."""
+    from backend.app.dashboard_api import scanner_snapshot
+    from backend.app.repository import SQLiteProjectionRepository
+    from backend.app.market_data.registry import twelve_data_instruments
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+    from backend.app.domain import Bar as DomainBar
+
+    tmp = Path(tempfile.mkdtemp())
+    repo = SQLiteProjectionRepository(tmp / "scan.db")
+    repo.initialize()
+    # Persist one old H1 bar (10 days old)
+    old_close = datetime.now(timezone.utc) - timedelta(days=10)
+    old_open = old_close - timedelta(hours=1)
+    bar = DomainBar(
+        instrument_id="EUR_USD",
+        timeframe=__import__("backend.app.domain", fromlist=["Timeframe"]).Timeframe.H1,
+        open_time=old_open,
+        close_time=old_close,
+        open=Decimal("1.1"), high=Decimal("1.2"), low=Decimal("1.0"), close=Decimal("1.15"),
+        provider="MARKET_DATA_PLATFORM",
+        is_complete=True,
+        volume=None,
+        session_timezone="UTC",
+        raw_provider_symbol="EUR_USD",
+        raw_open_time=old_open.isoformat(),
+        raw_close_time=old_close.isoformat(),
+        raw_open="1.1", raw_high="1.2", raw_low="1.0", raw_close="1.15",
+        synthetic=False,
+        quality_status="VALID",
+        construction_profile_version="test",
+        provider_adapter_version="test",
+        source_candle_ids=("t",),
+        forward_filled=False,
+        ingestion_run_id="t",
+        created_at=old_close,
+    )
+    repo.persist_canonical_bars((bar,))
+    from dataclasses import replace as _replace
+
+    instruments = tuple(
+        _replace(item, provider_id="MARKET_DATA_PLATFORM", synthetic=False)
+        for item in twelve_data_instruments(("EUR_USD",))
+        if item.enabled
+    )
+    snapshot = scanner_snapshot(
+        repo,
+        instruments,
+        datetime.now(timezone.utc),
+        stale_after_seconds=7200,
+    )
+    assert len(snapshot.instruments) == 1
+    # Old bar + no polling health → truthful STALE, not BOOTSTRAPPING
+    assert snapshot.instruments[0].data_status == "STALE"
+    assert snapshot.instruments[0].stale is True

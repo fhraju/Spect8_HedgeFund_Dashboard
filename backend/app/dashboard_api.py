@@ -427,6 +427,7 @@ def scanner_snapshot(
     generated_at: datetime,
     *,
     credit_budget: dict[str, Any] | None = None,
+    stale_after_seconds: int = 7200,
 ) -> ScannerData:
     mode_reader = getattr(repository, "active_filter_mode", None)
     active_mode = mode_reader() if callable(mode_reader) else FilterMode.MICRO
@@ -514,7 +515,16 @@ def scanner_snapshot(
         state = (
             HealthState.DATA_UNAVAILABLE.value
             if not instrument.polling_enabled
-            else (str(health["state"]) if health else "BOOTSTRAPPING")
+            else (
+                str(health["state"])
+                if health
+                else _fallback_data_state(
+                    repository,
+                    instrument,
+                    generated_at,
+                    stale_after_seconds,
+                )
+            )
         )
         rows.append(
             ScannerInstrumentView(
@@ -580,6 +590,41 @@ def _direction_status(buy: bool, sell: bool) -> str:
     if sell:
         return "SELL"
     return "NONE"
+
+
+def _fallback_data_state(
+    repository: SQLiteProjectionRepository,
+    instrument: CanonicalInstrument,
+    generated_at: datetime,
+    stale_after_seconds: int,
+) -> str:
+    """Truthful state when no per-instrument polling health row exists.
+
+    Derived from the actual latest completed canonical H1 bar age rather than
+    unconditionally reporting BOOTSTRAPPING.
+    """
+    latest = repository.latest_candle_timestamps(
+        instrument.provider_id, instrument.instrument_id
+    )
+    latest_h1 = latest.get("H1") if latest else None
+    if latest_h1 is None:
+        return "BOOTSTRAPPING"
+    try:
+        from datetime import timezone as _tz
+
+        closed_at = (
+            latest_h1.astimezone(_tz.utc)
+            if isinstance(latest_h1, datetime)
+            else datetime.fromisoformat(str(latest_h1).replace("Z", "+00:00"))
+        )
+        age_seconds = (
+            generated_at.astimezone(_tz.utc) - closed_at.astimezone(_tz.utc)
+        ).total_seconds()
+    except (ValueError, TypeError):
+        return "BOOTSTRAPPING"
+    if age_seconds > stale_after_seconds:
+        return HealthState.STALE.value
+    return "BOOTSTRAPPING"
 
 
 def dashboard_snapshot(

@@ -4,8 +4,7 @@ import asyncio
 import hmac
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import (
@@ -509,127 +508,36 @@ def create_app(
         ]
         return envelope(values)
 
-    def _forming_snapshot_for(
-        instrument_id: str, timeframe: str, as_of: datetime
-    ):
-        from .market_data.partial_snapshot import CurrentBarSnapshot
-        from .domain import Timeframe
-        from datetime import timedelta, timezone
-
-        as_of_utc = as_of.astimezone(timezone.utc)
-        if timeframe == "M30":
-            secs = 30 * 60
-            bar_start = datetime.fromtimestamp(int(as_of_utc.timestamp()) // secs * secs, tz=timezone.utc)
-            bar_end = bar_start + timedelta(minutes=30)
-            if not (bar_start <= as_of_utc < bar_end):
-                return None
-            return CurrentBarSnapshot(
-                instrument_id=instrument_id,
-                timeframe=Timeframe.M30,
-                bar_start=bar_start,
-                bar_end=bar_end,
-                as_of=as_of_utc,
-                open=Decimal("100"),
-                high=Decimal("102"),
-                low=Decimal("99"),
-                close=Decimal("101"),
-                is_complete=False,
-                source_provider_id="MARKET_DATA_PLATFORM",
-                component_ids=(f"M5:{bar_start.isoformat()}",),
-                provenance="api-forming-m30",
-            )
-        if timeframe == "H1":
-            bar_start = as_of_utc.replace(minute=0, second=0, microsecond=0)
-            bar_end = bar_start + timedelta(hours=1)
-            if not (bar_start <= as_of_utc < bar_end):
-                return None
-            return CurrentBarSnapshot(
-                instrument_id=instrument_id,
-                timeframe=Timeframe.H1,
-                bar_start=bar_start,
-                bar_end=bar_end,
-                as_of=as_of_utc,
-                open=Decimal("100"),
-                high=Decimal("102"),
-                low=Decimal("99"),
-                close=Decimal("101"),
-                is_complete=False,
-                source_provider_id="MARKET_DATA_PLATFORM",
-                component_ids=(f"M30:{bar_start.isoformat()}",),
-                provenance="api-forming-h1",
-            )
-        if timeframe == "H4":
-            from .market_data.forex_profile import broker_wall_time, broker_wall_to_utc
-
-            bucket_wall = broker_wall_time(as_of_utc)
-            bucket_wall = bucket_wall.replace(hour=(bucket_wall.hour // 4) * 4, minute=0, second=0, microsecond=0)
-            bar_start = broker_wall_to_utc(bucket_wall)
-            bar_end = broker_wall_to_utc(bucket_wall + timedelta(hours=4))
-            if not (bar_start <= as_of_utc < bar_end):
-                return None
-            return CurrentBarSnapshot(
-                instrument_id=instrument_id,
-                timeframe=Timeframe.H4,
-                bar_start=bar_start,
-                bar_end=bar_end,
-                as_of=as_of_utc,
-                open=Decimal("100"),
-                high=Decimal("102"),
-                low=Decimal("99"),
-                close=Decimal("101"),
-                is_complete=False,
-                source_provider_id="MARKET_DATA_PLATFORM",
-                component_ids=(f"H1:{bar_start.isoformat()}",),
-                provenance="api-forming-h4",
-            )
-        return None
-
     @app.get("/signals/current", dependencies=[protected])
     def signals_current(request: Request) -> dict[str, Any]:
+        """Current signals view.
+
+        FORMING is only ever produced from real authoritative partial-bar data
+        delivered by the Market Data Platform live pipeline while Platform
+        freshness is genuinely HEALTHY. There is deliberately no synthetic or
+        wall-clock fallback: if the live pipeline is not advancing, forming is
+        empty. Confirmed signals remain governed purely by persisted
+        visible_until.
+        """
         now = request.app.state.clock.now()
         current = request.app.state.signal_lifecycle.current_confirmed(now)
-        # Determine Platform health for forming gating
-        platform_healthy = True
+        platform_healthy = False
         if request.app.state.platform_authority_runtime is not None:
             status = request.app.state.platform_authority_runtime.status()
-            platform_healthy = status.get("freshness_state") == "HEALTHY" and status.get("connection_state") == "HEALTHY"
+            platform_healthy = (
+                status.get("freshness_state") == "HEALTHY"
+                and status.get("connection_state") == "HEALTHY"
+            )
+        # Real partial-bar forming evaluation requires the live Platform
+        # partial-bar source to be wired into the running runtime. It is not
+        # fabricated here: no snapshot source means no FORMING output.
         forming: list[dict[str, Any]] = []
-        if platform_healthy or request.app.state.platform_authority_runtime is None:
-            # For each instrument/mode/timeframe generate forming if inside window
-            for inst in request.app.state.registry.all():
-                for mode, tf in [("MICRO", "M30"), ("MICRO", "H1"), ("MACRO", "H1"), ("MACRO", "H4")]:
-                    snap = _forming_snapshot_for(inst.instrument_id, tf, now)
-                    if snap is None:
-                        continue
-                    sig = request.app.state.signal_lifecycle.evaluate_forming(
-                        instrument_id=inst.instrument_id,
-                        mode=mode,
-                        timeframe=tf,
-                        snapshot=snap,
-                        as_of=now,
-                        platform_healthy=platform_healthy,
-                    )
-                    if sig is not None:
-                        forming.append(
-                            {
-                                "instrument": sig.instrument_id,
-                                "mode": sig.mode,
-                                "timeframe": sig.timeframe,
-                                "direction": sig.direction,
-                                "state": sig.state,
-                                "source_bar_start": primitive(sig.source_bar_start),
-                                "source_bar_end": primitive(sig.source_bar_end),
-                                "formed_at": primitive(sig.formed_at),
-                                "confirmed_at": None,
-                                "visible_until": None,
-                                "market_data_source": "MARKET_DATA_PLATFORM" if platform_healthy else "STALE",
-                            }
-                        )
         return envelope(
             {
                 "confirmed": current,
                 "forming": forming,
                 "as_of": primitive(now),
+                "platform_healthy": platform_healthy,
             }
         )
 
@@ -748,6 +656,7 @@ def create_app(
                 registry.all(),
                 clock.now(),
                 credit_budget=primitive(credit_budget.status(as_of=clock.now())),
+                stale_after_seconds=configured.market_data_stale_after_seconds,
             )
         )
 
