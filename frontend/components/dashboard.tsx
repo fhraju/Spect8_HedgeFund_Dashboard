@@ -14,6 +14,7 @@ import { RefreshButton } from "./refresh-button";
 import { FilterModeSelector } from "./filter-mode-selector";
 import { LogoutButton } from "./logout-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
+import { InstrumentSignalsHistory } from "./instrument-signals-history";
 
 function signalDirection(status: InstrumentStatus): string {
   if (status.dashboard_state === "CONFIRMED_BOTH") return "BUY + SELL";
@@ -566,6 +567,8 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
               <p>{stateCopy(data.data_state)}</p>
             </section>
           )}
+
+          <InstrumentSignalsHistory instrumentId={data.instrument.instrument_id} />
 
           <section className="lower-grid">
             <article className="activity-panel panel">
