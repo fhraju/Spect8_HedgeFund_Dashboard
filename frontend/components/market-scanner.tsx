@@ -292,7 +292,6 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                               <SignalBadge status={live.direction} />
                               <span className={`signal-state-inline state-${live.state.toLowerCase()}`}>{isForming ? "Forming" : "Signal"}</span>
                             </span>
-                            {isForming && <small className="signal-forming-dot">● forming</small>}
                           </td>
                         );
                       }
