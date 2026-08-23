@@ -354,7 +354,7 @@ class DashboardData(BaseModel):
 
 class DashboardEnvelope(BaseModel):
     synthetic: bool
-    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER"]
+    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER", "MARKET_DATA_PLATFORM"]
     notice: str
     data: DashboardData
 
@@ -416,7 +416,7 @@ class ScannerData(BaseModel):
 
 class ScannerEnvelope(BaseModel):
     synthetic: bool
-    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER"]
+    source: Literal["REPLAY_MARKET_DATA_PROVIDER", "TWELVE_DATA_PROVIDER", "MARKET_DATA_PLATFORM"]
     notice: str
     data: ScannerData
 
