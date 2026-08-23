@@ -297,3 +297,54 @@ def test_bootstrapping_scanner_state_from_stale_bars():
     # Old bar + no polling health → truthful STALE, not BOOTSTRAPPING
     assert snapshot.instruments[0].data_status == "STALE"
     assert snapshot.instruments[0].stale is True
+
+
+def test_stale_startup_defers_instead_of_crashing(monkeypatch):
+    """Regression: production-freshness stale data must not kill the process.
+
+    The backend must boot, serve truthful STALE/UNAVAILABLE health, keep the
+    runtime loop retrying, and never expose FORMING — instead of refusing to
+    start entirely.
+    """
+    from backend.app.market_data.platform_authority import PlatformAuthorityRuntime
+
+    class StaleRuntime:
+        from backend.app.market_data.models import ProviderIdentity
+
+        identity = ProviderIdentity(provider_id="MARKET_DATA_PLATFORM", display_name="Platform", adapter_version="test", synthetic=False)
+
+        def status(self):
+            return {"freshness_state": "UNAVAILABLE", "connection_state": "HEALTHY",
+                    "active_source": None, "last_processed_canonical_timestamp": None,
+                    "last_error": "Platform canonical H1 is stale", "running": False}
+
+        def run_once(self, **kwargs):
+            from backend.app.market_data.platform_authority import PlatformStaleError
+            raise PlatformStaleError("stale at startup")
+
+        async def run(self):
+            import asyncio
+            await asyncio.sleep(3600)
+
+        def stop(self): pass
+
+        def close(self): pass
+
+    monkeypatch.setattr(PlatformAuthorityRuntime, "from_database_url", lambda *a, **k: StaleRuntime())
+    tmp = Path(tempfile.mkdtemp())
+    settings = Settings(
+        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        database_path=tmp / "defer.db",
+        internal_api_key="test",
+        auto_seed_synthetic=False,
+        market_data_source="MARKET_DATA_PLATFORM",
+        market_data_provider="replay",
+        enabled_instrument_ids=("EUR_USD",),
+        market_data_platform_database_url="postgresql+psycopg://spect8_market_data_reader:x@localhost:5432/market_data",
+        polling_enabled=True,
+    )
+    app = create_app(settings)
+    with TestClient(app, headers={"X-Spect8-Internal-Key": "test"}) as client:
+        r = client.get("/signals/current")
+        assert r.status_code == 200
+        assert r.json()["data"]["forming"] == []

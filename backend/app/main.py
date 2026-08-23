@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import hmac
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -50,7 +51,10 @@ from .market_data.coordinator import MarketDataCoordinator
 from .market_data.credit_budget import DailyCreditBudgetGuard
 from .market_data.multi_provider import MultiInstrumentTwelveDataProvider
 from .market_data.normalizer import CandleNormalizer
-from .market_data.platform_authority import PlatformAuthorityRuntime
+from .market_data.platform_authority import (
+    PlatformAuthorityError,
+    PlatformAuthorityRuntime,
+)
 from .market_data.platform_shadow import PlatformShadowRuntime
 from .market_data.registry import (
     CanonicalInstrumentRegistry,
@@ -242,9 +246,22 @@ def create_app(
             )
         runtime_task: asyncio.Task[None] | None = None
         if platform_authority_runtime is not None:
-            app.state.platform_authority_result = (
-                platform_authority_runtime.run_once(available_as_of=SystemClock().now())
-            )
+            try:
+                app.state.platform_authority_result = (
+                    platform_authority_runtime.run_once(
+                        available_as_of=SystemClock().now()
+                    )
+                )
+            except PlatformAuthorityError as error:
+                # Fail-closed startup: stale/unavailable data must not kill the
+                # process. The runtime loop retries every poll and /health,
+                # /scanner and signal safety all report truthful STALE/UNAVAILABLE
+                # states; no evaluations occur while unhealthy.
+                logging.getLogger(__name__).warning(
+                    "platform_authority_startup_deferred error_type=%s detail=%s",
+                    type(error).__name__,
+                    str(error)[:300],
+                )
             if configured.effective_polling_enabled:
                 runtime_task = asyncio.create_task(
                     runtime.run(), name="spect8-platform-authority-runtime"
