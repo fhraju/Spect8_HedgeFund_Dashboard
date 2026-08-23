@@ -2491,9 +2491,10 @@ td:first-child span,
   font-size: 11px;
 }
 .signal-live.forming {
-  border: 1px dashed #4a5a70;
-  background: #0e1d2e;
-  opacity: 0.85;
+  border: 1px dashed #efb533;
+  background: #efb53318;
+  color: #efb533;
+  box-shadow: inset 0 0 10px #efb53314;
 }
 .signal-live.confirmed {
   border: 1px solid #1d3a4a;
