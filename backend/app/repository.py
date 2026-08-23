@@ -2460,6 +2460,32 @@ class SQLiteProjectionRepository:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def confirmed_signals_for_date(self, date_str: str, tz_name: str = "America/New_York") -> tuple[dict[str, Any], ...]:
+        # date_str YYYY-MM-DD in given timezone, returns confirmed_at that falls on that date
+        from datetime import datetime, timezone
+        import zoneinfo
+
+        try:
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+        try:
+            y, m, d = map(int, date_str.split("-"))
+            start = datetime(y, m, d, 0, 0, tzinfo=tz)
+            end = datetime(y, m, d, 23, 59, 59, 999999, tzinfo=tz)
+        except Exception:
+            raise ValueError("date must be YYYY-MM-DD")
+        start_utc = start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        end_utc = end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM confirmed_signals
+                   WHERE confirmed_at >= ? AND confirmed_at <= ?
+                   ORDER BY confirmed_at ASC""",
+                (start_utc, end_utc),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
     def forming_recovery_snapshot(self, instrument_id: str, timeframe: str, m30_open: datetime) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(

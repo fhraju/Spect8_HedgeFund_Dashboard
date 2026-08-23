@@ -136,3 +136,16 @@ export async function getHistoricalReplayEvaluation(
     `/historical-replays/${encodeURIComponent(runId)}/evaluations/${evaluationId}`,
   );
 }
+
+export async function getCurrentSignals(): Promise<SyntheticEnvelope<import("./api-types").CurrentSignals>> {
+  return backendFetch("/signals/current");
+}
+
+export async function getSignalsHistory(date?: string): Promise<SyntheticEnvelope<import("./api-types").HistorySignals>> {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : "";
+  return backendFetch(`/signals/history${qs}`);
+}
+
+export async function getConfirmedSignals(): Promise<SyntheticEnvelope<{ current: import("./api-types").ConfirmedSignal[]; all: import("./api-types").ConfirmedSignal[]; as_of: string }>> {
+  return backendFetch("/signals/confirmed");
+}

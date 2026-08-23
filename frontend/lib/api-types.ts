@@ -407,6 +407,50 @@ export type ScannerSnapshot = {
   };
 };
 
+export type ConfirmedSignal = {
+  signal_id: string;
+  instrument_id: string;
+  mode: string;
+  timeframe: string;
+  direction: string;
+  source_bar_start: string;
+  source_bar_end: string;
+  formed_at: string | null;
+  confirmed_at: string;
+  visible_until: string;
+  market_data_source: string;
+  strategy_version: string;
+  source_provider: string;
+  created_at: string;
+};
+
+export type FormingSignal = {
+  instrument: string;
+  mode: string;
+  timeframe: string;
+  direction: string;
+  state: string;
+  source_bar_start: string;
+  source_bar_end: string;
+  formed_at: string;
+  confirmed_at: null;
+  visible_until: null;
+  market_data_source: string;
+};
+
+export type CurrentSignals = {
+  confirmed: ConfirmedSignal[];
+  forming: FormingSignal[];
+  as_of: string;
+};
+
+export type HistorySignals = {
+  date: string;
+  timezone: string;
+  confirmed: ConfirmedSignal[];
+  as_of: string;
+};
+
 export type SyntheticEnvelope<T> = {
   synthetic: boolean;
   source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";

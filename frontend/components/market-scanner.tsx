@@ -4,9 +4,11 @@ import type {
   ScannerInstrument,
   ScannerSnapshot,
   ScannerTimeframe,
+  CurrentSignals,
+  HistorySignals,
 } from "@/lib/api-types";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { FilterModeSelector } from "./filter-mode-selector";
 import { LogoutButton } from "./logout-button";
@@ -291,7 +293,109 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           </table>
           {rows.length === 0 && <p className="scanner-empty">No instruments match these filters.</p>}
         </div>
+
+        <LiveSignalsPanel />
+        <TodaysSignalsPanel />
       </section>
     </main>
+  );
+}
+
+function LiveSignalsPanel() {
+  const [data, setData] = useState<CurrentSignals | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchLive() {
+      try {
+        const res = await fetch("/api/signals/current", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (!cancelled) {
+          setData(json.data as CurrentSignals);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      }
+    }
+    fetchLive();
+    const id = setInterval(fetchLive, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+  if (error) return <section className="panel"><h3>Live Signals</h3><p className="scanner-error">{error}</p></section>;
+  if (!data) return <section className="panel"><h3>Live Signals</h3><p>Loading…</p></section>;
+  const all = [...data.forming.map((s) => ({ ...s, _state: "FORMING" as const })), ...data.confirmed.map((s) => ({ ...s, _state: "CONFIRMED" as const, instrument: s.instrument_id, timeframe: s.timeframe, direction: s.direction }))];
+  return (
+    <section className="panel" aria-label="Live signals">
+      <h3>Live Signals — FORMING / CONFIRMED</h3>
+      <p className="scanner-filter-time">As of <ZonedTimestamp value={data.as_of} /> · auto-refresh every 5s · {data.confirmed.length} confirmed, {data.forming.length} forming</p>
+      {all.length === 0 ? (
+        <p className="scanner-empty">No forming or confirmed signals at this time.</p>
+      ) : (
+        <table className="scanner-table">
+          <thead><tr><th>Instrument</th><th>Mode</th><th>Timeframe</th><th>Direction</th><th>State</th><th>Source bar</th><th>Visible until</th></tr></thead>
+          <tbody>
+            {all.map((s, idx) => (
+              <tr key={`${s.instrument}-${s.timeframe}-${s.direction}-${idx}`}>
+                <td><strong>{s.instrument.replace("_", "/")}</strong></td>
+                <td>{s.mode}</td>
+                <td>{s.timeframe}</td>
+                <td><SignalBadge status={s.direction} /></td>
+                <td><span className={`scanner-chip scanner-${s._state.toLowerCase()}`}>{s._state}</span></td>
+                <td><ZonedTimestamp value={s.source_bar_start} /> → <ZonedTimestamp value={s.source_bar_end} /></td>
+                <td>{(s as unknown as { visible_until?: string }).visible_until ? <ZonedTimestamp value={(s as unknown as { visible_until: string }).visible_until} /> : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function TodaysSignalsPanel() {
+  const [data, setData] = useState<HistorySignals | null>(null);
+  useEffect(() => {
+    async function fetchHistory() {
+      const res = await fetch("/api/signals/history", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = await res.json();
+      setData(json.data as HistorySignals);
+    }
+    fetchHistory();
+  }, []);
+  if (!data) return <section className="panel"><h3>Today&apos;s Signals</h3><p>Loading…</p></section>;
+  return (
+    <section className="panel" aria-label="Today's signals">
+      <h3>Today&apos;s Signals — {data.date} ({data.timezone})</h3>
+      {data.confirmed.length === 0 ? (
+        <p className="scanner-empty">No confirmed signals for today.</p>
+      ) : (
+        <table className="scanner-table">
+          <thead><tr><th>Time</th><th>Instrument</th><th>Mode</th><th>Timeframe</th><th>Direction</th><th>State</th></tr></thead>
+          <tbody>
+            {data.confirmed.map((s) => {
+              const visibleUntil = new Date(s.visible_until);
+              const now = new Date();
+              const isCurrent = now < visibleUntil;
+              return (
+                <tr key={s.signal_id}>
+                  <td><ZonedTimestamp value={s.confirmed_at} /></td>
+                  <td><strong>{s.instrument_id.replace("_", "/")}</strong></td>
+                  <td>{s.mode}</td>
+                  <td>{s.timeframe}</td>
+                  <td><SignalBadge status={s.direction} /></td>
+                  <td><span className={`scanner-chip scanner-${isCurrent ? "confirmed" : "expired"}`}>{isCurrent ? "CURRENT" : "EXPIRED"}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
