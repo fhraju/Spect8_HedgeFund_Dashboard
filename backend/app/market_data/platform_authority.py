@@ -21,6 +21,7 @@ from .platform_adapter import (
     SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
     PlatformCanonicalReadGateway,
     PlatformIncrementalProcessor,
+    PlatformInstrumentHistory,
     PlatformReadBatch,
     Spect8CanonicalReadServiceGateway,
     bid_bars,
@@ -169,15 +170,23 @@ class PlatformAuthorityRuntime:
             self._last_error = "Platform canonical watermark cannot progress"
             raise PlatformUnavailableError(self._last_error)
 
-        histories = self._startup_gate(batch, first_activation=state is None, now=now)
-        candidates = self._prepare_histories(batch, histories)
+        first_activation = state is None
+        histories = self._startup_gate(
+            batch, first_activation=first_activation, now=now
+        )
+        candidates = self._prepare_histories(
+            batch, histories, first_activation=first_activation
+        )
         evaluation_keys: dict[tuple[str, datetime], list[str]] = {}
         evaluations_created = 0
         duplicates = 0
         last_evaluation: datetime | None = None
         for instrument_id, timeframe, close_time in candidates:
             keys, created, replayed, evaluated_at = self._evaluate(
-                instrument_id, timeframe, close_time
+                instrument_id,
+                timeframe,
+                close_time,
+                filter_history=histories[instrument_id],
             )
             evaluation_keys.setdefault((instrument_id, close_time), []).extend(keys)
             evaluations_created += created
@@ -227,13 +236,14 @@ class PlatformAuthorityRuntime:
         *,
         first_activation: bool,
         now: datetime,
-    ) -> dict[str, object]:
-        histories: dict[str, object] = {}
+    ) -> dict[str, PlatformInstrumentHistory]:
+        histories = {
+            instrument_id: build_platform_history(batch, instrument_id)
+            for instrument_id in self._instrument_ids
+        }
         if first_activation:
-            for instrument_id in self._instrument_ids:
-                history = build_platform_history(batch, instrument_id)
+            for instrument_id, history in histories.items():
                 history.assert_bootstrap_ready()
-                histories[instrument_id] = history
         elif self._repository.platform_integration_state() is None:
             raise PlatformUnavailableError("durable Platform watermark is unreadable")
         else:
@@ -244,9 +254,12 @@ class PlatformAuthorityRuntime:
                             PLATFORM_PROVIDER_ID, instrument_id, timeframe
                         )
                     )
-                    for timeframe in ("H1", "H4", "D1")
+                    for timeframe in ("H1", "H4")
                 }
-                required = {"H1": 1_177, "H4": 30, "D1": 10}
+                required = {
+                    timeframe: SPECT8_PLATFORM_BOOTSTRAP_LIMITS[timeframe]
+                    for timeframe in ("H1", "H4")
+                }
                 missing = {
                     timeframe: (persisted_counts[timeframe], minimum)
                     for timeframe, minimum in required.items()
@@ -259,6 +272,29 @@ class PlatformAuthorityRuntime:
                     )
                     raise PlatformUnavailableError(
                         f"{instrument_id} durable bootstrap history is unreadable: {detail}"
+                    )
+                history = histories[instrument_id]
+                if not history.d1:
+                    history = replace(
+                        history,
+                        d1=self._repository.canonical_bar_objects(
+                            PLATFORM_PROVIDER_ID, instrument_id, "D1"
+                        )[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["D1"] :],
+                    )
+                if not history.w1:
+                    history = replace(
+                        history,
+                        w1=self._repository.canonical_bar_objects(
+                            PLATFORM_PROVIDER_ID, instrument_id, "W1"
+                        )[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["W1"] :],
+                    )
+                histories[instrument_id] = history
+                if (
+                    len(history.d1) < SPECT8_PLATFORM_BOOTSTRAP_LIMITS["D1"]
+                    or len(history.w1) < SPECT8_PLATFORM_BOOTSTRAP_LIMITS["W1"]
+                ):
+                    raise PlatformUnavailableError(
+                        f"{instrument_id} temporary filter bootstrap history is unreadable"
                     )
 
         latest_by_instrument: dict[str, datetime] = {}
@@ -278,23 +314,24 @@ class PlatformAuthorityRuntime:
                 raise PlatformUnavailableError(
                     f"{instrument_id} canonical H1 availability is invalid"
                 )
-            latest = availability.latest_close_time if availability is not None else None
-            if latest is None and first_activation:
-                history = histories[instrument_id]
-                latest = history.h1[-1].close_time  # type: ignore[attr-defined]
-            if latest is None:
-                stored = self._repository.latest_canonical_close(
-                    PLATFORM_PROVIDER_ID, instrument_id, "H1"
-                )
-                latest = (
+            candidates: list[datetime] = []
+            if availability is not None and availability.latest_close_time is not None:
+                candidates.append(availability.latest_close_time)
+            history = histories[instrument_id]
+            if history.h1:
+                candidates.append(history.h1[-1].close_time)
+            stored = self._repository.latest_canonical_close(
+                PLATFORM_PROVIDER_ID, instrument_id, "H1"
+            )
+            if stored is not None:
+                candidates.append(
                     datetime.fromisoformat(stored.replace("Z", "+00:00"))
-                    if stored is not None
-                    else None
                 )
-            if latest is None:
+            if not candidates:
                 raise PlatformUnavailableError(
                     f"{instrument_id} canonical H1 availability is unreadable"
                 )
+            latest = max(candidates)
             latest_by_instrument[instrument_id] = latest.astimezone(timezone.utc)
 
         expected = _expected_latest_forex_h1_close(now)
@@ -314,20 +351,42 @@ class PlatformAuthorityRuntime:
         return histories
 
     def _prepare_histories(
-        self, batch: PlatformReadBatch, histories: dict[str, object]
+        self,
+        batch: PlatformReadBatch,
+        histories: dict[str, PlatformInstrumentHistory],
+        *,
+        first_activation: bool,
     ) -> tuple[tuple[str, Timeframe, datetime], ...]:
-        first_activation = bool(histories)
         new_h1_closes: dict[str, set[datetime]] = {
             item: set() for item in self._instrument_ids
         }
         if first_activation:
-            for instrument_id, raw_history in histories.items():
-                history = raw_history
+            for instrument_id, history in histories.items():
+                canonical_d1 = tuple(
+                    to_spect8_bar(bar)
+                    for bar in first_accepted_versions(batch.bars)
+                    if bar.timeframe == "D1"
+                    and platform_instrument_id(instrument_id) == bar.instrument_id
+                )
+                persistent_filters = tuple(
+                    bar
+                    for bar in (
+                        *history.d1,
+                        *history.w1,
+                    )
+                    if "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP"
+                    not in bar.provider_adapter_version
+                )
                 self._repository.persist_canonical_bars(
-                    (*history.h1, *history.h4, *history.d1)  # type: ignore[attr-defined]
+                    (
+                        *history.h1,
+                        *history.h4,
+                        *canonical_d1,
+                        *persistent_filters,
+                    )
                 )
                 new_h1_closes[instrument_id].add(
-                    history.h1[-1].close_time  # type: ignore[attr-defined]
+                    history.h1[-1].close_time
                 )
         else:
             translated = tuple(
@@ -372,7 +431,12 @@ class PlatformAuthorityRuntime:
         return tuple(sorted(set(candidates), key=lambda item: (item[2], item[0], item[1].value)))
 
     def _evaluate(
-        self, instrument_id: str, timeframe: Timeframe, close_time: datetime
+        self,
+        instrument_id: str,
+        timeframe: Timeframe,
+        close_time: datetime,
+        *,
+        filter_history: PlatformInstrumentHistory,
     ) -> tuple[tuple[str, ...], int, int, datetime | None]:
         signal = self._repository.canonical_bar_objects(
             PLATFORM_PROVIDER_ID, instrument_id, timeframe.value
@@ -382,11 +446,29 @@ class PlatformAuthorityRuntime:
             PLATFORM_PROVIDER_ID, instrument_id, "H1"
         )
         h1 = tuple(bar for bar in h1 if bar.close_time <= close_time)
-        daily = self._repository.canonical_bar_objects(
+        filter_daily = tuple(
+            bar for bar in filter_history.d1 if bar.close_time <= close_time
+        )[-10:]
+        strategy_daily = self._repository.canonical_bar_objects(
             PLATFORM_PROVIDER_ID, instrument_id, "D1"
         )
-        daily = tuple(bar for bar in daily if bar.close_time <= close_time)[-10:]
-        if len(signal) < 30 or len(daily) < 6:
+        strategy_daily = tuple(
+            bar for bar in strategy_daily if bar.close_time <= close_time
+        )[-10:]
+        if filter_daily and all(
+            "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP" in bar.provider_adapter_version
+            for bar in filter_daily
+        ):
+            strategy_daily = filter_daily
+        weekly = tuple(
+            bar for bar in filter_history.w1 if bar.close_time <= close_time
+        )[-10:]
+        if (
+            len(signal) < 30
+            or len(filter_daily) < 6
+            or len(strategy_daily) < 6
+            or len(weekly) < 6
+        ):
             raise PlatformUnavailableError(
                 f"{instrument_id} {timeframe.value} evaluation history is insufficient"
             )
@@ -415,7 +497,7 @@ class PlatformAuthorityRuntime:
                     instrument=instrument_id,
                     as_of_h1_close=close_time,
                     h1_bars=h1,
-                    completed_d1_bars=daily,
+                    completed_d1_bars=filter_daily,
                 )
                 self._repository.persist_daily_filter_snapshot(daily_snapshot)
             else:
@@ -424,6 +506,7 @@ class PlatformAuthorityRuntime:
                     instrument=instrument_id,
                     as_of_h1_close=close_time,
                     h1_bars=h1,
+                    completed_w1_bars=weekly,
                 )
                 self._repository.persist_w1_filter_snapshot(weekly_snapshot)
             evaluation_time = close_time + timedelta(microseconds=1)
@@ -436,7 +519,7 @@ class PlatformAuthorityRuntime:
                 timeframe=timeframe,
                 evaluation_time=evaluation_time,
                 signal_bars=signal,
-                daily_bars=daily,
+                daily_bars=strategy_daily,
                 instrument=replace(
                     instrument,
                     session_timezone="America/New_York",

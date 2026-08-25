@@ -124,10 +124,20 @@ def bootstrap_batch(
         open_time = new_york_session_close(local_date - timedelta(days=1))
         bars.append(canonical(canonical_id, "D1", open_time, close_time - open_time))
         canonical_id += 1
-    bars.append(canonical(canonical_id, "M30", latest - timedelta(minutes=30), timedelta(minutes=30)))
-    canonical_id += 1
+    for index in range(SPECT8_PLATFORM_BOOTSTRAP_LIMITS["M30"]):
+        bars.append(
+            canonical(
+                canonical_id,
+                "M30",
+                latest - timedelta(minutes=30 * (index + 1)),
+                timedelta(minutes=30),
+            )
+        )
+        canonical_id += 1
     for index in range(SPECT8_PLATFORM_BOOTSTRAP_LIMITS["W1"]):
-        open_time = latest - timedelta(days=7 * (6 - index))
+        open_time = latest - timedelta(
+            days=7 * (SPECT8_PLATFORM_BOOTSTRAP_LIMITS["W1"] - index)
+        )
         bars.append(canonical(canonical_id, "W1", open_time, timedelta(days=7)))
         canonical_id += 1
     availability = tuple(

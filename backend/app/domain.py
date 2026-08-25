@@ -12,6 +12,7 @@ class Timeframe(StrEnum):
     H1 = "H1"
     H4 = "H4"
     D1 = "D1"
+    W1 = "W1"
 
 
 class Direction(StrEnum):

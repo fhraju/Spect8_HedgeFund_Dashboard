@@ -26,6 +26,7 @@ from .models import (
 
 ATR_PERIOD = 5
 BUFFER_PERCENTAGE = Decimal("0.05")
+TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP = "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP"
 
 
 class WeeklyFilterUnavailableError(ValueError):
@@ -270,6 +271,54 @@ def derive_completed_weekly_candles(
     return tuple(sorted(sessions, key=lambda bar: bar.close_time))
 
 
+def _temporary_completed_weekly_candles(
+    *,
+    provider: str,
+    instrument: str,
+    active_session_open: datetime,
+    completed_w1_bars: Sequence[Bar],
+) -> tuple[CompletedWeeklyCandle, ...]:
+    """Accept only explicitly tagged native IG W1 bootstrap evidence."""
+
+    selected: list[CompletedWeeklyCandle] = []
+    provenance_kinds: set[bool] = set()
+    for bar in completed_w1_bars:
+        if bar.provider != provider or bar.instrument_id != instrument:
+            continue
+        if bar.close_time > active_session_open:
+            continue
+        if (
+            bar.timeframe is not Timeframe.W1
+            or not bar.is_complete
+            or bar.quality_status != "VALID"
+            or bar.synthetic
+            or bar.forward_filled
+        ):
+            raise WeeklyFilterUnavailableError(
+                "INVALID_TEMPORARY_NATIVE_W1_BOOTSTRAP"
+            )
+        provenance_kinds.add(
+            TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP in bar.provider_adapter_version
+        )
+        source_id = _source_id(bar)
+        selected.append(
+            CompletedWeeklyCandle(
+                candle_id=source_id,
+                session_identifier=bar.close_time.date().isoformat(),
+                open_time=bar.open_time,
+                close_time=bar.close_time,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                source_h1_ids=(source_id,),
+            )
+        )
+    if len(provenance_kinds) > 1:
+        raise WeeklyFilterUnavailableError("MIXED_CANONICAL_AND_TEMPORARY_W1")
+    return tuple(sorted(selected, key=lambda bar: bar.close_time))
+
+
 def build_w1_filter_snapshot(
     *,
     provider: str,
@@ -277,6 +326,7 @@ def build_w1_filter_snapshot(
     as_of_h1_close: datetime,
     h1_bars: Sequence[Bar],
     sparse_actual_h1: bool = False,
+    completed_w1_bars: Sequence[Bar] | None = None,
 ) -> WeeklyFilterSnapshot:
     partial = CurrentWeeklyCandleBuilder().build(
         provider=provider,
@@ -285,12 +335,21 @@ def build_w1_filter_snapshot(
         h1_bars=h1_bars,
         sparse_actual_h1=sparse_actual_h1,
     )
-    completed = derive_completed_weekly_candles(
-        provider=provider,
-        instrument=instrument,
-        active_session_open=partial.session_open_utc,
-        h1_bars=h1_bars,
-        sparse_actual_h1=sparse_actual_h1,
+    completed = (
+        _temporary_completed_weekly_candles(
+            provider=provider,
+            instrument=instrument,
+            active_session_open=partial.session_open_utc,
+            completed_w1_bars=completed_w1_bars,
+        )
+        if completed_w1_bars is not None
+        else derive_completed_weekly_candles(
+            provider=provider,
+            instrument=instrument,
+            active_session_open=partial.session_open_utc,
+            h1_bars=h1_bars,
+            sparse_actual_h1=sparse_actual_h1,
+        )
     )
     if len(completed) < ATR_PERIOD + 1:
         raise WeeklyFilterUnavailableError("INSUFFICIENT_COMPLETED_W1_FOR_ATR5")

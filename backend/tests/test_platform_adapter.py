@@ -29,6 +29,7 @@ from backend.app.market_data.platform_adapter import (
     PlatformCanonicalBar,
     PlatformIncrementalProcessor,
     PlatformInstrumentHistory,
+    PlatformNativeBootstrapBar,
     PlatformReadBatch,
     PlatformSeriesAvailability,
     Spect8CanonicalReadServiceGateway,
@@ -139,6 +140,44 @@ def _batch(
     )
 
 
+def _native(
+    bootstrap_bar_id: int,
+    *,
+    timeframe: str,
+    open_time: datetime,
+    provenance: str | None = None,
+) -> PlatformNativeBootstrapBar:
+    duration = {
+        "H1": timedelta(hours=1),
+        "D1": timedelta(days=1),
+        "W1": timedelta(days=7),
+    }[timeframe]
+    return PlatformNativeBootstrapBar(
+        bootstrap_bar_id=bootstrap_bar_id,
+        instrument_id="FX_EUR_USD",
+        timeframe=timeframe,
+        price_type="BID",
+        open_time=open_time,
+        close_time=open_time + duration,
+        open=Decimal("1.2"),
+        high=Decimal("1.3"),
+        low=Decimal("1.1"),
+        close=Decimal("1.25"),
+        volume=Decimal("10"),
+        volume_type="UNKNOWN",
+        source_provider_id="IG_DEMO",
+        provenance=provenance
+        or (
+            "NATIVE_IG_HISTORICAL_BOOTSTRAP"
+            if timeframe == "H1"
+            else "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP"
+        ),
+        observed_at=open_time + duration,
+        raw_snapshot_time="raw-local",
+        raw_snapshot_time_utc="raw-utc",
+    )
+
+
 class _Gateway:
     def __init__(self, batches: list[PlatformReadBatch]) -> None:
         self.batches = batches
@@ -198,11 +237,11 @@ def test_gateway_passes_exact_bootstrap_policy_to_platform_service() -> None:
         after_canonical_bar_id=None,
     )
     assert service.kwargs["limits"] == {
-        _PlatformTimeframe.M30: 1,
-        _PlatformTimeframe.H1: 1_177,
+        _PlatformTimeframe.M30: 40,
+        _PlatformTimeframe.H1: 128,
         _PlatformTimeframe.H4: 30,
         _PlatformTimeframe.D1: 10,
-        _PlatformTimeframe.W1: 6,
+        _PlatformTimeframe.W1: 10,
     }
     assert result.bars[0].immutable_identity == _canonical(1).immutable_identity
 
@@ -274,13 +313,57 @@ def test_platform_utc_h4_is_ignored_in_favor_of_h1_derivation() -> None:
     assert "MDP:50:hash-50" not in history.h4[0].source_candle_ids
 
 
+def test_native_bootstrap_fills_h1_and_temporary_filter_history() -> None:
+    start = datetime(2026, 1, 4, 22, tzinfo=UTC)
+    canonical = _canonical(1, open_time=start + timedelta(hours=1))
+    native_h1 = tuple(
+        _native(index + 1, timeframe="H1", open_time=start + timedelta(hours=index))
+        for index in range(4)
+    )
+    native_d1 = tuple(
+        _native(10 + index, timeframe="D1", open_time=start + timedelta(days=index))
+        for index in range(10)
+    )
+    native_w1 = tuple(
+        _native(30 + index, timeframe="W1", open_time=start + timedelta(weeks=index))
+        for index in range(10)
+    )
+    batch = replace(
+        _batch((canonical,), as_of=start + timedelta(weeks=12)),
+        native_bootstrap_bars=(*native_h1, *native_d1, *native_w1),
+    )
+
+    history = build_platform_history(batch, "EUR_USD")
+
+    assert len(history.h1) == 4
+    assert history.h1[1].source_candle_ids == ("MDP:1:hash-1",)
+    assert len(history.h4) == 1
+    assert len(history.d1) == 10
+    assert len(history.w1) == 10
+    assert all(
+        "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP" in bar.provider_adapter_version
+        for bar in (*history.d1, *history.w1)
+    )
+    assert all(bar.expected_closure_before for bar in (*history.d1, *history.w1))
+
+
+def test_native_bootstrap_rejects_wrong_provenance() -> None:
+    with pytest.raises(ValueError, match="H1 native bootstrap provenance is invalid"):
+        _native(
+            1,
+            timeframe="H1",
+            open_time=datetime(2026, 1, 1, tzinfo=UTC),
+            provenance="TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP",
+        )
+
+
 def test_bootstrap_depth_contract_includes_d1_ten() -> None:
     assert SPECT8_PLATFORM_BOOTSTRAP_LIMITS == {
-        "M30": 1,
-        "H1": 1_177,
+        "M30": 40,
+        "H1": 128,
         "H4": 30,
         "D1": 10,
-        "W1": 6,
+        "W1": 10,
     }
     history = PlatformInstrumentHistory(
         platform_instrument_id="FX_EUR_USD",

@@ -28,14 +28,15 @@ from .session_boundaries import NEW_YORK_SESSION_TIMEZONE
 PLATFORM_PROVIDER_ID = "MARKET_DATA_PLATFORM"
 SPECT8_PRICE_TYPE = "BID"
 DIRECT_STRATEGY_TIMEFRAMES = frozenset({"H1", "D1"})
+TRANSLATABLE_BOOTSTRAP_TIMEFRAMES = frozenset({"H1", "D1", "W1"})
 
 SPECT8_PLATFORM_BOOTSTRAP_LIMITS: Mapping[str, int] = MappingProxyType(
     {
-        "M30": 1,
-        "H1": 1_177,
+        "M30": 40,
+        "H1": 128,
         "H4": 30,
         "D1": 10,
-        "W1": 6,
+        "W1": 10,
     }
 )
 
@@ -142,6 +143,41 @@ class PlatformCanonicalBar:
 
 
 @dataclass(frozen=True, slots=True)
+class PlatformNativeBootstrapBar:
+    bootstrap_bar_id: int
+    instrument_id: str
+    timeframe: str
+    price_type: str
+    open_time: datetime
+    close_time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal | None
+    volume_type: str
+    source_provider_id: str
+    provenance: str
+    observed_at: datetime
+    raw_snapshot_time: str | None
+    raw_snapshot_time_utc: str
+
+    def __post_init__(self) -> None:
+        if self.timeframe not in {"H1", "D1", "W1"}:
+            raise ValueError("native bootstrap timeframe must be H1, D1, or W1")
+        expected = (
+            "NATIVE_IG_HISTORICAL_BOOTSTRAP"
+            if self.timeframe == "H1"
+            else "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP"
+        )
+        if self.provenance != expected:
+            raise ValueError(f"{self.timeframe} native bootstrap provenance is invalid")
+        object.__setattr__(self, "open_time", _utc(self.open_time, "open_time"))
+        object.__setattr__(self, "close_time", _utc(self.close_time, "close_time"))
+        object.__setattr__(self, "observed_at", _utc(self.observed_at, "observed_at"))
+
+
+@dataclass(frozen=True, slots=True)
 class PlatformSeriesAvailability:
     instrument_id: str
     timeframe: str
@@ -160,6 +196,7 @@ class PlatformReadBatch:
     instrument_master_checksum: str
     session_calendar_checksum: str
     timezone_data_version: str
+    native_bootstrap_bars: tuple[PlatformNativeBootstrapBar, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -238,6 +275,10 @@ class Spect8CanonicalReadServiceGateway:
             instrument_master_checksum=result.instrument_master_checksum,
             session_calendar_checksum=result.session_calendar_checksum,
             timezone_data_version=result.timezone_data_version,
+            native_bootstrap_bars=tuple(
+                PlatformNativeBootstrapBar(**_public_fields(bar))
+                for bar in getattr(result, "native_bootstrap_bars", ())
+            ),
         )
 
     def read_canonical_ids(
@@ -321,7 +362,7 @@ def to_spect8_bar(bar: PlatformCanonicalBar) -> Bar:
         raise PlatformAdapterError("Spect8 strategy input requires BID")
     if bar.quality_status != "VALID":
         raise PlatformAdapterError("Spect8 strategy input requires VALID quality")
-    if bar.timeframe not in DIRECT_STRATEGY_TIMEFRAMES:
+    if bar.timeframe not in TRANSLATABLE_BOOTSTRAP_TIMEFRAMES:
         raise PlatformAdapterError(
             f"Platform {bar.timeframe} is not a direct Spect8 strategy input"
         )
@@ -363,6 +404,47 @@ def to_spect8_bar(bar: PlatformCanonicalBar) -> Bar:
     )
 
 
+def to_spect8_native_bootstrap_bar(bar: PlatformNativeBootstrapBar) -> Bar:
+    """Translate isolated native warm-up evidence without claiming canonical semantics."""
+
+    if bar.price_type != SPECT8_PRICE_TYPE:
+        raise PlatformAdapterError("Spect8 native bootstrap input requires BID")
+    instrument_id = spect8_instrument_id(bar.instrument_id)
+    timeframe = Timeframe(bar.timeframe)
+    return Bar(
+        instrument_id=instrument_id,
+        timeframe=timeframe,
+        open_time=bar.open_time,
+        close_time=bar.close_time,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        provider=PLATFORM_PROVIDER_ID,
+        is_complete=True,
+        volume=bar.volume,
+        session_timezone="Europe/London",
+        raw_provider_symbol=bar.instrument_id,
+        raw_open_time=bar.raw_snapshot_time_utc,
+        raw_close_time=bar.close_time.isoformat().replace("+00:00", "Z"),
+        raw_open=str(bar.open),
+        raw_high=str(bar.high),
+        raw_low=str(bar.low),
+        raw_close=str(bar.close),
+        synthetic=False,
+        quality_status="VALID",
+        construction_profile_version=PROFILE_ID,
+        provider_adapter_version=f"{bar.provenance}:native-ig-v1",
+        source_candle_ids=(
+            f"MDP-NATIVE:{bar.bootstrap_bar_id}:{bar.source_provider_id}:{bar.provenance}",
+        ),
+        forward_filled=False,
+        expected_closure_before=timeframe in {Timeframe.D1, Timeframe.W1},
+        ingestion_run_id=f"mdp-native-bootstrap-{bar.bootstrap_bar_id}",
+        created_at=bar.observed_at,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformInstrumentHistory:
     platform_instrument_id: str
@@ -371,7 +453,7 @@ class PlatformInstrumentHistory:
     h1: tuple[Bar, ...]
     h4: tuple[Bar, ...]
     d1: tuple[Bar, ...]
-    w1: tuple[PlatformCanonicalBar, ...]
+    w1: tuple[Bar, ...]
     h4_issues: tuple[str, ...]
 
     def assert_bootstrap_ready(self) -> None:
@@ -416,12 +498,44 @@ def build_platform_history(
         )
         for timeframe in SPECT8_PLATFORM_BOOTSTRAP_LIMITS
     }
-    h1 = tuple(to_spect8_bar(bar) for bar in grouped["H1"])[
+    native = tuple(
+        bar
+        for bar in batch.native_bootstrap_bars
+        if bar.instrument_id == platform_id and bar.price_type == SPECT8_PRICE_TYPE
+    )
+    native_grouped = {
+        timeframe: tuple(
+            sorted(
+                (
+                    to_spect8_native_bootstrap_bar(bar)
+                    for bar in native
+                    if bar.timeframe == timeframe
+                ),
+                key=lambda bar: bar.open_time,
+            )
+        )
+        for timeframe in ("H1", "D1", "W1")
+    }
+    canonical_h1 = tuple(to_spect8_bar(bar) for bar in grouped["H1"])
+    merged_h1 = {
+        (bar.open_time, bar.close_time): bar for bar in native_grouped["H1"]
+    }
+    merged_h1.update(
+        {(bar.open_time, bar.close_time): bar for bar in canonical_h1}
+    )
+    h1 = tuple(sorted(merged_h1.values(), key=lambda bar: bar.open_time))[
         -SPECT8_PLATFORM_BOOTSTRAP_LIMITS["H1"] :
     ]
-    d1 = tuple(to_spect8_bar(bar) for bar in grouped["D1"])[
-        -SPECT8_PLATFORM_BOOTSTRAP_LIMITS["D1"] :
-    ]
+
+    def filter_series(timeframe: str) -> tuple[Bar, ...]:
+        canonical = tuple(to_spect8_bar(bar) for bar in grouped[timeframe])
+        temporary = native_grouped[timeframe]
+        if temporary and (not canonical or temporary[-1].close_time > canonical[-1].close_time):
+            return temporary[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS[timeframe] :]
+        return canonical[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS[timeframe] :]
+
+    d1 = filter_series("D1")
+    w1 = filter_series("W1")
     h4_result = BrokerAlignedH4Aggregator().aggregate(
         h1,
         as_of=batch.available_as_of,
@@ -433,7 +547,7 @@ def build_platform_history(
         h1=h1,
         h4=h4_result.bars[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["H4"] :],
         d1=d1,
-        w1=grouped["W1"][-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["W1"] :],
+        w1=w1,
         h4_issues=tuple(issue.code.value for issue in h4_result.issues),
     )
 

@@ -335,8 +335,8 @@ class MultiInstrumentTwelveDataProvider:
         discoveries = {timeframe.value: 0 for timeframe in Timeframe}
         for value in values:
             for key in series:
-                series[key] += value.series_attempts[key]
-                discoveries[key] += value.completed_discoveries[key]
+                series[key] += value.series_attempts.get(key, 0)
+                discoveries[key] += value.completed_discoveries.get(key, 0)
         return MultiProviderTelemetry(
             network_attempts=sum(value.network_attempts for value in values),
             successful_requests=sum(value.successful_requests for value in values),
