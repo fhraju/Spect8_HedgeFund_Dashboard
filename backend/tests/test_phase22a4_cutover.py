@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
 from backend.app.engine.strategy import Spect8StrategyEvaluator
-from backend.app.main import create_app
+from backend.app.main import _live_ready, create_app
 from backend.app.market_data.models import ProviderIdentity
 from backend.app.market_data.platform_adapter import (
     SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
@@ -454,6 +454,7 @@ def test_current_persisted_partials_make_live_readiness_and_forming_operational(
     assert status["partial_data_state"] == "READY"
     assert status["overall_live_readiness"] == "LIVE_READY"
     assert status["forming_evaluator_state"] == "READY"
+    assert _live_ready(authority, "EUR_USD") is True
     assert status["forming_evaluation"]["evaluations_completed"] >= 3
     forming = authority.forming_signals(as_of=as_of)
     assert {(item.mode, item.timeframe) for item in forming} >= {

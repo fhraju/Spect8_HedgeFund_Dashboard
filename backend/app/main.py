@@ -101,6 +101,24 @@ def _live_not_ready(
     )
 
 
+def _live_ready(
+    runtime: PlatformAuthorityRuntime | None, instrument_id: str
+) -> bool:
+    """Map only explicit per-instrument Platform readiness to dashboard health."""
+
+    if runtime is None:
+        return False
+    status = runtime.status()
+    instruments = status.get("live_instruments")
+    item = instruments.get(instrument_id) if isinstance(instruments, dict) else None
+    return bool(
+        status.get("overall_live_readiness") == "LIVE_READY"
+        and isinstance(item, dict)
+        and item.get("state") == "READY"
+        and item.get("partial_state") == "READY"
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     historical_replay_service: HistoricalReplayService | None = None,
@@ -717,22 +735,30 @@ def create_app(
             stale_after_seconds=configured.market_data_stale_after_seconds,
         )
         if platform_authority_runtime is not None:
-            rows = [
-                row.model_copy(
-                    update={
-                        "provider_health": "STALE",
-                        "data_status": "STALE",
-                        "stale": True,
-                        "latest_error_summary": (
-                            "Historical strategy state is ready, but canonical "
-                            "streaming or partial-data evidence is not fully ready."
-                        ),
-                    }
-                )
-                if _live_not_ready(platform_authority_runtime, row.instrument_id)
-                else row
-                for row in snapshot.instruments
-            ]
+            rows = []
+            for row in snapshot.instruments:
+                if _live_not_ready(platform_authority_runtime, row.instrument_id):
+                    row = row.model_copy(
+                        update={
+                            "provider_health": "STALE",
+                            "data_status": "STALE",
+                            "stale": True,
+                            "latest_error_summary": (
+                                "Historical strategy state is ready, but canonical "
+                                "streaming or partial-data evidence is not fully ready."
+                            ),
+                        }
+                    )
+                elif _live_ready(platform_authority_runtime, row.instrument_id):
+                    row = row.model_copy(
+                        update={
+                            "provider_health": "HEALTHY",
+                            "data_status": "HEALTHY",
+                            "stale": False,
+                            "latest_error_summary": None,
+                        }
+                    )
+                rows.append(row)
             snapshot = snapshot.model_copy(update={"instruments": rows})
         return envelope(snapshot)
 
