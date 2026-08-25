@@ -156,8 +156,12 @@ def daily_filter_snapshot_from_payload(
             session_identifier=str(partial["session_identifier"]),
             session_open_utc=_snapshot_datetime(partial["session_open_utc"]),
             session_close_utc=_snapshot_datetime(partial["session_close_utc"]),
-            first_h1_open_time_utc=_snapshot_datetime(partial["first_h1_open_time_utc"]),
-            last_h1_close_time_utc=_snapshot_datetime(partial["last_h1_close_time_utc"]),
+            first_h1_open_time_utc=_snapshot_datetime(
+                partial["first_h1_open_time_utc"]
+            ),
+            last_h1_close_time_utc=_snapshot_datetime(
+                partial["last_h1_close_time_utc"]
+            ),
             h1_count=int(partial["h1_count"]),
             source_h1_ids=tuple(str(item) for item in partial["source_h1_ids"]),
             source_checksum=str(partial["source_checksum"]),
@@ -192,7 +196,11 @@ def daily_filter_snapshot_from_payload(
         sell_matched=bool(value["sell_matched"]),
         final_classification=str(value["final_classification"]),
         data_quality_status=str(value["data_quality_status"]),
-        ingestion_run_id=(str(value["ingestion_run_id"]) if value.get("ingestion_run_id") is not None else None),
+        ingestion_run_id=(
+            str(value["ingestion_run_id"])
+            if value.get("ingestion_run_id") is not None
+            else None
+        ),
         created_at=_snapshot_datetime(value["created_at"]),
     )
 
@@ -218,8 +226,12 @@ def w1_snapshot_from_payload(
             session_identifier=str(partial["session_identifier"]),
             session_open_utc=_snapshot_datetime(partial["session_open_utc"]),
             session_close_utc=_snapshot_datetime(partial["session_close_utc"]),
-            first_h1_open_time_utc=_snapshot_datetime(partial["first_h1_open_time_utc"]),
-            last_h1_close_time_utc=_snapshot_datetime(partial["last_h1_close_time_utc"]),
+            first_h1_open_time_utc=_snapshot_datetime(
+                partial["first_h1_open_time_utc"]
+            ),
+            last_h1_close_time_utc=_snapshot_datetime(
+                partial["last_h1_close_time_utc"]
+            ),
             h1_count=int(partial["h1_count"]),
             source_h1_ids=tuple(str(item) for item in partial["source_h1_ids"]),
             source_checksum=str(partial["source_checksum"]),
@@ -255,7 +267,11 @@ def w1_snapshot_from_payload(
         sell_matched=bool(value["sell_matched"]),
         final_classification=str(value["final_classification"]),
         data_quality_status=str(value["data_quality_status"]),
-        ingestion_run_id=(str(value["ingestion_run_id"]) if value.get("ingestion_run_id") is not None else None),
+        ingestion_run_id=(
+            str(value["ingestion_run_id"])
+            if value.get("ingestion_run_id") is not None
+            else None
+        ),
         created_at=_snapshot_datetime(value["created_at"]),
     )
 
@@ -292,6 +308,7 @@ class StrategyRequest:
     daily_filter_snapshot: DailyFilterSnapshot | None = None
     filter_mode: FilterMode = FilterMode.MICRO
     w1_filter_snapshot: WeeklyFilterSnapshot | None = None
+    evaluation_kind: str = "COMPLETED"
 
 
 @dataclass(frozen=True, slots=True)

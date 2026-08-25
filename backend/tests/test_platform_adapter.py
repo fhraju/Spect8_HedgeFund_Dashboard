@@ -237,7 +237,7 @@ def test_gateway_passes_exact_bootstrap_policy_to_platform_service() -> None:
         after_canonical_bar_id=None,
     )
     assert service.kwargs["limits"] == {
-        _PlatformTimeframe.M30: 40,
+        _PlatformTimeframe.M30: 80,
         _PlatformTimeframe.H1: 128,
         _PlatformTimeframe.H4: 30,
         _PlatformTimeframe.D1: 10,

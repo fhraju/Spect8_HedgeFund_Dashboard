@@ -11,12 +11,11 @@ confirmation of same source bar is impossible via signal_id idempotency.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Callable
 
-from ..domain import Bar, Timeframe, FilterMode
+from ..domain import Bar
 from ..repository import SQLiteProjectionRepository
 from .partial_snapshot import CurrentBarSnapshot
 
@@ -57,7 +56,14 @@ def _hold_for(mode: str, timeframe: str) -> timedelta:
         raise ValueError(f"no hold period for {mode} {timeframe}")
 
 
-def _signal_id(instrument_id: str, mode: str, timeframe: str, bar_start: datetime, direction: str, version: str) -> str:
+def _signal_id(
+    instrument_id: str,
+    mode: str,
+    timeframe: str,
+    bar_start: datetime,
+    direction: str,
+    version: str,
+) -> str:
     return f"{instrument_id}:{mode}:{timeframe}:{bar_start.isoformat()}:{direction}:{version}"
 
 
@@ -70,7 +76,8 @@ class SignalLifecycleService:
         *,
         strategy_version: str = "SPECT8_MICRO_DAILY_V1_0_3",
         market_data_source: str = "MARKET_DATA_PLATFORM",
-        signal_evaluator: Callable[[Bar | CurrentBarSnapshot], str | None] | None = None,
+        signal_evaluator: Callable[[Bar | CurrentBarSnapshot], str | None]
+        | None = None,
     ) -> None:
         self._repo = repository
         self._strategy_version = strategy_version
@@ -102,6 +109,8 @@ class SignalLifecycleService:
         snapshot: CurrentBarSnapshot,
         as_of: datetime,
         platform_healthy: bool,
+        evaluated_direction: str | None = None,
+        direction_was_evaluated: bool = False,
     ) -> SignalSnapshot | None:
         """Return FORMING if partial satisfies signal and Platform HEALTHY."""
         if not platform_healthy:
@@ -110,7 +119,11 @@ class SignalLifecycleService:
             raise ValueError("forming requires is_complete=False")
         if snapshot.as_of.astimezone(UTC) > as_of.astimezone(UTC):
             raise ValueError("snapshot as_of > evaluation as_of (lookahead)")
-        direction = self._evaluator(snapshot)
+        direction = (
+            evaluated_direction
+            if direction_was_evaluated
+            else self._evaluator(snapshot)
+        )
         if direction is None:
             return None
         return SignalSnapshot(
@@ -136,6 +149,7 @@ class SignalLifecycleService:
         as_of: datetime,
         direction: str | None = None,
         provider: str = "MARKET_DATA_PLATFORM",
+        strategy_version: str | None = None,
     ) -> SignalSnapshot | None:
         """Confirm at authoritative close. Persists with visible_until."""
         if not completed_bar.is_complete:
@@ -150,7 +164,15 @@ class SignalLifecycleService:
         hold = _hold_for(mode, timeframe)
         confirmed_at = completed_bar.close_time.astimezone(UTC)
         visible_until = confirmed_at + hold
-        sig_id = _signal_id(instrument_id, mode, timeframe, completed_bar.open_time, direction, self._strategy_version)
+        effective_version = strategy_version or self._strategy_version
+        sig_id = _signal_id(
+            instrument_id,
+            mode,
+            timeframe,
+            completed_bar.open_time,
+            direction,
+            effective_version,
+        )
         # Idempotent persist
         self._repo.persist_confirmed_signal(
             signal_id=sig_id,
@@ -164,7 +186,7 @@ class SignalLifecycleService:
             confirmed_at=confirmed_at,
             visible_until=visible_until,
             market_data_source=self._market_data_source,
-            strategy_version=self._strategy_version,
+            strategy_version=effective_version,
             source_provider=provider,
         )
         return SignalSnapshot(
@@ -189,7 +211,12 @@ class SignalLifecycleService:
     # Recovery helpers for M30 forming: persist component open times so restart can rebuild
 
     def persist_forming_recovery(
-        self, instrument_id: str, timeframe: str, m30_open: datetime, provider: str, components: tuple[datetime, ...]
+        self,
+        instrument_id: str,
+        timeframe: str,
+        m30_open: datetime,
+        provider: str,
+        components: tuple[datetime, ...],
     ) -> None:
         self._repo.persist_forming_recovery(
             instrument_id=instrument_id,
@@ -199,12 +226,20 @@ class SignalLifecycleService:
             component_open_times=components,
         )
 
-    def load_forming_recovery(self, instrument_id: str, timeframe: str, m30_open: datetime) -> tuple[datetime, ...] | None:
+    def load_forming_recovery(
+        self, instrument_id: str, timeframe: str, m30_open: datetime
+    ) -> tuple[datetime, ...] | None:
         row = self._repo.forming_recovery_snapshot(instrument_id, timeframe, m30_open)
         if row is None:
             return None
         import json
-        return tuple(datetime.fromisoformat(s.replace("Z", "+00:00")) for s in json.loads(row["component_open_times_json"]))
 
-    def clear_forming_recovery(self, instrument_id: str, timeframe: str, m30_open: datetime) -> None:
+        return tuple(
+            datetime.fromisoformat(s.replace("Z", "+00:00"))
+            for s in json.loads(row["component_open_times_json"])
+        )
+
+    def clear_forming_recovery(
+        self, instrument_id: str, timeframe: str, m30_open: datetime
+    ) -> None:
         self._repo.clear_forming_recovery(instrument_id, timeframe, m30_open)

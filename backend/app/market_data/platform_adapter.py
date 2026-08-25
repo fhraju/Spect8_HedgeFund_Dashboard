@@ -22,13 +22,14 @@ from typing import Protocol
 
 from ..domain import Bar, Timeframe
 from .forex_profile import BrokerAlignedH4Aggregator
+from .partial_snapshot import CurrentBarSnapshot
 from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 from .session_boundaries import NEW_YORK_SESSION_TIMEZONE
 
 PLATFORM_PROVIDER_ID = "MARKET_DATA_PLATFORM"
 SPECT8_PRICE_TYPE = "BID"
 DIRECT_STRATEGY_TIMEFRAMES = frozenset({"H1", "D1"})
-TRANSLATABLE_BOOTSTRAP_TIMEFRAMES = frozenset({"H1", "D1", "W1"})
+TRANSLATABLE_BOOTSTRAP_TIMEFRAMES = frozenset({"M30", "H1", "D1", "W1"})
 
 SPECT8_PLATFORM_BOOTSTRAP_LIMITS: Mapping[str, int] = MappingProxyType(
     {
@@ -37,6 +38,13 @@ SPECT8_PLATFORM_BOOTSTRAP_LIMITS: Mapping[str, int] = MappingProxyType(
         "H4": 30,
         "D1": 10,
         "W1": 10,
+    }
+)
+SPECT8_PLATFORM_REPLAY_LIMITS: Mapping[str, int] = MappingProxyType(
+    {
+        **SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
+        # 48 current-day M30 closes plus the frozen 30-bar warm-up.
+        "M30": 80,
     }
 )
 
@@ -178,6 +186,46 @@ class PlatformNativeBootstrapBar:
 
 
 @dataclass(frozen=True, slots=True)
+class PlatformPartialBarSnapshot:
+    partial_snapshot_id: int
+    instrument_id: str
+    provider_identifier: str
+    timeframe: str
+    price_type: str
+    bar_start: datetime
+    bar_end: datetime
+    as_of: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    completed_member_count: int
+    expected_member_count: int
+    status: str
+    source_provider_id: str
+    component_open_times: tuple[datetime, ...]
+    component_source_ids: tuple[str, ...]
+    provenance: dict[str, object]
+
+    def __post_init__(self) -> None:
+        if self.timeframe not in {"M30", "H1"} or self.price_type not in {"BID", "ASK"}:
+            raise ValueError("Platform partial snapshot series is invalid")
+        if self.status != "PARTIAL":
+            raise ValueError("Platform partial snapshot must be PARTIAL")
+        if not 0 < self.completed_member_count < self.expected_member_count:
+            raise ValueError("Platform partial snapshot member counts are invalid")
+        for name in ("bar_start", "bar_end", "as_of"):
+            object.__setattr__(self, name, _utc(getattr(self, name), name))
+        object.__setattr__(
+            self,
+            "component_open_times",
+            tuple(
+                _utc(item, "component_open_time") for item in self.component_open_times
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PlatformSeriesAvailability:
     instrument_id: str
     timeframe: str
@@ -197,6 +245,7 @@ class PlatformReadBatch:
     session_calendar_checksum: str
     timezone_data_version: str
     native_bootstrap_bars: tuple[PlatformNativeBootstrapBar, ...] = ()
+    partial_bar_snapshots: tuple[PlatformPartialBarSnapshot, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -217,13 +266,11 @@ class PlatformCanonicalReadGateway(Protocol):
         available_as_of: datetime,
         after_canonical_bar_id: int | None,
         limits: Mapping[str, int],
-    ) -> PlatformReadBatch:
-        ...
+    ) -> PlatformReadBatch: ...
 
     def read_canonical_ids(
         self, canonical_bar_ids: tuple[int, ...]
-    ) -> tuple[PlatformCanonicalBar, ...]:
-        ...
+    ) -> tuple[PlatformCanonicalBar, ...]: ...
 
 
 class Spect8CanonicalReadServiceGateway:
@@ -239,7 +286,7 @@ class Spect8CanonicalReadServiceGateway:
         *,
         available_as_of: datetime,
         after_canonical_bar_id: int | None,
-        limits: Mapping[str, int] = SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
+        limits: Mapping[str, int] = SPECT8_PLATFORM_REPLAY_LIMITS,
     ) -> PlatformReadBatch:
         timeframe_type = self._timeframe_type
         if timeframe_type is None:
@@ -265,7 +312,9 @@ class Spect8CanonicalReadServiceGateway:
             limits=platform_limits,
         )
         return PlatformReadBatch(
-            bars=tuple(PlatformCanonicalBar(**_public_fields(bar)) for bar in result.bars),
+            bars=tuple(
+                PlatformCanonicalBar(**_public_fields(bar)) for bar in result.bars
+            ),
             availability=tuple(
                 PlatformSeriesAvailability(**_public_fields(item))
                 for item in result.availability
@@ -278,6 +327,10 @@ class Spect8CanonicalReadServiceGateway:
             native_bootstrap_bars=tuple(
                 PlatformNativeBootstrapBar(**_public_fields(bar))
                 for bar in getattr(result, "native_bootstrap_bars", ())
+            ),
+            partial_bar_snapshots=tuple(
+                PlatformPartialBarSnapshot(**_public_fields(bar))
+                for bar in getattr(result, "partial_bar_snapshots", ())
             ),
         )
 
@@ -296,7 +349,9 @@ class Spect8CanonicalReadServiceGateway:
 def _public_fields(value: object) -> dict[str, object]:
     slots = getattr(type(value), "__slots__", ())
     if slots:
-        return {name: getattr(value, name) for name in slots if not name.startswith("_")}
+        return {
+            name: getattr(value, name) for name in slots if not name.startswith("_")
+        }
     attributes = vars(value)
     return {name: item for name, item in attributes.items() if not name.startswith("_")}
 
@@ -445,6 +500,35 @@ def to_spect8_native_bootstrap_bar(bar: PlatformNativeBootstrapBar) -> Bar:
     )
 
 
+def to_current_bar_snapshot(bar: PlatformPartialBarSnapshot) -> CurrentBarSnapshot:
+    """Translate one authoritative Platform BID partial without persisting it."""
+
+    if bar.price_type != SPECT8_PRICE_TYPE:
+        raise PlatformAdapterError("Spect8 partial strategy input requires BID")
+    if bar.completed_member_count != len(bar.component_open_times):
+        raise PlatformAdapterError(
+            "Platform partial component count does not match provenance"
+        )
+    return CurrentBarSnapshot(
+        instrument_id=spect8_instrument_id(bar.instrument_id),
+        timeframe=Timeframe(bar.timeframe),
+        bar_start=bar.bar_start,
+        bar_end=bar.bar_end,
+        as_of=bar.as_of,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        is_complete=False,
+        source_provider_id=PLATFORM_PROVIDER_ID,
+        component_ids=bar.component_source_ids,
+        provenance=(
+            f"{bar.source_provider_id}:partial:{bar.timeframe}:"
+            f"{bar.completed_member_count}/{bar.expected_member_count}"
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformInstrumentHistory:
     platform_instrument_id: str
@@ -517,12 +601,8 @@ def build_platform_history(
         for timeframe in ("H1", "D1", "W1")
     }
     canonical_h1 = tuple(to_spect8_bar(bar) for bar in grouped["H1"])
-    merged_h1 = {
-        (bar.open_time, bar.close_time): bar for bar in native_grouped["H1"]
-    }
-    merged_h1.update(
-        {(bar.open_time, bar.close_time): bar for bar in canonical_h1}
-    )
+    merged_h1 = {(bar.open_time, bar.close_time): bar for bar in native_grouped["H1"]}
+    merged_h1.update({(bar.open_time, bar.close_time): bar for bar in canonical_h1})
     h1 = tuple(sorted(merged_h1.values(), key=lambda bar: bar.open_time))[
         -SPECT8_PLATFORM_BOOTSTRAP_LIMITS["H1"] :
     ]
@@ -530,7 +610,9 @@ def build_platform_history(
     def filter_series(timeframe: str) -> tuple[Bar, ...]:
         canonical = tuple(to_spect8_bar(bar) for bar in grouped[timeframe])
         temporary = native_grouped[timeframe]
-        if temporary and (not canonical or temporary[-1].close_time > canonical[-1].close_time):
+        if temporary and (
+            not canonical or temporary[-1].close_time > canonical[-1].close_time
+        ):
             return temporary[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS[timeframe] :]
         return canonical[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS[timeframe] :]
 
@@ -543,7 +625,7 @@ def build_platform_history(
     return PlatformInstrumentHistory(
         platform_instrument_id=platform_id,
         spect8_instrument_id=spect8_id,
-        m30=grouped["M30"][-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["M30"] :],
+        m30=grouped["M30"][-SPECT8_PLATFORM_REPLAY_LIMITS["M30"] :],
         h1=h1,
         h4=h4_result.bars[-SPECT8_PLATFORM_BOOTSTRAP_LIMITS["H4"] :],
         d1=d1,
@@ -620,9 +702,7 @@ class PlatformIncrementalProcessor:
             if bar.timeframe not in DIRECT_STRATEGY_TIMEFRAMES:
                 ignored_non_strategy += 1
                 continue
-            existing = self._repository.platform_consumed_identity(
-                bar.logical_identity
-            )
+            existing = self._repository.platform_consumed_identity(bar.logical_identity)
             if existing is not None:
                 if (
                     int(existing["canonical_bar_id"]) == bar.canonical_bar_id

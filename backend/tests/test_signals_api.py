@@ -313,6 +313,9 @@ def test_stale_startup_defers_instead_of_crashing(monkeypatch):
 
         identity = ProviderIdentity(provider_id="MARKET_DATA_PLATFORM", display_name="Platform", adapter_version="test", synthetic=False)
 
+        def __init__(self):
+            self._stop = None
+
         def status(self):
             return {"freshness_state": "UNAVAILABLE", "connection_state": "HEALTHY",
                     "active_source": None, "last_processed_canonical_timestamp": None,
@@ -324,9 +327,12 @@ def test_stale_startup_defers_instead_of_crashing(monkeypatch):
 
         async def run(self):
             import asyncio
-            await asyncio.sleep(3600)
+            self._stop = asyncio.Event()
+            await self._stop.wait()
 
-        def stop(self): pass
+        def stop(self):
+            if self._stop is not None:
+                self._stop.set()
 
         def close(self): pass
 

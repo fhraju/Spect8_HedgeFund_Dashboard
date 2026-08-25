@@ -17,6 +17,7 @@ from backend.app.market_data.platform_adapter import (
     SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
     InsufficientPlatformHistoryError,
     PlatformCanonicalBar,
+    PlatformPartialBarSnapshot,
     PlatformReadBatch,
     PlatformSeriesAvailability,
     build_platform_history,
@@ -32,6 +33,7 @@ from backend.app.market_data.session_boundaries import (
     NEW_YORK,
     new_york_session_close,
 )
+from backend.app.market_data.signal_lifecycle import SignalLifecycleService
 from backend.app.repository import SQLiteProjectionRepository
 from backend.app.service import WalkingSkeletonService
 
@@ -45,7 +47,9 @@ class Gateway:
         self.batches = batches or []
         self.calls: list[dict[str, object]] = []
 
-    def read(self, instrument_ids: tuple[str, ...], **kwargs: object) -> PlatformReadBatch:
+    def read(
+        self, instrument_ids: tuple[str, ...], **kwargs: object
+    ) -> PlatformReadBatch:
         self.calls.append({"instrument_ids": instrument_ids, **kwargs})
         return self.batches.pop(0)
 
@@ -81,6 +85,37 @@ def canonical(
         version_number=1,
         semantic_hash=f"hash-{canonical_bar_id}",
         semantic_available_at=open_time + duration,
+    )
+
+
+def partial(timeframe: str, *, as_of: datetime) -> PlatformPartialBarSnapshot:
+    duration = timedelta(minutes=30) if timeframe == "M30" else timedelta(hours=1)
+    start = as_of.replace(
+        minute=(30 if timeframe == "M30" and as_of.minute >= 30 else 0),
+        second=0,
+        microsecond=0,
+    )
+    expected = 6 if timeframe == "M30" else 12
+    return PlatformPartialBarSnapshot(
+        partial_snapshot_id=1 if timeframe == "M30" else 2,
+        instrument_id="FX_EUR_USD",
+        provider_identifier="CS.D.EURUSD.CFD.IP",
+        timeframe=timeframe,
+        price_type="BID",
+        bar_start=start,
+        bar_end=start + duration,
+        as_of=as_of,
+        open=Decimal("1.1000"),
+        high=Decimal("1.1010"),
+        low=Decimal("1.0990"),
+        close=Decimal("1.1005"),
+        completed_member_count=1,
+        expected_member_count=expected,
+        status="PARTIAL",
+        source_provider_id="IG_DEMO",
+        component_open_times=(start,),
+        component_source_ids=(f"M5:{start.isoformat()}",),
+        provenance={"aggregation": f"PARTIAL_{timeframe}_V1"},
     )
 
 
@@ -183,12 +218,15 @@ def runtime(
         ("EUR_USD",),
         stale_after_seconds=7200,
         poll_seconds=300,
+        signal_lifecycle=SignalLifecycleService(repo),
     )
     return value, repo
 
 
 @pytest.mark.parametrize("source", ["TWELVE_DATA", "MARKET_DATA_PLATFORM"])
-def test_authoritative_source_is_explicitly_selectable(source: str, tmp_path: Path) -> None:
+def test_authoritative_source_is_explicitly_selectable(
+    source: str, tmp_path: Path
+) -> None:
     settings = Settings(
         repository_root=ROOT,
         database_path=tmp_path / "source.sqlite3",
@@ -203,7 +241,9 @@ def test_authoritative_source_is_explicitly_selectable(source: str, tmp_path: Pa
     assert settings.market_data_source == source
 
 
-def test_invalid_source_and_unmapped_platform_scope_fail_clearly(tmp_path: Path) -> None:
+def test_invalid_source_and_unmapped_platform_scope_fail_clearly(
+    tmp_path: Path,
+) -> None:
     base = Settings(
         repository_root=ROOT,
         database_path=tmp_path / "invalid.sqlite3",
@@ -227,9 +267,7 @@ def test_platform_authority_is_the_only_active_runtime_when_selected(
     calls: list[str] = []
 
     class FakeAuthority:
-        identity = ProviderIdentity(
-            "MARKET_DATA_PLATFORM", "Platform", "test", False
-        )
+        identity = ProviderIdentity("MARKET_DATA_PLATFORM", "Platform", "test", False)
 
         def run_once(self, *, available_as_of: datetime) -> dict[str, str]:
             calls.append(f"run:{available_as_of.tzinfo is not None}")
@@ -311,11 +349,22 @@ def test_missing_required_bootstrap_history_fails_startup(tmp_path: Path) -> Non
 
 
 def test_stale_platform_blocks_confirmed_evaluation(tmp_path: Path) -> None:
-    batch = bootstrap_batch(now=NOW, latest_h1_close=NOW - timedelta(hours=3))
+    batch = replace(
+        bootstrap_batch(now=NOW, latest_h1_close=NOW - timedelta(hours=3)),
+        partial_bar_snapshots=(
+            partial("M30", as_of=NOW),
+            partial("H1", as_of=NOW),
+        ),
+    )
     authority, repo = runtime(tmp_path, Gateway([batch]))
     with pytest.raises(PlatformStaleError, match="canonical H1 is stale"):
         authority.run_once(available_as_of=NOW)
-    assert authority.status()["freshness_state"] == "STALE"
+    status = authority.status()
+    assert status["historical_state"] == "READY"
+    assert status["freshness_state"] == "STALE"
+    assert status["partial_data_state"] == "READY"
+    assert status["overall_live_readiness"] == "DEGRADED"
+    assert authority.forming_signals(as_of=NOW) == ()
     assert repo.processed_count() == 0
 
 
@@ -353,7 +402,15 @@ def test_live_readiness_uses_canonical_m30_not_native_bootstrap_freshness() -> N
     )
 
     assert status["streaming_state"] == "NOT_READY"
-    assert status["live_instruments"]["EUR_USD"] == {
+    assert {
+        key: status["live_instruments"]["EUR_USD"][key]
+        for key in (
+            "state",
+            "latest_canonical_m30_timestamp",
+            "expected_latest_m30_timestamp",
+            "lag_seconds",
+        )
+    } == {
         "state": "NOT_READY",
         "latest_canonical_m30_timestamp": old_close.isoformat().replace("+00:00", "Z"),
         "expected_latest_m30_timestamp": NOW.isoformat().replace("+00:00", "Z"),
@@ -361,7 +418,9 @@ def test_live_readiness_uses_canonical_m30_not_native_bootstrap_freshness() -> N
     }
 
 
-def test_recent_canonical_m30_is_streaming_ready_but_partial_remains_fail_closed() -> None:
+def test_recent_canonical_m30_is_streaming_ready_but_partial_remains_fail_closed() -> (
+    None
+):
     batch = bootstrap_batch(now=NOW)
     status = _live_streaming_readiness(
         batch,
@@ -375,6 +434,34 @@ def test_recent_canonical_m30_is_streaming_ready_but_partial_remains_fail_closed
     assert status["overall_live_readiness"] == "DEGRADED"
 
 
+def test_current_persisted_partials_make_live_readiness_and_forming_operational(
+    tmp_path: Path,
+) -> None:
+    as_of = NOW + timedelta(minutes=5)
+    batch = replace(
+        bootstrap_batch(now=as_of, latest_h1_close=NOW),
+        partial_bar_snapshots=(
+            partial("M30", as_of=as_of),
+            partial("H1", as_of=as_of),
+        ),
+    )
+    authority, _ = runtime(tmp_path, Gateway([batch]))
+    authority.run_once(available_as_of=as_of)
+
+    status = authority.status()
+    assert status["streaming_state"] == "READY"
+    assert status["partial_data_state"] == "READY"
+    assert status["overall_live_readiness"] == "LIVE_READY"
+    assert status["forming_evaluator_state"] == "READY"
+    assert status["forming_evaluation"]["evaluations_completed"] >= 3
+    forming = authority.forming_signals(as_of=as_of)
+    assert {(item.mode, item.timeframe) for item in forming} >= {
+        ("MICRO", "M30"),
+        ("MICRO", "H1"),
+        ("MACRO", "H1"),
+    }
+
+
 def test_healthy_first_activation_bootstraps_and_persists_source_provenance(
     tmp_path: Path,
 ) -> None:
@@ -382,14 +469,13 @@ def test_healthy_first_activation_bootstraps_and_persists_source_provenance(
     authority, repo = runtime(tmp_path, Gateway([batch]))
     result = authority.run_once(available_as_of=NOW)
     assert result.bootstrapped is True
-    assert result.evaluations_created == 4
+    assert result.evaluations_created == 27
+    assert result.bars_replayed == 20
+    assert result.signal_events_evaluated == 27
     assert result.watermark_canonical_bar_id == batch.watermark_canonical_bar_id
-    assert {item["provider"] for item in repo.statuses()} == {
-        "MARKET_DATA_PLATFORM"
-    }
+    assert {item["provider"] for item in repo.statuses()} == {"MARKET_DATA_PLATFORM"}
     assert all(
-        ":MARKET_DATA_PLATFORM:" in item["idempotency_key"]
-        for item in repo.events()
+        ":MARKET_DATA_PLATFORM:" in item["idempotency_key"] for item in repo.events()
     )
     for timeframe in ("H1", "H4", "D1"):
         assert {
@@ -429,10 +515,14 @@ def test_twelve_to_platform_switch_suppresses_same_close_evaluations(
         connection.commit()
     before = repo.statuses()
     result = authority.run_once(available_as_of=NOW)
-    assert result.evaluations_created == 0
-    assert result.duplicate_evaluations_prevented == 4
-    assert repo.processed_count() == 0
-    assert repo.statuses() == before
+    assert result.evaluations_created == 27
+    assert result.signal_events_evaluated == 27
+    assert repo.processed_count() == 27
+    assert len(before) == 4
+    assert len(repo.statuses()) == 8
+    assert {
+        item.get("provider") for item in repo.statuses() if item.get("provider")
+    } == {"MARKET_DATA_PLATFORM"}
     assert repo.platform_integration_state() is not None
 
 
@@ -462,12 +552,105 @@ def test_restart_reads_after_watermark_and_replay_is_idempotent(tmp_path: Path) 
     authority.run_once(available_as_of=NOW)
     before = len(repo.events())
     resumed = authority.run_once(available_as_of=new_bar.close_time)
-    assert gateway.calls[1]["after_canonical_bar_id"] == first.watermark_canonical_bar_id
+    assert (
+        gateway.calls[1]["after_canonical_bar_id"] == first.watermark_canonical_bar_id
+    )
     assert resumed.previous_watermark == first.watermark_canonical_bar_id
     assert resumed.watermark_canonical_bar_id == new_bar.canonical_bar_id
     assert len(repo.events()) >= before
     consumed = repo.platform_consumed_identity(new_bar.logical_identity)
     assert consumed is not None
+
+
+def test_process_restart_replays_today_without_duplicate_events(tmp_path: Path) -> None:
+    batch = bootstrap_batch()
+    first_runtime, repo = runtime(tmp_path, Gateway([batch]))
+    first = first_runtime.run_once(available_as_of=NOW)
+    history_after_first = repo.event_count()
+
+    second_runtime = PlatformAuthorityRuntime(
+        Gateway([batch]),
+        repo,
+        WalkingSkeletonService(Spect8StrategyEvaluator(), None, repo),
+        ("EUR_USD",),
+        stale_after_seconds=7200,
+        poll_seconds=300,
+        signal_lifecycle=SignalLifecycleService(repo),
+    )
+    second = second_runtime.run_once(available_as_of=NOW)
+    history_after_second = repo.event_count()
+
+    assert first.signal_events_evaluated == 27
+    assert second.signal_events_evaluated == 27
+    assert second.evaluations_created == 0
+    assert second.duplicate_evaluations_prevented == 27
+    assert history_after_first == history_after_second
+
+
+def test_startup_replay_uses_30_bar_warmup_and_never_looks_ahead(
+    tmp_path: Path,
+) -> None:
+    requests = []
+
+    class RecordingEvaluator:
+        def __init__(self) -> None:
+            self.delegate = Spect8StrategyEvaluator()
+
+        def evaluate(self, request):
+            requests.append(request)
+            return self.delegate.evaluate(request)
+
+    batch = bootstrap_batch()
+    repo = repository(tmp_path)
+    authority = PlatformAuthorityRuntime(
+        Gateway([batch]),
+        repo,
+        WalkingSkeletonService(RecordingEvaluator(), None, repo),
+        ("EUR_USD",),
+        stale_after_seconds=7200,
+        poll_seconds=300,
+        signal_lifecycle=SignalLifecycleService(repo),
+    )
+    authority.run_once(available_as_of=NOW)
+
+    assert requests
+    assert all(len(request.signal_bars) == 30 for request in requests)
+    assert all(
+        all(bar.close_time < request.evaluation_time for bar in request.signal_bars)
+        for request in requests
+    )
+    assert all(
+        all(bar.close_time < request.evaluation_time for bar in request.daily_bars)
+        for request in requests
+    )
+    assert all(
+        snapshot is None or snapshot.as_of_h1_close_time_utc < request.evaluation_time
+        for request in requests
+        for snapshot in (request.daily_filter_snapshot, request.w1_filter_snapshot)
+    )
+
+
+def test_startup_replay_status_survives_incremental_poll(tmp_path: Path) -> None:
+    batch = bootstrap_batch()
+    incremental = replace(batch, bars=())
+    authority, _ = runtime(tmp_path, Gateway([batch, incremental]))
+
+    first = authority.run_once(available_as_of=NOW)
+    first_report = authority.status()["startup_replay"]
+    authority.run_once(available_as_of=NOW)
+
+    assert first_report == {
+        "complete": True,
+        "bars_replayed": first.bars_replayed,
+        "signal_events_evaluated": first.signal_events_evaluated,
+        "confirmed_signals_reconstructed": first.confirmed_signals_reconstructed,
+        "current_signals_restored": 6,
+        "evaluations_created": first.evaluations_created,
+        "duplicate_evaluations_prevented": first.duplicate_evaluations_prevented,
+        "replay_events_unsupported": first.replay_events_unsupported,
+        "limitations": first.replay_limitations,
+    }
+    assert authority.status()["startup_replay"] == first_report
 
 
 def test_platform_to_twelve_rollback_preserves_strategy_and_platform_provenance(

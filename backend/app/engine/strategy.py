@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from ..domain import Bar, Direction, FilterMode, Timeframe
 from ..market_data.forex_profile import (
@@ -19,9 +21,11 @@ from .indicators import completed_extremes, simple_moving_average, wilder_atr
 from .levels import calculate_candidate_levels, calculate_level_distances
 from .micro_daily_filter import evaluate_micro_daily_filter
 from .models import (
+    CURRENT_D1_FILTER_V2,
+    CURRENT_W1_FILTER_V1,
     BarsUsed,
-    FilterAuditBar,
     ClassificationResult,
+    FilterAuditBar,
     FilterAuditBuyComparison,
     FilterAuditDailySession,
     FilterAuditResult,
@@ -29,8 +33,6 @@ from .models import (
     FilterSideResult,
     IndicatorResult,
     MicroDailyFilterResult,
-    CURRENT_D1_FILTER_V2,
-    CURRENT_W1_FILTER_V1,
     StrategyEvaluation,
     StrategyRequest,
 )
@@ -134,6 +136,8 @@ class Spect8StrategyEvaluator:
             raise ValueError(f"unsupported strategy: {request.strategy_id}")
         if request.timeframe not in (Timeframe.M30, Timeframe.H1, Timeframe.H4):
             raise ValueError("strategy timeframe must be M30, H1 or H4")
+        if request.evaluation_kind not in {"COMPLETED", "FORMING"}:
+            raise ValueError("evaluation_kind must be COMPLETED or FORMING")
 
         instrument = request.instrument
         selected_signal = [
@@ -143,16 +147,30 @@ class Spect8StrategyEvaluator:
             and bar.instrument_id == instrument.instrument_id
             and bar.provider == instrument.provider
         ]
+        forming_signal = [
+            bar
+            for bar in selected_signal
+            if request.evaluation_kind == "FORMING"
+            and not bar.is_complete
+            and bar.created_at is not None
+            and bar.created_at < request.evaluation_time
+        ]
+        if len(forming_signal) > 1:
+            forming_signal = forming_signal[-1:]
         excluded = sum(
             1
             for bar in selected_signal
-            if not bar.is_complete or bar.close_time >= request.evaluation_time
+            if (
+                bar not in forming_signal
+                and (not bar.is_complete or bar.close_time >= request.evaluation_time)
+            )
         )
         completed_signal = [
             bar
             for bar in selected_signal
             if bar.is_complete and bar.close_time < request.evaluation_time
         ]
+        completed_signal.extend(replace(bar, is_complete=True) for bar in forming_signal)
 
         issues = _stream_issues(request.signal_bars, request.timeframe)
         issues.extend(_stream_issues(request.daily_bars, Timeframe.D1))
@@ -207,7 +225,13 @@ class Spect8StrategyEvaluator:
                 daily_snapshot.instrument != instrument.instrument_id
                 or daily_snapshot.provider != instrument.provider
                 or daily_snapshot.as_of_h1_close_time_utc
-                != completed_signal[-1].close_time
+                > completed_signal[-1].close_time
+                or (
+                    request.evaluation_kind != "FORMING"
+                    and request.timeframe is not Timeframe.M30
+                    and daily_snapshot.as_of_h1_close_time_utc
+                    != completed_signal[-1].close_time
+                )
                 or daily_snapshot.strategy_version != CURRENT_D1_FILTER_V2
             ):
                 issues.append("DAILY_FILTER_SNAPSHOT_MISMATCH")
@@ -220,7 +244,13 @@ class Spect8StrategyEvaluator:
                 weekly_snapshot.instrument != instrument.instrument_id
                 or weekly_snapshot.provider != instrument.provider
                 or weekly_snapshot.as_of_h1_close_time_utc
-                != completed_signal[-1].close_time
+                > completed_signal[-1].close_time
+                or (
+                    request.evaluation_kind != "FORMING"
+                    and request.timeframe is not Timeframe.M30
+                    and weekly_snapshot.as_of_h1_close_time_utc
+                    != completed_signal[-1].close_time
+                )
                 or weekly_snapshot.strategy_version != CURRENT_W1_FILTER_V1
                 or weekly_snapshot.filter_mode is not FilterMode.MACRO
             ):

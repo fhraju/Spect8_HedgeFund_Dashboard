@@ -22,17 +22,18 @@ from .domain import (
 )
 from .engine.models import (
     CandidateResult,
-    FilterAuditDailySession as EngineFilterAuditDailySession,
     StrategyEvaluation,
     StrategyRequest,
+)
+from .engine.models import (
+    FilterAuditDailySession as EngineFilterAuditDailySession,
 )
 from .engine.strategy import StrategyEvaluator
 from .repository import SQLiteProjectionRepository
 
 
 class CaseInputLoader(Protocol):
-    def load(self, case_id: str) -> StrategyRequest:
-        ...
+    def load(self, case_id: str) -> StrategyRequest: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,13 @@ class WalkingSkeletonService:
 
     def process_request(self, request: StrategyRequest) -> ProcessingOutcome:
         evaluated = self.evaluate_request(request)
+        return self.process_evaluated(request, evaluated)
+
+    def process_evaluated(
+        self, request: StrategyRequest, evaluated: EvaluatedProjection
+    ) -> ProcessingOutcome:
+        """Persist one already evaluated projection without recalculating strategy math."""
+
         events = self.events_for_projection(evaluated)
         created = self._repository.persist_projection(evaluated.status, events)
         return ProcessingOutcome(
@@ -98,7 +106,10 @@ class WalkingSkeletonService:
             or evaluation.indicators is None
             or evaluation.signal_bar is None
         ):
-            raise ValueError(f"{request.case_id}: strategy result cannot be projected")
+            raise ValueError(
+                f"{request.case_id}: strategy result cannot be projected: "
+                + ",".join(evaluation.issues)
+            )
 
         classification = evaluation.classification
         filter_result = FilterResult(
@@ -312,13 +323,13 @@ class WalkingSkeletonService:
             },
         )
         filter_payload = primitive(adapted.filter_result)
-        filter_payload[
-            "daily_filter_snapshot_id"
-        ] = adapted.status.daily_filter_snapshot_id
+        filter_payload["daily_filter_snapshot_id"] = (
+            adapted.status.daily_filter_snapshot_id
+        )
         if adapted.evaluation.filter_mode.value == "MACRO":
-            filter_payload[
-                "filter_snapshot_id"
-            ] = adapted.status.daily_filter_snapshot_id
+            filter_payload["filter_snapshot_id"] = (
+                adapted.status.daily_filter_snapshot_id
+            )
             filter_payload["filter_mode"] = adapted.evaluation.filter_mode.value
         filter_payload["strategy_version"] = adapted.status.strategy_version
         emit(EventType.FILTER_EVALUATED, filter_payload)

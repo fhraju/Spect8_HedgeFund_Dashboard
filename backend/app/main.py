@@ -170,6 +170,7 @@ def create_app(
             tuple(item.instrument_id for item in discovered_instruments),
             stale_after_seconds=configured.market_data_stale_after_seconds,
             poll_seconds=configured.market_data_poll_seconds,
+            signal_lifecycle=signal_lifecycle,
         )
         if platform_selected
         else None
@@ -564,17 +565,26 @@ def create_app(
             status = request.app.state.platform_authority_runtime.status()
             live_readiness = status.get("overall_live_readiness")
             platform_healthy = (
-                live_readiness == "LIVE_READY"
+                (
+                    live_readiness == "LIVE_READY"
+                    and status.get("freshness_state") == "HEALTHY"
+                    and status.get("connection_state") == "HEALTHY"
+                    and status.get("historical_state", "READY") == "READY"
+                )
                 if live_readiness is not None
                 else (
                     status.get("freshness_state") == "HEALTHY"
                     and status.get("connection_state") == "HEALTHY"
                 )
             )
-        # Real partial-bar forming evaluation requires the live Platform
-        # partial-bar source to be wired into the running runtime. It is not
-        # fabricated here: no snapshot source means no FORMING output.
-        forming: list[dict[str, Any]] = []
+        forming_reader = getattr(
+            request.app.state.platform_authority_runtime, "forming_signals", None
+        )
+        forming = (
+            [primitive(item) for item in forming_reader(as_of=now)]
+            if platform_healthy and callable(forming_reader)
+            else []
+        )
         return envelope(
             {
                 "confirmed": current,
