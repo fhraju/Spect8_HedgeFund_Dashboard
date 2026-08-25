@@ -111,6 +111,12 @@ class PlatformAuthorityRuntime:
         self._last_error: str | None = None
         self._connection_state = "UNAVAILABLE"
         self._freshness_state = "UNAVAILABLE"
+        self._live_readiness = _live_streaming_readiness(
+            None,
+            instrument_ids,
+            as_of=SystemClock().now(),
+            stale_after_seconds=stale_after_seconds,
+        )
 
     @classmethod
     def from_database_url(
@@ -164,6 +170,12 @@ class PlatformAuthorityRuntime:
             self._last_error = "Market Data Platform PostgreSQL reader is unavailable"
             raise PlatformUnavailableError(self._last_error) from None
         self._connection_state = "HEALTHY"
+        self._live_readiness = _live_streaming_readiness(
+            batch,
+            self._instrument_ids,
+            as_of=now,
+            stale_after_seconds=self._stale_after_seconds,
+        )
 
         if batch.bars and batch.watermark_canonical_bar_id <= previous_watermark:
             self._freshness_state = "UNAVAILABLE"
@@ -590,6 +602,7 @@ class PlatformAuthorityRuntime:
                 result.last_successful_evaluation_timestamp if result else None
             ),
             "last_error": self._last_error,
+            **self._live_readiness,
         }
 
     def close(self) -> None:
@@ -618,3 +631,73 @@ def _expected_latest_forex_h1_close(as_of: datetime) -> datetime:
             timezone.utc
         )
     return now.replace(minute=0, second=0, microsecond=0)
+
+
+def _live_streaming_readiness(
+    batch: PlatformReadBatch | None,
+    instrument_ids: tuple[str, ...],
+    *,
+    as_of: datetime,
+    stale_after_seconds: int,
+) -> dict[str, Any]:
+    """Keep live advancement separate from bootstrap/strategy readiness.
+
+    Native bootstrap bars deliberately do not count as streaming evidence.
+    The current two-process collector setup does not expose its ephemeral M5
+    partial buffer to Spect8, so partial readiness remains fail-closed.
+    """
+
+    expected_h1 = _expected_latest_forex_h1_close(as_of)
+    current = as_of.astimezone(timezone.utc)
+    current_h1 = current.replace(minute=0, second=0, microsecond=0)
+    current_m30 = current.replace(
+        minute=30 if current.minute >= 30 else 0,
+        second=0,
+        microsecond=0,
+    )
+    expected = current_m30 if expected_h1 == current_h1 else expected_h1
+    instruments: dict[str, dict[str, Any]] = {}
+    for instrument_id in instrument_ids:
+        platform_id = platform_instrument_id(instrument_id)
+        availability = next(
+            (
+                item
+                for item in (batch.availability if batch is not None else ())
+                if item.instrument_id == platform_id
+                and item.timeframe == "M30"
+                and item.price_type == "BID"
+            ),
+            None,
+        )
+        latest = (
+            availability.latest_close_time.astimezone(timezone.utc)
+            if availability is not None and availability.latest_close_time is not None
+            else None
+        )
+        lag_seconds = (
+            max(0, int((expected - latest).total_seconds()))
+            if latest is not None
+            else None
+        )
+        ready = bool(
+            availability is not None
+            and availability.valid
+            and latest is not None
+            and lag_seconds is not None
+            and lag_seconds <= stale_after_seconds
+        )
+        instruments[instrument_id] = {
+            "state": "READY" if ready else "NOT_READY",
+            "latest_canonical_m30_timestamp": primitive(latest),
+            "expected_latest_m30_timestamp": primitive(expected),
+            "lag_seconds": lag_seconds,
+        }
+    streaming_ready = bool(instruments) and all(
+        item["state"] == "READY" for item in instruments.values()
+    )
+    return {
+        "streaming_state": "READY" if streaming_ready else "NOT_READY",
+        "partial_data_state": "NOT_READY",
+        "overall_live_readiness": "DEGRADED",
+        "live_instruments": instruments,
+    }

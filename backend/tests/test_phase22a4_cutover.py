@@ -26,6 +26,7 @@ from backend.app.market_data.platform_authority import (
     PlatformStaleError,
     PlatformUnavailableError,
     _expected_latest_forex_h1_close,
+    _live_streaming_readiness,
 )
 from backend.app.market_data.session_boundaries import (
     NEW_YORK,
@@ -325,6 +326,53 @@ def test_freshness_policy_does_not_expect_a_sunday_h1_before_it_closes() -> None
     assert _expected_latest_forex_h1_close(sunday_before_first_close) == (
         new_york_session_close(date(2026, 8, 21))
     )
+
+
+def test_stopped_collector_is_degraded_even_when_strategy_history_is_ready() -> None:
+    status = _live_streaming_readiness(
+        None,
+        ("EUR_USD",),
+        as_of=NOW,
+        stale_after_seconds=7200,
+    )
+
+    assert status["streaming_state"] == "NOT_READY"
+    assert status["partial_data_state"] == "NOT_READY"
+    assert status["overall_live_readiness"] == "DEGRADED"
+    assert status["live_instruments"]["EUR_USD"]["state"] == "NOT_READY"
+
+
+def test_live_readiness_uses_canonical_m30_not_native_bootstrap_freshness() -> None:
+    old_close = NOW - timedelta(hours=4)
+    batch = bootstrap_batch(now=NOW, latest_h1_close=old_close)
+    status = _live_streaming_readiness(
+        batch,
+        ("EUR_USD",),
+        as_of=NOW,
+        stale_after_seconds=7200,
+    )
+
+    assert status["streaming_state"] == "NOT_READY"
+    assert status["live_instruments"]["EUR_USD"] == {
+        "state": "NOT_READY",
+        "latest_canonical_m30_timestamp": old_close.isoformat().replace("+00:00", "Z"),
+        "expected_latest_m30_timestamp": NOW.isoformat().replace("+00:00", "Z"),
+        "lag_seconds": 14400,
+    }
+
+
+def test_recent_canonical_m30_is_streaming_ready_but_partial_remains_fail_closed() -> None:
+    batch = bootstrap_batch(now=NOW)
+    status = _live_streaming_readiness(
+        batch,
+        ("EUR_USD",),
+        as_of=NOW,
+        stale_after_seconds=7200,
+    )
+
+    assert status["streaming_state"] == "READY"
+    assert status["partial_data_state"] == "NOT_READY"
+    assert status["overall_live_readiness"] == "DEGRADED"
 
 
 def test_healthy_first_activation_bootstraps_and_persists_source_provenance(

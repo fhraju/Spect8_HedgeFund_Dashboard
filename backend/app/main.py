@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import hmac
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import timezone
 from typing import Annotated, Any
 
 from fastapi import (
@@ -63,8 +63,8 @@ from .market_data.registry import (
 from .market_data.replay_provider import ReplayMarketDataProvider
 from .market_data.runtime import MarketDataRuntime
 from .market_data.runtime_support import configure_runtime_logging
-from .market_data.twelve_data_provider import TwelveDataProvider
 from .market_data.signal_lifecycle import SignalLifecycleService
+from .market_data.twelve_data_provider import TwelveDataProvider
 from .repository import SQLiteProjectionRepository
 from .service import WalkingSkeletonService
 
@@ -78,6 +78,27 @@ class FilterModeRequest(BaseModel):
 class FilterModeView(BaseModel):
     active_filter_mode: FilterMode
     filter_timeframe: str
+
+
+def _live_not_ready(
+    runtime: PlatformAuthorityRuntime | None, instrument_id: str | None = None
+) -> bool:
+    """Return only explicit live-readiness failures; preserve legacy providers."""
+
+    if runtime is None:
+        return False
+    status = runtime.status()
+    if instrument_id is None:
+        readiness = status.get("overall_live_readiness")
+        return readiness is not None and readiness != "LIVE_READY"
+    instruments = status.get("live_instruments")
+    if not isinstance(instruments, dict):
+        return False
+    item = instruments.get(instrument_id)
+    return bool(
+        status.get("partial_data_state") == "NOT_READY"
+        or (isinstance(item, dict) and item.get("state") == "NOT_READY")
+    )
 
 
 def create_app(
@@ -541,9 +562,14 @@ def create_app(
         platform_healthy = False
         if request.app.state.platform_authority_runtime is not None:
             status = request.app.state.platform_authority_runtime.status()
+            live_readiness = status.get("overall_live_readiness")
             platform_healthy = (
-                status.get("freshness_state") == "HEALTHY"
-                and status.get("connection_state") == "HEALTHY"
+                live_readiness == "LIVE_READY"
+                if live_readiness is not None
+                else (
+                    status.get("freshness_state") == "HEALTHY"
+                    and status.get("connection_state") == "HEALTHY"
+                )
             )
         # Real partial-bar forming evaluation requires the live Platform
         # partial-bar source to be wired into the running runtime. It is not
@@ -645,7 +671,10 @@ def create_app(
         response_model=DashboardEnvelope,
     )
     def dashboard() -> dict[str, Any]:
-        return envelope(dashboard_snapshot(repository, registry.all()[0], clock.now()))
+        snapshot = dashboard_snapshot(repository, registry.all()[0], clock.now())
+        if _live_not_ready(platform_authority_runtime):
+            snapshot = snapshot.model_copy(update={"data_state": "STALE", "stale": True})
+        return envelope(snapshot)
 
     @app.get(
         "/dashboard/{instrument_id}",
@@ -659,7 +688,10 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail="Instrument not found."
             ) from None
-        return envelope(dashboard_snapshot(repository, instrument, clock.now()))
+        snapshot = dashboard_snapshot(repository, instrument, clock.now())
+        if _live_not_ready(platform_authority_runtime, instrument_id):
+            snapshot = snapshot.model_copy(update={"data_state": "STALE", "stale": True})
+        return envelope(snapshot)
 
     @app.get(
         "/scanner",
@@ -667,15 +699,32 @@ def create_app(
         response_model=ScannerEnvelope,
     )
     def scanner() -> dict[str, Any]:
-        return envelope(
-            scanner_snapshot(
-                repository,
-                registry.all(),
-                clock.now(),
-                credit_budget=primitive(credit_budget.status(as_of=clock.now())),
-                stale_after_seconds=configured.market_data_stale_after_seconds,
-            )
+        snapshot = scanner_snapshot(
+            repository,
+            registry.all(),
+            clock.now(),
+            credit_budget=primitive(credit_budget.status(as_of=clock.now())),
+            stale_after_seconds=configured.market_data_stale_after_seconds,
         )
+        if platform_authority_runtime is not None:
+            rows = [
+                row.model_copy(
+                    update={
+                        "provider_health": "STALE",
+                        "data_status": "STALE",
+                        "stale": True,
+                        "latest_error_summary": (
+                            "Historical strategy state is ready, but canonical "
+                            "streaming or partial-data evidence is not fully ready."
+                        ),
+                    }
+                )
+                if _live_not_ready(platform_authority_runtime, row.instrument_id)
+                else row
+                for row in snapshot.instruments
+            ]
+            snapshot = snapshot.model_copy(update={"instruments": rows})
+        return envelope(snapshot)
 
     def historical_envelope(data: Any) -> dict[str, Any]:
         return {
