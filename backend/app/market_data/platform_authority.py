@@ -733,6 +733,14 @@ class PlatformAuthorityRuntime:
                 if bar.timeframe in {"M30", "H1", "D1"}
             )
             self._repository.persist_canonical_bars(translated)
+            if startup_replay:
+                self._repository.persist_canonical_bars(
+                    tuple(
+                        bar
+                        for history in histories.values()
+                        for bar in history.h1
+                    )
+                )
             for bar in translated:
                 if bar.timeframe is Timeframe.H1:
                     new_h1_closes[bar.instrument_id].add(bar.close_time)

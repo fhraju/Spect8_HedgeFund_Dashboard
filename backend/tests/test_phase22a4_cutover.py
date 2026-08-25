@@ -17,6 +17,7 @@ from backend.app.market_data.platform_adapter import (
     SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
     InsufficientPlatformHistoryError,
     PlatformCanonicalBar,
+    PlatformNativeBootstrapBar,
     PlatformPartialBarSnapshot,
     PlatformReadBatch,
     PlatformSeriesAvailability,
@@ -585,6 +586,52 @@ def test_process_restart_replays_today_without_duplicate_events(tmp_path: Path) 
     assert second.evaluations_created == 0
     assert second.duplicate_evaluations_prevented == 27
     assert history_after_first == history_after_second
+
+
+def test_process_restart_persists_new_native_h1_gap_repair(tmp_path: Path) -> None:
+    initial = bootstrap_batch()
+    first_runtime, repo = runtime(tmp_path, Gateway([initial]))
+    first_runtime.run_once(available_as_of=NOW)
+
+    repaired = PlatformNativeBootstrapBar(
+        bootstrap_bar_id=999,
+        instrument_id="FX_EUR_USD",
+        timeframe="H1",
+        price_type="BID",
+        open_time=NOW,
+        close_time=NOW + timedelta(hours=1),
+        open=Decimal("1.1000"),
+        high=Decimal("1.1010"),
+        low=Decimal("1.0990"),
+        close=Decimal("1.1005"),
+        volume=Decimal(100),
+        volume_type="TICK",
+        source_provider_id="IG_DEMO",
+        provenance="NATIVE_IG_HISTORICAL_BOOTSTRAP",
+        observed_at=NOW + timedelta(hours=1),
+        raw_snapshot_time="2026/08/05 10:00:00",
+        raw_snapshot_time_utc="2026-08-05T10:00:00Z",
+    )
+    replay = replace(
+        initial,
+        available_as_of=NOW + timedelta(hours=1),
+        native_bootstrap_bars=(repaired,),
+    )
+    restarted = PlatformAuthorityRuntime(
+        Gateway([replay]),
+        repo,
+        WalkingSkeletonService(Spect8StrategyEvaluator(), None, repo),
+        ("EUR_USD",),
+        stale_after_seconds=7200,
+        poll_seconds=300,
+        signal_lifecycle=SignalLifecycleService(repo),
+    )
+
+    restarted.run_once(available_as_of=NOW + timedelta(hours=1))
+
+    assert repo.latest_canonical_close(
+        "MARKET_DATA_PLATFORM", "EUR_USD", "H1"
+    ) == "2026-08-05T11:00:00Z"
 
 
 def test_startup_replay_uses_30_bar_warmup_and_never_looks_ahead(
