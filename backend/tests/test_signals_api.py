@@ -10,6 +10,7 @@ from backend.app.domain import Bar, Timeframe
 from backend.app.main import create_app
 
 UTC = timezone.utc
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bar(instrument_id: str, timeframe: str, open_time: datetime, o: str, h: str, l: str, c: str) -> Bar:
@@ -48,8 +49,10 @@ def _bar(instrument_id: str, timeframe: str, open_time: datetime, o: str, h: str
 
 def _settings(tmp: Path, **kwargs):
     return Settings(
-        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        repository_root=ROOT,
         database_path=tmp / "test.db",
+        runtime_log_path=tmp / "runtime.log",
+        historical_replay_database_path=tmp / "replay.sqlite3",
         internal_api_key="test",
         auto_seed_synthetic=False,
         market_data_source="TWELVE_DATA",
@@ -86,8 +89,10 @@ def test_current_api_returns_forming_and_confirmed():
 def test_current_api_stale_blocks_forming(monkeypatch):
     tmp = Path(tempfile.mkdtemp())
     settings = Settings(
-        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        repository_root=ROOT,
         database_path=tmp / "stale.db",
+        runtime_log_path=tmp / "runtime.log",
+        historical_replay_database_path=tmp / "replay.sqlite3",
         internal_api_key="test",
         auto_seed_synthetic=False,
         market_data_source="MARKET_DATA_PLATFORM",
@@ -159,8 +164,10 @@ def test_restart_preserves_confirmed():
     app.state.signal_lifecycle.confirm(instrument_id="EUR_USD", mode="MACRO", timeframe="H4", completed_bar=bar, as_of=datetime(2026, 8, 22, 16, 0, tzinfo=UTC))
     # Simulate restart: new app with same DB
     settings2 = Settings(
-        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        repository_root=ROOT,
         database_path=tmp / "test.db",
+        runtime_log_path=tmp / "runtime.log",
+        historical_replay_database_path=tmp / "replay.sqlite3",
         internal_api_key="test",
         auto_seed_synthetic=False,
         market_data_source="TWELVE_DATA",
@@ -198,8 +205,10 @@ def test_no_synthetic_forming_injection_when_platform_unavailable():
     """
     tmp = Path(tempfile.mkdtemp())
     settings = Settings(
-        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        repository_root=ROOT,
         database_path=tmp / "nosynth.db",
+        runtime_log_path=tmp / "runtime.log",
+        historical_replay_database_path=tmp / "replay.sqlite3",
         internal_api_key="test",
         auto_seed_synthetic=False,
         market_data_source="MARKET_DATA_PLATFORM",
@@ -339,8 +348,10 @@ def test_stale_startup_defers_instead_of_crashing(monkeypatch):
     monkeypatch.setattr(PlatformAuthorityRuntime, "from_database_url", lambda *a, **k: StaleRuntime())
     tmp = Path(tempfile.mkdtemp())
     settings = Settings(
-        repository_root=Path("/media/raju/Library_Work/Work/The-System/Spect8_HedgeFund_Dashboard"),
+        repository_root=ROOT,
         database_path=tmp / "defer.db",
+        runtime_log_path=tmp / "runtime.log",
+        historical_replay_database_path=tmp / "replay.sqlite3",
         internal_api_key="test",
         auto_seed_synthetic=False,
         market_data_source="MARKET_DATA_PLATFORM",
