@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from backend.app.config import Settings
+from backend.app.dashboard_api import EventView
 from backend.app.main import create_app
 from backend.app.market_data.models import HealthState, ProviderHealth
 
@@ -34,6 +36,96 @@ def live_settings(database_path: Path) -> Settings:
         twelve_data_api_key="test-key-not-a-secret",
         market_data_runtime_enabled=False,
     )
+
+
+@pytest.mark.parametrize("timeframe", ["M30", "H1", "H4"])
+def test_dashboard_event_contract_accepts_signal_timeframes(timeframe: str) -> None:
+    event = EventView.model_validate(
+        {
+            "id": 1,
+            "idempotency_key": "dashboard-timeframe-contract",
+            "sequence": 1,
+            "event_type": "EVALUATION_COMPLETED",
+            "occurred_at": datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc),
+            "instrument_id": "EUR_USD",
+            "timeframe": timeframe,
+            "source_case_id": "dashboard-timeframe-contract",
+            "payload": {},
+            "synthetic": False,
+        }
+    )
+
+    assert event.timeframe == timeframe
+
+
+def test_dashboard_event_contract_rejects_invalid_timeframe() -> None:
+    with pytest.raises(ValidationError):
+        EventView.model_validate(
+            {
+                "id": 1,
+                "idempotency_key": "dashboard-timeframe-contract",
+                "sequence": 1,
+                "event_type": "EVALUATION_COMPLETED",
+                "occurred_at": datetime(
+                    2026, 8, 26, 14, 0, tzinfo=timezone.utc
+                ),
+                "instrument_id": "EUR_USD",
+                "timeframe": "M5",
+                "source_case_id": "dashboard-timeframe-contract",
+                "payload": {},
+                "synthetic": False,
+            }
+        )
+
+
+def test_dashboard_endpoints_preserve_persisted_m30_event(tmp_path: Path) -> None:
+    application = create_app(replay_settings(tmp_path / "dashboard-m30.sqlite3"))
+    with TestClient(application) as client:
+        repository = application.state.repository
+        instrument_id = application.state.registry.all()[0].instrument_id
+        with repository._connect() as connection:
+            source = connection.execute(
+                """
+                SELECT idempotency_key, source_case_id, synthetic
+                FROM processed_bars
+                ORDER BY rowid ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            assert source is not None
+            sequence = connection.execute(
+                "SELECT MAX(sequence) FROM event_history WHERE idempotency_key = ?",
+                (source["idempotency_key"],),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO event_history (
+                    idempotency_key, sequence, event_type, occurred_at,
+                    instrument_id, timeframe, source_case_id, payload_json,
+                    synthetic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source["idempotency_key"],
+                    sequence + 1,
+                    "EVALUATION_COMPLETED",
+                    "2026-08-26T14:00:00+00:00",
+                    instrument_id,
+                    "M30",
+                    source["source_case_id"],
+                    "{}",
+                    source["synthetic"],
+                ),
+            )
+
+        root = client.get("/dashboard", headers=HEADERS)
+        detail = client.get(f"/dashboard/{instrument_id}", headers=HEADERS)
+
+    assert root.status_code == 200
+    assert detail.status_code == 200
+    for response in (root, detail):
+        events = response.json()["data"]["recent_events"]
+        assert any(event["timeframe"] == "M30" for event in events)
 
 
 def test_dashboard_api_is_protected_and_backend_derived(

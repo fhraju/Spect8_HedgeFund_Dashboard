@@ -314,7 +314,7 @@ class EventView(BaseModel):
     event_type: str
     occurred_at: datetime
     instrument_id: str
-    timeframe: Literal["H1", "H4"]
+    timeframe: Literal["M30", "H1", "H4"]
     source_case_id: str
     payload: dict[str, Any]
     synthetic: bool
