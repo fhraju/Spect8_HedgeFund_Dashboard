@@ -274,7 +274,7 @@ class SQLiteProjectionRepository:
                 CREATE TABLE IF NOT EXISTS platform_canonical_consumption (
                     logical_identity TEXT PRIMARY KEY,
                     immutable_identity TEXT NOT NULL UNIQUE,
-                    canonical_bar_id INTEGER NOT NULL UNIQUE
+                    canonical_bar_id INTEGER NOT NULL
                         CHECK (canonical_bar_id > 0),
                     platform_instrument_id TEXT NOT NULL,
                     spect8_instrument_id TEXT NOT NULL,
@@ -293,7 +293,8 @@ class SQLiteProjectionRepository:
 
                 CREATE TABLE IF NOT EXISTS platform_canonical_revisions (
                     revised_canonical_bar_id INTEGER PRIMARY KEY
-                        CHECK (revised_canonical_bar_id > 0),
+                        CHECK (revised_canonical_bar_id > 0) -- uniqueness per DB, but multi-DB offset not needed as revisions are rare
+                        ,
                     logical_identity TEXT NOT NULL,
                     first_canonical_bar_id INTEGER NOT NULL,
                     revised_version_number INTEGER NOT NULL
