@@ -307,6 +307,7 @@ export type DashboardData = {
     timeframes: string[];
     price_precision: number;
     synthetic: boolean;
+    provider_environment?: string | null;
   };
   latest_candles: {
     H1: string | null;
@@ -329,7 +330,7 @@ export type DashboardData = {
 
 export type DashboardSnapshot = {
   synthetic: boolean;
-  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
+  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER" | "MARKET_DATA_PLATFORM";
   notice: string;
   data: DashboardData;
 };
@@ -350,6 +351,7 @@ export type ScannerInstrument = {
   polling_enabled?: boolean;
   provider_symbol: string;
   provider?: string;
+  provider_environment?: string | null;
   exchange?: string | null;
   mic_code?: string | null;
   provider_instrument_type?: string | null;
@@ -381,7 +383,7 @@ export type ScannerInstrument = {
 
 export type ScannerSnapshot = {
   synthetic: boolean;
-  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
+  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER" | "MARKET_DATA_PLATFORM";
   notice: string;
   data: {
     generated_at: string;

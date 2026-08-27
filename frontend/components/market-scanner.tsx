@@ -316,7 +316,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                       return <td key={tf}><SignalCardFallback status={legacy} /></td>;
                     })}
                     <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
-                    <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
+                    <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_environment ? ` · ${row.provider_environment.replaceAll("_", " ")}` : ""}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.provider_environment && <span className="scanner-source-badge" title={`Market data source: ${row.provider_environment}`}>[{row.provider_environment.replaceAll("_", " ")}]</span>}{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
                   </tr>
                 );
               })}

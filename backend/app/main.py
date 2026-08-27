@@ -54,6 +54,7 @@ from .market_data.normalizer import CandleNormalizer
 from .market_data.platform_authority import (
     PlatformAuthorityError,
     PlatformAuthorityRuntime,
+    UnifiedPlatformAuthorityRuntime,
 )
 from .market_data.platform_shadow import PlatformShadowRuntime
 from .market_data.registry import (
@@ -180,19 +181,26 @@ def create_app(
     evaluator = Spect8StrategyEvaluator()
     service = WalkingSkeletonService(evaluator, None, repository)
     signal_lifecycle = SignalLifecycleService(repository)
-    platform_authority_runtime = (
-        PlatformAuthorityRuntime.from_database_url(
-            configured.market_data_platform_database_url or "",
-            repository,
-            service,
-            tuple(item.instrument_id for item in discovered_instruments),
-            stale_after_seconds=configured.market_data_stale_after_seconds,
-            poll_seconds=configured.market_data_poll_seconds,
-            signal_lifecycle=signal_lifecycle,
-        )
-        if platform_selected
-        else None
-    )
+    platform_authority_runtime = None
+    if platform_selected:
+        if configured.is_multi_db_platform:
+            platform_authority_runtime = UnifiedPlatformAuthorityRuntime.from_settings(
+                configured,
+                repository,
+                service,
+                tuple(item.instrument_id for item in discovered_instruments),
+                signal_lifecycle=signal_lifecycle,
+            )
+        else:
+            platform_authority_runtime = PlatformAuthorityRuntime.from_database_url(
+                configured.market_data_platform_database_url or "",
+                repository,
+                service,
+                tuple(item.instrument_id for item in discovered_instruments),
+                stale_after_seconds=configured.market_data_stale_after_seconds,
+                poll_seconds=configured.market_data_poll_seconds,
+                signal_lifecycle=signal_lifecycle,
+            )
     if platform_authority_runtime is not None:
         provider = platform_authority_runtime
     platform_shadow_repository = (
@@ -920,4 +928,11 @@ def create_app(
     return app
 
 
-app = create_app()
+try:
+    app = create_app()
+except Exception:  # pragma: no cover - lazy import for tests without platform DB
+    app = None  # type: ignore
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("app not created at import time (test/config)")
+

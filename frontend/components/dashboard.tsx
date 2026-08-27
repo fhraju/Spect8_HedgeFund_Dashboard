@@ -499,6 +499,11 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
           role="status"
         >
           <strong>{data.data_state}</strong>
+          {data.instrument.provider_environment && (
+            <span className="source-badge" title={`Market data source: ${data.instrument.provider_environment}`}>
+              [{data.instrument.provider_environment.replaceAll("_", " ")}]
+            </span>
+          )}
           <span>{stateCopy(data.data_state)}</span>
         </div>
 

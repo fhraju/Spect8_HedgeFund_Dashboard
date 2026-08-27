@@ -1073,6 +1073,442 @@ def _expected_latest_forex_h1_close(as_of: datetime) -> datetime:
     return now.replace(minute=0, second=0, microsecond=0)
 
 
+class UnifiedPlatformAuthorityRuntime:
+    """One backend, multiple read-only authorities, deterministic routing, fail-closed per instrument."""
+
+    identity = PlatformAuthorityRuntime.identity
+
+    def __init__(
+        self,
+        gateways: dict[str, object],
+        repository: SQLiteProjectionRepository,
+        service: WalkingSkeletonService,
+        instrument_ids: tuple[str, ...],
+        *,
+        instrument_to_authority: dict[str, str],
+        stale_after_seconds: int,
+        poll_seconds: int,
+        backends: dict[str, object] | None = None,
+        signal_lifecycle: SignalLifecycleService | None = None,
+    ) -> None:
+        if not instrument_ids or any(
+            item not in APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS for item in instrument_ids
+        ):
+            raise ValueError("Platform authority instruments must be an approved subset")
+        # validate mapping
+        for inst in instrument_ids:
+            if inst not in instrument_to_authority:
+                raise ValueError(f"Instrument {inst} has no authority mapping")
+            auth = instrument_to_authority[inst]
+            if auth not in gateways:
+                raise ValueError(f"Authority {auth} for {inst} has no gateway")
+        # wrap each gateway
+        self._raw_gateways = gateways
+        self._gateways = {
+            auth: Spect8CanonicalReadServiceGateway(svc) if not isinstance(svc, Spect8CanonicalReadServiceGateway) else svc  # type: ignore
+            for auth, svc in gateways.items()
+        }
+        # Build PlatformMultiGateway routing
+        from .platform_multi_gateway import AuthorityGateway, PlatformMultiGateway
+
+        auth_gateways: dict[str, AuthorityGateway] = {}
+        for auth, gw in self._gateways.items():
+            insts = tuple(k for k, v in instrument_to_authority.items() if v == auth)
+            # database_url not needed here, store placeholder
+            auth_gateways[auth] = AuthorityGateway(
+                authority=auth, database_url="", gateway=gw, instruments=insts
+            )
+        self._multi = PlatformMultiGateway(auth_gateways)
+        self._instrument_to_authority = instrument_to_authority
+        self._repository = repository
+        self._service = service
+        self._instrument_ids = instrument_ids
+        self._stale_after_seconds = stale_after_seconds
+        self._poll_seconds = poll_seconds
+        self._backends = backends or {}
+        self._signal_lifecycle = signal_lifecycle
+        self._processor = PlatformIncrementalProcessor(self._multi, repository)  # type: ignore
+        instruments = tuple(
+            replace(item, provider_id=PLATFORM_PROVIDER_ID, synthetic=False)
+            for item in twelve_data_instruments(instrument_ids)
+            if item.instrument_id in instrument_ids
+        )
+        self.registry = CanonicalInstrumentRegistry(instruments)
+        self._stop = asyncio.Event()
+        self._running = False
+        self._last_result: PlatformAuthorityRunResult | None = None
+        self._last_error: str | None = None
+        self._connection_state = "UNAVAILABLE"
+        self._freshness_state = "UNAVAILABLE"
+        self._historical_state = "NOT_READY"
+        self._live_readiness = _live_streaming_readiness(
+            None, instrument_ids, as_of=SystemClock().now(), stale_after_seconds=stale_after_seconds
+        )
+        self._current_partials: dict[tuple[str, Timeframe], CurrentBarSnapshot] = {}
+        self._current_histories: dict[str, PlatformInstrumentHistory] = {}
+        self._startup_replay_complete = False
+        self._startup_replay_report: dict[str, Any] = {
+            "complete": False,
+            "bars_replayed": 0,
+            "signal_events_evaluated": 0,
+            "confirmed_signals_reconstructed": 0,
+            "current_signals_restored": 0,
+            "evaluations_created": 0,
+            "duplicate_evaluations_prevented": 0,
+            "replay_events_unsupported": 0,
+            "limitations": (),
+        }
+        self._forming_evaluation_report: dict[str, Any] = {
+            "state": "NOT_READY",
+            "as_of": None,
+            "candidates": 0,
+            "evaluations_completed": 0,
+            "signals_matched": 0,
+            "limitations": ("authoritative partial evaluation has not run",),
+        }
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings,
+        repository: SQLiteProjectionRepository,
+        service: WalkingSkeletonService,
+        instrument_ids: tuple[str, ...],
+        *,
+        signal_lifecycle: SignalLifecycleService | None = None,
+    ) -> "UnifiedPlatformAuthorityRuntime":
+        try:
+            from hedgefund_market_data.pipeline import PostgreSQLSpect8CanonicalReadService
+        except ImportError as error:
+            raise PlatformUnavailableError(
+                "hedgefund-market-data must be installed for Platform authority"
+            ) from error
+        gateways: dict[str, object] = {}
+        backends: dict[str, object] = {}
+        for inst in instrument_ids:
+            auth = settings.authority_for_instrument(inst)
+            if auth in gateways:
+                continue
+            url = settings.database_url_for_authority(auth)
+            if not url:
+                raise PlatformUnavailableError(f"Missing database URL for {auth}")
+            try:
+                backend = PostgreSQLSpect8CanonicalReadService.from_database_url(url)
+            except Exception:
+                raise PlatformUnavailableError(
+                    "Market Data Platform PostgreSQL reader is unavailable"
+                ) from None
+            gateway = Spect8CanonicalReadServiceGateway(backend)
+            gateways[auth] = gateway
+            backends[auth] = backend
+        return cls(
+            gateways,
+            repository,
+            service,
+            instrument_ids,
+            instrument_to_authority={inst: settings.authority_for_instrument(inst) for inst in instrument_ids},
+            stale_after_seconds=settings.market_data_stale_after_seconds,
+            poll_seconds=settings.market_data_poll_seconds,
+            backends=backends,
+            signal_lifecycle=signal_lifecycle,
+        )
+
+    def gateway_for(self, instrument_id: str) -> PlatformCanonicalReadGateway:
+        auth = self._instrument_to_authority.get(instrument_id)
+        if auth is None:
+            raise ValueError(f"No authority for {instrument_id}")
+        return self._gateways[auth]  # type: ignore
+
+    def authority_for(self, instrument_id: str) -> str:
+        return self._instrument_to_authority[instrument_id]
+
+    # Reuse PlatformAuthorityRuntime logic via delegation where possible
+    def run_once(self, *, available_as_of: datetime | None = None) -> PlatformAuthorityRunResult:
+        # Call underlying single-authority logic but with merged batch
+        # We replicate PlatformAuthorityRuntime.run_once but with multi gateway
+        now = (available_as_of or SystemClock().now()).astimezone(timezone.utc)
+        # per-authority watermarks
+        after_ids: dict[str, int | None] = {}
+        is_startup = not self._startup_replay_complete
+        if is_startup:
+            for auth in self._gateways:
+                after_ids[auth] = None
+        else:
+            for auth in self._gateways:
+                state = self._repository.platform_authority_state(auth)
+                if state is None:
+                    after_ids[auth] = None
+                else:
+                    after_ids[auth] = int(state["watermark_canonical_bar_id"]) or None
+        try:
+            batch = self._multi.read(
+                tuple(platform_instrument_id(item) for item in self._instrument_ids),
+                available_as_of=now,
+                after_canonical_bar_ids=after_ids,  # type: ignore
+                limits=SPECT8_PLATFORM_REPLAY_LIMITS,
+            )
+        except Exception:
+            self._connection_state = "UNAVAILABLE"
+            self._freshness_state = "UNAVAILABLE"
+            self._last_error = "Market Data Platform PostgreSQL reader is unavailable"
+            raise PlatformUnavailableError(self._last_error) from None
+        self._connection_state = "HEALTHY"
+        # Purposely reuse same internal helpers as PlatformAuthorityRuntime via copying logic
+        # To avoid duplication, instantiate a temporary single runtime helper for processing
+        # Instead, we manually replicate the core steps using same repository
+        self._current_partials = {
+            (snapshot.instrument_id, snapshot.timeframe): snapshot
+            for snapshot in (
+                to_current_bar_snapshot(item)
+                for item in batch.partial_bar_snapshots
+                if item.price_type == "BID"
+            )
+        }
+        self._live_readiness = _live_streaming_readiness(
+            batch, self._instrument_ids, as_of=now, stale_after_seconds=self._stale_after_seconds
+        )
+        # Use shared helpers from PlatformAuthorityRuntime instance via temporary
+        helper = PlatformAuthorityRuntime(
+            self._multi,  # type: ignore
+            self._repository,
+            self._service,
+            self._instrument_ids,
+            stale_after_seconds=self._stale_after_seconds,
+            poll_seconds=self._poll_seconds,
+            signal_lifecycle=self._signal_lifecycle,
+        )
+        # Copy relevant state to helper then delegate remaining logic
+        helper._connection_state = self._connection_state
+        helper._freshness_state = self._freshness_state
+        helper._historical_state = self._historical_state
+        helper._startup_replay_complete = self._startup_replay_complete
+        helper._startup_replay_report = self._startup_replay_report
+        helper._forming_evaluation_report = self._forming_evaluation_report
+        helper._current_partials = self._current_partials
+        helper._current_histories = self._current_histories
+        helper._live_readiness = self._live_readiness
+        helper._last_result = self._last_result
+        helper._last_error = self._last_error
+        # Now run the remainder of run_once using helper's internal methods
+        # We need to monkey patch helper's repository watermark handling to use per-authority
+        # Simple: call helper.run_once but it will attempt single watermark read; we intercept by temporarily
+        # setting repository.platform_integration_state to return merged watermark
+        # Instead directly call helper's internal processing steps:
+        try:
+            state = self._repository.platform_integration_state()
+            previous_watermark = int(state["watermark_canonical_bar_id"]) if state else 0
+        except Exception:
+            previous_watermark = 0
+        first_activation = self._repository.platform_integration_state() is None and all(
+            self._repository.platform_authority_state(a) is None for a in self._gateways
+        )
+        # Call private helpers via helper instance
+        histories = helper._startup_gate(batch, first_activation=first_activation, now=now)  # type: ignore
+        self._current_histories = histories
+        helper._current_histories = histories
+        candidates = helper._prepare_histories(batch, histories, first_activation=first_activation, startup_replay=is_startup)  # type: ignore
+        evaluation_keys: dict[tuple[str, datetime], list[str]] = {}
+        evaluations_created = 0
+        duplicates = 0
+        last_evaluation: datetime | None = None
+        confirmed_reconstructed = 0
+        replay_limitations: list[str] = []
+        for instrument_id, mode, timeframe, close_time in candidates:
+            keys, created, replayed, evaluated_at, confirmed, limitation = helper._evaluate(  # type: ignore
+                instrument_id, mode, timeframe, close_time, filter_history=histories[instrument_id]
+            )
+            evaluation_keys.setdefault((instrument_id, close_time), []).extend(keys)
+            evaluations_created += created
+            duplicates += replayed
+            confirmed_reconstructed += confirmed
+            if limitation is not None:
+                replay_limitations.append(limitation)
+            if evaluated_at is not None:
+                last_evaluation = max(last_evaluation or evaluated_at, evaluated_at)
+        processed = self._processor.process_batch(
+            batch,
+            process_bar=lambda bar, mapped: tuple(evaluation_keys.get((mapped, bar.close_time), ())),
+        )
+        # Advance both per-authority and global watermarks
+        for auth, gw_batch in self._split_batch_by_authority(batch).items():
+            try:
+                self._repository.advance_platform_authority_watermark(
+                    authority=auth,
+                    watermark_canonical_bar_id=gw_batch.watermark_canonical_bar_id,
+                    instrument_master_checksum=gw_batch.instrument_master_checksum,
+                    session_calendar_checksum=gw_batch.session_calendar_checksum,
+                    timezone_data_version=gw_batch.timezone_data_version,
+                    updated_at=now,
+                )
+            except Exception:
+                pass
+        # Also advance global watermark for backward compat
+        try:
+            self._repository.advance_platform_watermark(
+                watermark_canonical_bar_id=processed.new_watermark,
+                instrument_master_checksum=batch.instrument_master_checksum,
+                session_calendar_checksum=batch.session_calendar_checksum,
+                timezone_data_version=batch.timezone_data_version,
+                updated_at=now,
+            )
+        except Exception:
+            pass
+        last_processed = max(
+            (bar.close_time for bar in bid_bars(batch.bars) if bar.timeframe in {"H1", "D1"}),
+            default=helper._stored_last_processed(),  # type: ignore
+        )
+        result = PlatformAuthorityRunResult(
+            connection_state="HEALTHY",
+            freshness_state="HEALTHY",
+            previous_watermark=processed.previous_watermark,
+            watermark_canonical_bar_id=processed.new_watermark,
+            bootstrapped=first_activation,
+            consumed=processed.consumed,
+            replayed_inputs=processed.replayed,
+            revisions_detected=processed.revisions_detected,
+            evaluations_created=evaluations_created,
+            duplicate_evaluations_prevented=duplicates,
+            last_processed_canonical_timestamp=last_processed,
+            last_successful_evaluation_timestamp=(
+                last_evaluation or self._repository.latest_provider_evaluation_time(PLATFORM_PROVIDER_ID)
+            ),
+            bars_replayed=len({(instrument, timeframe, close) for instrument, _, timeframe, close in candidates}),
+            signal_events_evaluated=len(candidates),
+            confirmed_signals_reconstructed=confirmed_reconstructed,
+            replay_events_unsupported=len(replay_limitations),
+            replay_limitations=tuple(replay_limitations),
+        )
+        self._last_result = result
+        self._last_error = None
+        self._freshness_state = "HEALTHY"
+        self._historical_state = "READY"
+        if is_startup:
+            self._startup_replay_report = {
+                "complete": True,
+                "bars_replayed": result.bars_replayed,
+                "signal_events_evaluated": result.signal_events_evaluated,
+                "confirmed_signals_reconstructed": result.confirmed_signals_reconstructed,
+                "current_signals_restored": len(self._signal_lifecycle.current_confirmed(now)) if self._signal_lifecycle else 0,
+                "evaluations_created": result.evaluations_created,
+                "duplicate_evaluations_prevented": result.duplicate_evaluations_prevented,
+                "replay_events_unsupported": result.replay_events_unsupported,
+                "limitations": result.replay_limitations,
+            }
+        self._startup_replay_complete = True
+        # copy back state from helper where needed
+        self._forming_evaluation_report = helper._forming_evaluation_report  # type: ignore
+        self.forming_signals(as_of=now)
+        return result
+
+    def _split_batch_by_authority(self, batch: PlatformReadBatch) -> dict[str, PlatformReadBatch]:
+        from .platform_adapter import PLATFORM_TO_SPECT8_INSTRUMENT
+
+        grouped: dict[str, list[PlatformCanonicalBar]] = {}
+        for bar in batch.bars:
+            spect8_id = PLATFORM_TO_SPECT8_INSTRUMENT.get(bar.instrument_id)
+            if spect8_id is None:
+                continue
+            auth = self._instrument_to_authority.get(spect8_id)
+            if auth is None:
+                continue
+            grouped.setdefault(auth, []).append(bar)
+        result: dict[str, PlatformReadBatch] = {}
+        for auth, bars in grouped.items():
+            result[auth] = PlatformReadBatch(
+                bars=tuple(bars),
+                availability=tuple(a for a in batch.availability if PLATFORM_TO_SPECT8_INSTRUMENT.get(a.instrument_id) in [k for k,v in self._instrument_to_authority.items() if v==auth]),  # type: ignore
+                watermark_canonical_bar_id=batch.watermark_canonical_bar_id,
+                available_as_of=batch.available_as_of,
+                instrument_master_checksum=batch.instrument_master_checksum,
+                session_calendar_checksum=batch.session_calendar_checksum,
+                timezone_data_version=batch.timezone_data_version,
+                native_bootstrap_bars=tuple(b for b in batch.native_bootstrap_bars if PLATFORM_TO_SPECT8_INSTRUMENT.get(b.instrument_id) in [k for k,v in self._instrument_to_authority.items() if v==auth]),  # type: ignore
+                partial_bar_snapshots=tuple(p for p in batch.partial_bar_snapshots if PLATFORM_TO_SPECT8_INSTRUMENT.get(p.instrument_id) in [k for k,v in self._instrument_to_authority.items() if v==auth]),  # type: ignore
+            )
+        return result
+
+    def forming_signals(self, *, as_of: datetime) -> tuple:
+        # delegate to helper logic sharing state
+        helper = PlatformAuthorityRuntime(
+            self._multi,  # type: ignore
+            self._repository,
+            self._service,
+            self._instrument_ids,
+            stale_after_seconds=self._stale_after_seconds,
+            poll_seconds=self._poll_seconds,
+            signal_lifecycle=self._signal_lifecycle,
+        )
+        helper._connection_state = self._connection_state  # type: ignore
+        helper._freshness_state = self._freshness_state  # type: ignore
+        helper._historical_state = self._historical_state  # type: ignore
+        helper._startup_replay_complete = self._startup_replay_complete  # type: ignore
+        helper._live_readiness = self._live_readiness  # type: ignore
+        helper._current_partials = self._current_partials  # type: ignore
+        helper._current_histories = self._current_histories  # type: ignore
+        helper._signal_lifecycle = self._signal_lifecycle  # type: ignore
+        helper._forming_evaluation_report = self._forming_evaluation_report  # type: ignore
+        result = helper.forming_signals(as_of=as_of)  # type: ignore
+        self._forming_evaluation_report = helper._forming_evaluation_report  # type: ignore
+        return result
+
+    async def run(self) -> None:
+        self._stop.clear()
+        self._running = True
+        try:
+            while not self._stop.is_set():
+                try:
+                    await asyncio.to_thread(self.run_once)
+                except Exception:
+                    if self._freshness_state != "STALE":
+                        self._freshness_state = "UNAVAILABLE"
+                    if self._last_error is None:
+                        self._last_error = "Platform authoritative cycle failed closed"
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._poll_seconds)
+                except TimeoutError:
+                    continue
+        finally:
+            self._running = False
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def status(self) -> dict[str, Any]:
+        # reuse single runtime status then augment with authority map
+        helper = PlatformAuthorityRuntime(
+            self._multi,  # type: ignore
+            self._repository,
+            self._service,
+            self._instrument_ids,
+            stale_after_seconds=self._stale_after_seconds,
+            poll_seconds=self._poll_seconds,
+            signal_lifecycle=self._signal_lifecycle,
+        )
+        helper._connection_state = self._connection_state  # type: ignore
+        helper._freshness_state = self._freshness_state  # type: ignore
+        helper._historical_state = self._historical_state  # type: ignore
+        helper._startup_replay_complete = self._startup_replay_complete  # type: ignore
+        helper._live_readiness = self._live_readiness  # type: ignore
+        helper._current_partials = self._current_partials  # type: ignore
+        helper._current_histories = self._current_histories  # type: ignore
+        helper._last_result = self._last_result  # type: ignore
+        helper._last_error = self._last_error  # type: ignore
+        helper._running = self._running  # type: ignore
+        helper._forming_evaluation_report = self._forming_evaluation_report  # type: ignore
+        helper._signal_lifecycle = self._signal_lifecycle  # type: ignore
+        base = helper.status()
+        base["instrument_authority"] = dict(self._instrument_to_authority)
+        return base
+
+    def close(self) -> None:
+        for backend in self._backends.values():
+            close = getattr(backend, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
 def _live_streaming_readiness(
     batch: PlatformReadBatch | None,
     instrument_ids: tuple[str, ...],

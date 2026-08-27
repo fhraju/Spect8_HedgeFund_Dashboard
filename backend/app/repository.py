@@ -260,6 +260,17 @@ class SQLiteProjectionRepository:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS platform_authority_state (
+                    authority TEXT PRIMARY KEY
+                        CHECK (authority IN ('IG_DEMO', 'IG_LIVE')),
+                    watermark_canonical_bar_id INTEGER NOT NULL
+                        CHECK (watermark_canonical_bar_id >= 0),
+                    instrument_master_checksum TEXT NOT NULL,
+                    session_calendar_checksum TEXT NOT NULL,
+                    timezone_data_version TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS platform_canonical_consumption (
                     logical_identity TEXT PRIMARY KEY,
                     immutable_identity TEXT NOT NULL UNIQUE,
@@ -1153,6 +1164,68 @@ class SQLiteProjectionRepository:
                     *authority,
                     _exact_value(updated_at),
                 ),
+            )
+            connection.commit()
+
+    # Multi-authority watermarks (deterministic per IG_DEMO / IG_LIVE)
+    def platform_authority_state(self, authority: str) -> dict[str, Any] | None:
+        if authority not in {"IG_DEMO", "IG_LIVE"}:
+            raise ValueError(f"Unknown authority {authority}")
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT authority, watermark_canonical_bar_id,
+                          instrument_master_checksum,
+                          session_calendar_checksum, timezone_data_version,
+                          updated_at
+                   FROM platform_authority_state
+                   WHERE authority = ?""",
+                (authority,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def advance_platform_authority_watermark(
+        self,
+        *,
+        authority: str,
+        watermark_canonical_bar_id: int,
+        instrument_master_checksum: str,
+        session_calendar_checksum: str,
+        timezone_data_version: str,
+        updated_at: datetime,
+    ) -> None:
+        if authority not in {"IG_DEMO", "IG_LIVE"}:
+            raise ValueError(f"Unknown authority {authority}")
+        if watermark_canonical_bar_id < 0:
+            raise ValueError("Platform watermark cannot be negative")
+        meta = (
+            instrument_master_checksum,
+            session_calendar_checksum,
+            timezone_data_version,
+        )
+        if any(not value for value in meta):
+            raise ValueError("Platform authority metadata must be non-empty")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT watermark_canonical_bar_id
+                   FROM platform_authority_state WHERE authority = ?""",
+                (authority,),
+            ).fetchone()
+            if row is not None and watermark_canonical_bar_id < int(row["watermark_canonical_bar_id"]):
+                raise ValueError("Platform authority watermark cannot move backwards")
+            connection.execute(
+                """INSERT INTO platform_authority_state (
+                       authority, watermark_canonical_bar_id,
+                       instrument_master_checksum, session_calendar_checksum,
+                       timezone_data_version, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(authority) DO UPDATE SET
+                       watermark_canonical_bar_id = excluded.watermark_canonical_bar_id,
+                       instrument_master_checksum = excluded.instrument_master_checksum,
+                       session_calendar_checksum = excluded.session_calendar_checksum,
+                       timezone_data_version = excluded.timezone_data_version,
+                       updated_at = excluded.updated_at""",
+                (authority, watermark_canonical_bar_id, *meta, _exact_value(updated_at)),
             )
             connection.commit()
 

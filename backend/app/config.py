@@ -7,6 +7,15 @@ from pathlib import Path
 from .domain import Timeframe
 
 
+INSTRUMENT_AUTHORITY_MAP: dict[str, str] = {
+    "EUR_USD": "IG_DEMO",
+    "GBP_USD": "IG_DEMO",
+    "USD_JPY": "IG_LIVE",
+}
+
+AUTHORITY_ENVIRONMENT_VALUES = {"IG_DEMO", "IG_LIVE"}
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     repository_root: Path
@@ -28,6 +37,8 @@ class Settings:
     market_data_source: str = "TWELVE_DATA"
     market_data_platform_shadow_enabled: bool = False
     market_data_platform_database_url: str | None = field(default=None, repr=False)
+    market_data_platform_demo_database_url: str | None = field(default=None, repr=False)
+    market_data_platform_live_database_url: str | None = field(default=None, repr=False)
     market_data_runtime_enabled: bool = False
     market_scan_enabled: bool = False
     market_scan_after_hour_seconds: int = 60
@@ -49,6 +60,29 @@ class Settings:
     polling_enabled: bool | None = None
     startup_backfill_enabled: bool = True
     provider_discovery_enabled: bool = True
+
+    @property
+    def is_multi_db_platform(self) -> bool:
+        return bool(
+            self.market_data_platform_demo_database_url
+            or self.market_data_platform_live_database_url
+        )
+
+    def authority_for_instrument(self, instrument_id: str) -> str:
+        try:
+            return INSTRUMENT_AUTHORITY_MAP[instrument_id]
+        except KeyError as error:
+            raise ValueError(f"No authority mapping for instrument {instrument_id}") from error
+
+    def database_url_for_authority(self, authority: str) -> str | None:
+        if authority == "IG_DEMO":
+            return self.market_data_platform_demo_database_url
+        if authority == "IG_LIVE":
+            return self.market_data_platform_live_database_url
+        return None
+
+    def database_url_for_instrument(self, instrument_id: str) -> str | None:
+        return self.database_url_for_authority(self.authority_for_instrument(instrument_id))
 
     @property
     def is_production(self) -> bool:
@@ -107,14 +141,35 @@ class Settings:
                 "TWELVE_DATA_API_KEY is required for twelve_data provider."
             )
         platform_selected = self.market_data_source == "MARKET_DATA_PLATFORM"
+        if self.is_multi_db_platform:
+            for url in (
+                self.market_data_platform_demo_database_url,
+                self.market_data_platform_live_database_url,
+            ):
+                if url is not None and not url.startswith("postgresql+psycopg://"):
+                    raise ValueError(
+                        "Market Data Platform database URLs must use postgresql+psycopg."
+                    )
         if platform_selected or self.market_data_platform_shadow_enabled:
-            if not self.market_data_platform_database_url:
+            if self.is_multi_db_platform:
+                # multi-db mode: shadow still uses legacy var if needed, but platform auth uses demo/live urls
+                if not (
+                    self.market_data_platform_demo_database_url
+                    or self.market_data_platform_live_database_url
+                ):
+                    raise ValueError(
+                        "At least one Market Data Platform database URL is required."
+                    )
+            elif not self.market_data_platform_database_url:
                 raise ValueError(
                     "MARKET_DATA_PLATFORM_DATABASE_URL is required when the "
                     "Platform shadow adapter is enabled."
                 )
-            if not self.market_data_platform_database_url.startswith(
-                "postgresql+psycopg://"
+            if (
+                self.market_data_platform_database_url
+                and not self.market_data_platform_database_url.startswith(
+                    "postgresql+psycopg://"
+                )
             ):
                 raise ValueError(
                     "MARKET_DATA_PLATFORM_DATABASE_URL must use postgresql+psycopg."
@@ -133,6 +188,24 @@ class Settings:
                     "MARKET_DATA_PLATFORM authority has no approved mapping for: "
                     + ", ".join(sorted(unsupported))
                 )
+            if self.is_multi_db_platform:
+                # deterministic authority mapping: each enabled instrument must have its authority DB
+                missing = []
+                seen_authorities: dict[str, list[str]] = {}
+                for inst in configured:
+                    auth = INSTRUMENT_AUTHORITY_MAP.get(inst)
+                    if auth is None:
+                        missing.append(f"{inst} has no authority mapping")
+                        continue
+                    seen_authorities.setdefault(auth, []).append(inst)
+                    url = self.database_url_for_authority(auth)
+                    if not url:
+                        missing.append(
+                            f"{inst} requires {auth} database URL but it is not configured"
+                        )
+                if missing:
+                    raise ValueError("; ".join(missing))
+                # duplicate instrument assignment is prevented by set, but validate no overlap needed
             if self.market_data_platform_shadow_enabled:
                 raise ValueError(
                     "Platform shadow mode cannot be enabled while "
@@ -238,6 +311,12 @@ class Settings:
             == "true",
             market_data_platform_database_url=os.environ.get(
                 "MARKET_DATA_PLATFORM_DATABASE_URL"
+            ),
+            market_data_platform_demo_database_url=os.environ.get(
+                "SPECT8_MARKET_DATA_PLATFORM_DEMO_DATABASE_URL"
+            ),
+            market_data_platform_live_database_url=os.environ.get(
+                "SPECT8_MARKET_DATA_PLATFORM_LIVE_DATABASE_URL"
             ),
             market_data_runtime_enabled=os.environ.get(
                 "SPECT8_MARKET_DATA_RUNTIME_ENABLED", "true"

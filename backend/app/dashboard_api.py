@@ -42,6 +42,7 @@ class InstrumentView(BaseModel):
     timeframes: list[str]
     price_precision: int
     synthetic: bool
+    provider_environment: str | None = None
 
 
 class CandleTimesView(BaseModel):
@@ -382,6 +383,7 @@ class ScannerInstrumentView(BaseModel):
     polling_enabled: bool
     provider_symbol: str
     provider: str
+    provider_environment: str | None = None
     exchange: str | None
     mic_code: str | None
     provider_instrument_type: str | None
@@ -526,6 +528,11 @@ def scanner_snapshot(
                 )
             )
         )
+        try:
+            from .config import INSTRUMENT_AUTHORITY_MAP
+            _provider_env = INSTRUMENT_AUTHORITY_MAP.get(instrument.instrument_id)
+        except Exception:
+            _provider_env = None
         rows.append(
             ScannerInstrumentView(
                 instrument_id=instrument.instrument_id,
@@ -538,6 +545,7 @@ def scanner_snapshot(
                 polling_enabled=instrument.polling_enabled,
                 provider_symbol=instrument.provider_symbol,
                 provider=instrument.provider_id,
+                provider_environment=_provider_env,
                 exchange=instrument.exchange,
                 mic_code=instrument.mic_code,
                 provider_instrument_type=instrument.provider_instrument_type,
@@ -678,6 +686,12 @@ def dashboard_snapshot(
         status.setdefault("filter_audit", None)
 
     state = _data_state(health, statuses)
+    # Provider environment badge: IG_DEMO for EUR/GBP, IG_LIVE for USD_JPY
+    try:
+        from .config import INSTRUMENT_AUTHORITY_MAP
+        provider_env = INSTRUMENT_AUTHORITY_MAP.get(instrument.instrument_id)
+    except Exception:
+        provider_env = None
     return DashboardData(
         generated_at=generated_at,
         data_state=state,
@@ -703,6 +717,7 @@ def dashboard_snapshot(
             ],
             price_precision=instrument.price_precision,
             synthetic=instrument.synthetic,
+            provider_environment=provider_env,
         ),
         latest_candles=repository.latest_candle_timestamps(
             instrument.provider_id, instrument.instrument_id
