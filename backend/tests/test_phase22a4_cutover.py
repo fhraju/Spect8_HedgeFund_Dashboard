@@ -27,6 +27,7 @@ from backend.app.market_data.platform_authority import (
     PlatformAuthorityRuntime,
     PlatformStaleError,
     PlatformUnavailableError,
+    UnifiedPlatformAuthorityRuntime,
     _expected_latest_forex_h1_close,
     _live_streaming_readiness,
 )
@@ -462,6 +463,114 @@ def test_current_persisted_partials_make_live_readiness_and_forming_operational(
         ("MICRO", "H1"),
         ("MACRO", "H1"),
     }
+
+
+def test_live_scanner_health_is_independent_of_forming_evaluation_result() -> None:
+    class FormingDegradedRuntime:
+        def status(self) -> dict[str, object]:
+            return {
+                "connection_state": "HEALTHY",
+                "freshness_state": "HEALTHY",
+                "historical_state": "READY",
+                "streaming_state": "READY",
+                "partial_data_state": "READY",
+                "overall_live_readiness": "DEGRADED",
+                "forming_evaluator_state": "NOT_READY",
+                "live_instruments": {
+                    "EUR_USD": {"state": "READY", "partial_state": "READY"}
+                },
+            }
+
+    assert _live_ready(FormingDegradedRuntime(), "EUR_USD") is True  # type: ignore[arg-type]
+
+
+def test_forming_evaluator_is_ready_when_no_direction_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    as_of = NOW + timedelta(minutes=5)
+    batch = replace(
+        bootstrap_batch(now=as_of, latest_h1_close=NOW),
+        partial_bar_snapshots=(
+            partial("M30", as_of=as_of),
+            partial("H1", as_of=as_of),
+        ),
+    )
+    authority, _ = runtime(tmp_path, Gateway([batch]))
+    monkeypatch.setattr(
+        authority,
+        "_forming_directions",
+        lambda *_args, **_kwargs: ((), None),
+    )
+
+    authority.run_once(available_as_of=as_of)
+
+    status = authority.status()
+    assert status["forming_evaluator_state"] == "READY"
+    assert status["forming_evaluation"]["evaluations_completed"] >= 3
+    assert status["forming_evaluation"]["signals_matched"] == 0
+    assert authority.forming_signals(as_of=as_of) == ()
+
+
+def test_unified_runtime_keeps_authority_local_watermarks() -> None:
+    authority = object.__new__(UnifiedPlatformAuthorityRuntime)
+    authority._instrument_to_authority = {  # type: ignore[attr-defined]
+        "EUR_USD": "IG_DEMO",
+        "USD_JPY": "IG_LIVE",
+    }
+    demo = canonical(17_036, "H1", NOW - timedelta(hours=1), timedelta(hours=1))
+    live = replace(
+        canonical(9_038, "H1", NOW - timedelta(hours=1), timedelta(hours=1)),
+        instrument_id="FX_USD_JPY",
+    )
+    merged = PlatformReadBatch(
+        bars=(demo, live),
+        availability=(),
+        watermark_canonical_bar_id=17_036,
+        available_as_of=NOW,
+        instrument_master_checksum="im",
+        session_calendar_checksum="sc",
+        timezone_data_version="tz",
+    )
+
+    split = authority._split_batch_by_authority(merged)
+
+    assert split["IG_DEMO"].watermark_canonical_bar_id == 17_036
+    assert split["IG_LIVE"].watermark_canonical_bar_id == 9_038
+
+
+def test_startup_can_reconcile_a_legacy_cross_authority_watermark(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    metadata = {
+        "instrument_master_checksum": "im",
+        "session_calendar_checksum": "sc",
+        "timezone_data_version": "tz",
+        "updated_at": NOW,
+    }
+    repo.advance_platform_authority_watermark(
+        authority="IG_LIVE",
+        watermark_canonical_bar_id=17_036,
+        **metadata,
+    )
+
+    with pytest.raises(ValueError, match="cannot move backwards"):
+        repo.advance_platform_authority_watermark(
+            authority="IG_LIVE",
+            watermark_canonical_bar_id=9_038,
+            **metadata,
+        )
+
+    repo.advance_platform_authority_watermark(
+        authority="IG_LIVE",
+        watermark_canonical_bar_id=9_038,
+        reconcile_startup=True,
+        **metadata,
+    )
+
+    state = repo.platform_authority_state("IG_LIVE")
+    assert state is not None
+    assert state["watermark_canonical_bar_id"] == 9_038
 
 
 def test_healthy_first_activation_bootstraps_and_persists_source_provenance(

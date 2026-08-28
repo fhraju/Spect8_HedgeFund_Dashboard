@@ -1193,6 +1193,7 @@ class SQLiteProjectionRepository:
         session_calendar_checksum: str,
         timezone_data_version: str,
         updated_at: datetime,
+        reconcile_startup: bool = False,
     ) -> None:
         if authority not in {"IG_DEMO", "IG_LIVE"}:
             raise ValueError(f"Unknown authority {authority}")
@@ -1212,7 +1213,12 @@ class SQLiteProjectionRepository:
                    FROM platform_authority_state WHERE authority = ?""",
                 (authority,),
             ).fetchone()
-            if row is not None and watermark_canonical_bar_id < int(row["watermark_canonical_bar_id"]):
+            if (
+                row is not None
+                and watermark_canonical_bar_id
+                < int(row["watermark_canonical_bar_id"])
+                and not reconcile_startup
+            ):
                 raise ValueError("Platform authority watermark cannot move backwards")
             connection.execute(
                 """INSERT INTO platform_authority_state (

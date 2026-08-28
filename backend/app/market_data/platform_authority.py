@@ -1339,6 +1339,7 @@ class UnifiedPlatformAuthorityRuntime:
                     session_calendar_checksum=gw_batch.session_calendar_checksum,
                     timezone_data_version=gw_batch.timezone_data_version,
                     updated_at=now,
+                    reconcile_startup=is_startup,
                 )
             except Exception:
                 pass
@@ -1417,7 +1418,9 @@ class UnifiedPlatformAuthorityRuntime:
             result[auth] = PlatformReadBatch(
                 bars=tuple(bars),
                 availability=tuple(a for a in batch.availability if PLATFORM_TO_SPECT8_INSTRUMENT.get(a.instrument_id) in [k for k,v in self._instrument_to_authority.items() if v==auth]),  # type: ignore
-                watermark_canonical_bar_id=batch.watermark_canonical_bar_id,
+                watermark_canonical_bar_id=max(
+                    bar.canonical_bar_id for bar in bars
+                ),
                 available_as_of=batch.available_as_of,
                 instrument_master_checksum=batch.instrument_master_checksum,
                 session_calendar_checksum=batch.session_calendar_checksum,

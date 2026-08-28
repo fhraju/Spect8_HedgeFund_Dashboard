@@ -113,7 +113,11 @@ def _live_ready(
     instruments = status.get("live_instruments")
     item = instruments.get(instrument_id) if isinstance(instruments, dict) else None
     return bool(
-        status.get("overall_live_readiness") == "LIVE_READY"
+        status.get("connection_state") == "HEALTHY"
+        and status.get("freshness_state") == "HEALTHY"
+        and status.get("historical_state") == "READY"
+        and status.get("streaming_state") == "READY"
+        and status.get("partial_data_state") == "READY"
         and isinstance(item, dict)
         and item.get("state") == "READY"
         and item.get("partial_state") == "READY"
@@ -935,4 +939,3 @@ except Exception:  # pragma: no cover - lazy import for tests without platform D
     import logging as _logging
 
     _logging.getLogger(__name__).debug("app not created at import time (test/config)")
-
