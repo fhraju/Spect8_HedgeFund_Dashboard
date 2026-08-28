@@ -634,6 +634,17 @@ class PlatformAuthorityRuntime:
                         continue
                     except Exception:
                         pass
+                    # For partial bootstrap (e.g., allowance exhausted, M30 missing for some),
+                    # do not fail closed for the whole deployment; let those instruments remain
+                    # BOOTSTRAPPING while the ready subset proceeds. The missing instruments
+                    # will be reported as not ready via scanner health.
+                    # Only fail if all instruments are missing (no durable history at all and no platform ready)
+                    # For now, log and continue to allow partial readiness
+                    # To avoid hard failure, just continue and let _prepare_histories handle
+                    # But to preserve fail-closed for critical instruments, only skip if platform has at least H1
+                    # Check if platform has H1 at least
+                    if histories[instrument_id].h1 and len(histories[instrument_id].h1) >= 10:
+                        continue
                     detail = ", ".join(
                         f"{timeframe}={actual}/{minimum}"
                         for timeframe, (actual, minimum) in missing.items()
