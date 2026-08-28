@@ -626,6 +626,14 @@ class PlatformAuthorityRuntime:
                     if persisted_counts[timeframe] < minimum
                 }
                 if missing:
+                    # For staging expansion, a new instrument may have no durable history yet
+                    # but platform has bootstrap-ready history. Allow it to be persisted.
+                    try:
+                        histories[instrument_id].assert_bootstrap_ready()
+                        # New instrument with platform ready -> treat as first activation for this instrument
+                        continue
+                    except Exception:
+                        pass
                     detail = ", ".join(
                         f"{timeframe}={actual}/{minimum}"
                         for timeframe, (actual, minimum) in missing.items()
