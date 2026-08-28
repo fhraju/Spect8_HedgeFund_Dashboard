@@ -62,7 +62,7 @@ def test_default_registry_contains_requested_twenty_nine_visible_instruments() -
     assert tuple(item.instrument_id for item in registry.all()) == ALL_INSTRUMENT_IDS
     assert tuple(item.instrument_id for item in registry.enabled()) == DEFAULT_ENABLED_INSTRUMENT_IDS
     assert len(TARGET_INSTRUMENT_IDS) == 25
-    assert len({item.instrument_id for item in instruments}) == 50
+    assert len({item.instrument_id for item in instruments}) == 53
     assert all(item.enabled and item.provider_symbol for item in instruments[:10])
     assert tuple(item.instrument_id for item in registry.enabled()[10:12]) == (
         "BTC_USD",

@@ -11,7 +11,54 @@ INSTRUMENT_AUTHORITY_MAP: dict[str, str] = {
     "EUR_USD": "IG_DEMO",
     "GBP_USD": "IG_DEMO",
     "USD_JPY": "IG_LIVE",
+    # Client FX universe additions — all on IG_DEMO except USD_JPY (LIVE) for staging.
+    "AUD_USD": "IG_DEMO",
+    "NZD_USD": "IG_DEMO",
+    "USD_CAD": "IG_DEMO",
+    "USD_CHF": "IG_DEMO",
+    "AUD_JPY": "IG_DEMO",
+    "CAD_JPY": "IG_DEMO",
+    "EUR_JPY": "IG_DEMO",
+    "GBP_JPY": "IG_DEMO",
+    "NZD_JPY": "IG_DEMO",
+    "AUD_CAD": "IG_DEMO",
+    "EUR_AUD": "IG_DEMO",
+    "EUR_CAD": "IG_DEMO",
+    "EUR_CHF": "IG_DEMO",
+    "EUR_GBP": "IG_DEMO",
+    "GBP_AUD": "IG_DEMO",
+    "GBP_CAD": "IG_DEMO",
+    "GBP_CHF": "IG_DEMO",
+    "NZD_CAD": "IG_DEMO",
 }
+
+# Validated FX universe for client staging (21 FX pairs, basket deferred).
+CLIENT_FX_UNIVERSE_INSTRUMENT_IDS: tuple[str, ...] = (
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "USD_JPY",
+    "AUD_JPY",
+    "CAD_JPY",
+    "EUR_JPY",
+    "GBP_JPY",
+    "NZD_JPY",
+    "AUD_CAD",
+    "EUR_AUD",
+    "EUR_CAD",
+    "EUR_CHF",
+    "EUR_GBP",
+    "GBP_AUD",
+    "GBP_CAD",
+    "GBP_CHF",
+    "NZD_CAD",
+)
+
+# Production remains 3 instruments; staging validates 21.
+PRODUCTION_PLATFORM_INSTRUMENTS: tuple[str, ...] = ("EUR_USD", "GBP_USD", "USD_JPY")
 
 AUTHORITY_ENVIRONMENT_VALUES = {"IG_DEMO", "IG_LIVE"}
 
@@ -175,12 +222,13 @@ class Settings:
                     "MARKET_DATA_PLATFORM_DATABASE_URL must use postgresql+psycopg."
                 )
         if platform_selected:
-            approved = {"EUR_USD", "GBP_USD", "USD_JPY"}
+            approved = set(CLIENT_FX_UNIVERSE_INSTRUMENT_IDS)
+            # Production gate: when APPLICATION_ENVIRONMENT=production and only production instruments, enforce subset
             configured = set(self.enabled_instrument_ids or ())
             if not configured:
                 raise ValueError(
                     "SPECT8_ENABLED_INSTRUMENT_IDS must explicitly select a non-empty "
-                    "Platform-approved subset: EUR_USD, GBP_USD, USD_JPY."
+                    f"Platform-approved subset: {', '.join(sorted(approved))}."
                 )
             unsupported = configured - approved
             if unsupported:

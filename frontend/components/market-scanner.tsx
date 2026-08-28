@@ -14,6 +14,7 @@ import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 import { SignalCard, SignalCardFallback } from "./signal-card";
+import { sortFxUniverse, fxGroupFor, FX_GROUP_LABELS } from "@/lib/fx-universe";
 
 export type ScannerFilters = {
   asset: string;
@@ -162,7 +163,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
 
   const timeframes = activeFilterMode === "MICRO" ? (["M30", "H1"] as const) : (["H1", "H4"] as const);
 
-  const rows = useMemo(
+  const filteredRows = useMemo(
     () => filterScannerRows(snapshot.data.instruments, {
       asset,
       kind,
@@ -174,6 +175,8 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     }),
     [asset, confirmed, exposure, health, kind, match, proxy, snapshot.data.instruments],
   );
+
+  const rows = useMemo(() => sortFxUniverse(filteredRows as any) as typeof filteredRows, [filteredRows]);
 
   function getLiveSignal(instrumentId: string, timeframe: string) {
     if (!liveSignals) return null;

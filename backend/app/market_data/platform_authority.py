@@ -38,7 +38,29 @@ from .registry import CanonicalInstrumentRegistry, twelve_data_instruments
 from .session_boundaries import NEW_YORK, NEW_YORK_CLOSE_TIME
 from .signal_lifecycle import SignalLifecycleService, SignalSnapshot
 
-APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = ("EUR_USD", "GBP_USD", "USD_JPY")
+APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = (
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "USD_JPY",
+    "AUD_JPY",
+    "CAD_JPY",
+    "EUR_JPY",
+    "GBP_JPY",
+    "NZD_JPY",
+    "AUD_CAD",
+    "EUR_AUD",
+    "EUR_CAD",
+    "EUR_CHF",
+    "EUR_GBP",
+    "GBP_AUD",
+    "GBP_CAD",
+    "GBP_CHF",
+    "NZD_CAD",
+)
 
 
 class PlatformAuthorityError(RuntimeError):
