@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
-from ..domain import FilterMode, Timeframe, primitive
+from ..domain import Bar, FilterMode, Timeframe, primitive
 from ..engine.current_daily_filter import build_daily_filter_snapshot
 from ..engine.current_w1_filter import build_w1_filter_snapshot
 from ..engine.models import CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1, StrategyRequest
@@ -21,6 +21,7 @@ from .platform_adapter import (
     PLATFORM_PROVIDER_ID,
     SPECT8_PLATFORM_BOOTSTRAP_LIMITS,
     SPECT8_PLATFORM_REPLAY_LIMITS,
+    SPECT8_PRICE_TYPE,
     PlatformCanonicalReadGateway,
     PlatformIncrementalProcessor,
     PlatformInstrumentHistory,
@@ -32,13 +33,37 @@ from .platform_adapter import (
     platform_instrument_id,
     to_current_bar_snapshot,
     to_spect8_bar,
+    to_spect8_native_bootstrap_bar,
 )
 from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 from .registry import CanonicalInstrumentRegistry, twelve_data_instruments
 from .session_boundaries import NEW_YORK, NEW_YORK_CLOSE_TIME
 from .signal_lifecycle import SignalLifecycleService, SignalSnapshot
 
-APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = ("EUR_USD", "GBP_USD", "USD_JPY")
+APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = (
+    "AAPL",
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "USD_JPY",
+    "AUD_JPY",
+    "CAD_JPY",
+    "EUR_JPY",
+    "GBP_JPY",
+    "NZD_JPY",
+    "AUD_CAD",
+    "EUR_AUD",
+    "EUR_CAD",
+    "EUR_CHF",
+    "EUR_GBP",
+    "GBP_AUD",
+    "GBP_CAD",
+    "GBP_CHF",
+    "NZD_CAD",
+)
 
 
 class PlatformAuthorityError(RuntimeError):
@@ -733,6 +758,42 @@ class PlatformAuthorityRuntime:
                 if bar.timeframe in {"M30", "H1", "D1"}
             )
             self._repository.persist_canonical_bars(translated)
+            # Native H1 projection defect: incremental must propagate newly discovered
+            # authoritative native H1 where canonical is absent, preserving canonical
+            # precedence and the startup merge semantics.
+            native_to_persist: list[Bar] = []
+            seen_native_opens: set[tuple[str, datetime]] = set()
+            for native in batch.native_bootstrap_bars:
+                if native.timeframe != "H1":
+                    continue
+                if native.price_type != SPECT8_PRICE_TYPE:
+                    continue
+                if native.provenance != "NATIVE_IG_HISTORICAL_BOOTSTRAP":
+                    continue
+                try:
+                    bar = to_spect8_native_bootstrap_bar(native)
+                except Exception:  # noqa: BLE001, S112 - native translation must not break incremental
+                    continue
+                if bar.instrument_id not in self._instrument_ids:
+                    continue
+                if bar.synthetic:
+                    continue
+                if bar.quality_status != "VALID":
+                    continue
+                key = (bar.instrument_id, bar.open_time)
+                if key in seen_native_opens:
+                    continue
+                seen_native_opens.add(key)
+                existing_h1 = self._repository.canonical_bar_objects(
+                    PLATFORM_PROVIDER_ID, bar.instrument_id, "H1"
+                )
+                if any(b.open_time == bar.open_time for b in existing_h1):
+                    continue
+                native_to_persist.append(bar)
+            if native_to_persist:
+                self._repository.persist_canonical_bars(tuple(native_to_persist))
+                for bar in native_to_persist:
+                    new_h1_closes[bar.instrument_id].add(bar.close_time)
             if startup_replay:
                 self._repository.persist_canonical_bars(
                     tuple(

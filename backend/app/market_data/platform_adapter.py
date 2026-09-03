@@ -50,9 +50,27 @@ SPECT8_PLATFORM_REPLAY_LIMITS: Mapping[str, int] = MappingProxyType(
 
 PLATFORM_TO_SPECT8_INSTRUMENT: Mapping[str, str] = MappingProxyType(
     {
+        "FX_AUD_USD": "AUD_USD",
         "FX_EUR_USD": "EUR_USD",
         "FX_GBP_USD": "GBP_USD",
+        "FX_NZD_USD": "NZD_USD",
+        "FX_USD_CAD": "USD_CAD",
+        "FX_USD_CHF": "USD_CHF",
         "FX_USD_JPY": "USD_JPY",
+        "FX_AUD_JPY": "AUD_JPY",
+        "FX_CAD_JPY": "CAD_JPY",
+        "FX_EUR_JPY": "EUR_JPY",
+        "FX_GBP_JPY": "GBP_JPY",
+        "FX_NZD_JPY": "NZD_JPY",
+        "FX_AUD_CAD": "AUD_CAD",
+        "FX_EUR_AUD": "EUR_AUD",
+        "FX_EUR_CAD": "EUR_CAD",
+        "FX_EUR_CHF": "EUR_CHF",
+        "FX_EUR_GBP": "EUR_GBP",
+        "FX_GBP_AUD": "GBP_AUD",
+        "FX_GBP_CAD": "GBP_CAD",
+        "FX_GBP_CHF": "GBP_CHF",
+        "FX_NZD_CAD": "NZD_CAD",
     }
 )
 SPECT8_TO_PLATFORM_INSTRUMENT: Mapping[str, str] = MappingProxyType(

@@ -733,6 +733,77 @@ class SQLiteProjectionRepository:
                     "low": bar.raw_low,
                     "close": bar.raw_close,
                 }
+                # Canonical precedence: exact native fallback authority only
+                _NATIVE_FALLBACK_VERSIONS = {
+                    "NATIVE_IG_HISTORICAL_BOOTSTRAP:native-ig-v1",
+                    "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP:native-ig-v1",
+                }
+                incoming_is_native = bar.provider_adapter_version in _NATIVE_FALLBACK_VERSIONS
+                existing = connection.execute(
+                    """
+                    SELECT provider_adapter_version, open, high, low, close
+                    FROM canonical_bars
+                    WHERE provider = ? AND instrument_id = ? AND timeframe = ? AND close_time_utc = ?
+                    """,
+                    (
+                        bar.provider,
+                        bar.instrument_id,
+                        bar.timeframe.value,
+                        value["close_time"],
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    existing_is_native = str(existing["provider_adapter_version"]) in _NATIVE_FALLBACK_VERSIONS
+                    if not incoming_is_native and existing_is_native:
+                        # Canonical arrives after native fallback -> upgrade native to canonical
+                        cursor = connection.execute(
+                            """
+                            UPDATE canonical_bars SET
+                                open_time_utc = ?, raw_open_time = ?, raw_close_time = ?,
+                                raw_provider_symbol = ?, session_timezone = ?, open = ?, high = ?, low = ?,
+                                close = ?, volume = ?, raw_evidence_json = ?, synthetic = ?,
+                                quality_status = ?, construction_profile_version = ?,
+                                provider_adapter_version = ?, source_timeframe = ?,
+                                source_candle_ids_json = ?, forward_filled = ?,
+                                expected_closure_before = ?, ingestion_run_id = ?, created_at = ?,
+                                session_identifier = ?, session_open_broker_time = ?, session_close_broker_time = ?
+                            WHERE provider = ? AND instrument_id = ? AND timeframe = ? AND close_time_utc = ?
+                            """,
+                            (
+                                value["open_time"],
+                                bar.raw_open_time or value["open_time"],
+                                bar.raw_close_time or value["close_time"],
+                                bar.raw_provider_symbol or bar.instrument_id,
+                                bar.session_timezone,
+                                str(bar.open),
+                                str(bar.high),
+                                str(bar.low),
+                                str(bar.close),
+                                str(bar.volume) if bar.volume is not None else None,
+                                json.dumps(raw_evidence, sort_keys=True),
+                                int(bar.synthetic),
+                                bar.quality_status,
+                                bar.construction_profile_version,
+                                bar.provider_adapter_version,
+                                bar.source_timeframe.value if bar.source_timeframe else None,
+                                json.dumps(bar.source_candle_ids),
+                                int(bar.forward_filled),
+                                int(bar.expected_closure_before),
+                                bar.ingestion_run_id,
+                                value["created_at"] or value["close_time"],
+                                bar.session_identifier,
+                                bar.session_open_broker_time,
+                                bar.session_close_broker_time,
+                                bar.provider,
+                                bar.instrument_id,
+                                bar.timeframe.value,
+                                value["close_time"],
+                            ),
+                        )
+                        inserted += max(cursor.rowcount, 0)
+                        continue
+                    # Otherwise preserve existing authority: canonical stays, native duplicate is idempotent
+                    continue
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO canonical_bars (

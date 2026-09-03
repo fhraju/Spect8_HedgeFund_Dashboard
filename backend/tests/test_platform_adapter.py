@@ -209,7 +209,7 @@ def test_explicit_instrument_mapping_and_unmapped_failure() -> None:
     with pytest.raises(UnmappedPlatformInstrumentError, match="unmapped Spect8"):
         platform_instrument_id("XAU_USD")
     with pytest.raises(UnmappedPlatformInstrumentError, match="unmapped Platform"):
-        spect8_instrument_id("FX_AUD_USD")
+        spect8_instrument_id("FX_AUD_NZD")
 
 
 def test_gateway_passes_exact_bootstrap_policy_to_platform_service() -> None:
