@@ -41,7 +41,6 @@ from .session_boundaries import NEW_YORK, NEW_YORK_CLOSE_TIME
 from .signal_lifecycle import SignalLifecycleService, SignalSnapshot
 
 APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = (
-    "AAPL",
     "AUD_USD",
     "EUR_USD",
     "GBP_USD",
