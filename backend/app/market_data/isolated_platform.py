@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from ..domain import FilterMode, Timeframe
+from ..service import WalkingSkeletonService
 from .platform_adapter import (
     PLATFORM_PROVIDER_ID,
     SPECT8_PLATFORM_REPLAY_LIMITS,
@@ -25,11 +26,12 @@ from .platform_authority import (
     _expected_latest_forex_h1_close,
     _live_streaming_readiness,
 )
+from .recovery_projection import RecoveryProjectionMixin
 
 LOGGER = logging.getLogger(__name__)
 
 
-class InstrumentProjection:
+class InstrumentProjection(RecoveryProjectionMixin):
     """Scope checkpoints and source identities without changing strategy keys."""
 
     def __init__(self, repository, authority, instrument):
@@ -39,6 +41,7 @@ class InstrumentProjection:
             instrument,
         )
         self.scope = authority + "|" + instrument
+        self.initialize_revisions()
         with closing(repository._connect()) as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS platform_instrument_progress (
@@ -181,7 +184,9 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
             child = PlatformAuthorityRuntime(
                 self.gateway_for(inst),
                 projection,
-                self._service,
+                WalkingSkeletonService(
+                    self._service._evaluator, self._service._case_loader, projection
+                ),
                 (inst,),
                 stale_after_seconds=self._stale_after_seconds,
                 poll_seconds=self._poll_seconds,
@@ -288,6 +293,7 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
                         candidates = tuple(
                             c for c in candidates if c[3] > previous_time
                         )
+                    projection.observe_recovery_inputs(batch.native_bootstrap_bars)
                     projection.enqueue(candidates)
                     processed = PlatformIncrementalProcessor(
                         gateway, projection
