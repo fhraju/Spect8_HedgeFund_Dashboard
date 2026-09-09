@@ -9,6 +9,7 @@ import type {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { CollectionStatus } from "./collection-status";
 import { FilterModeSelector } from "./filter-mode-selector";
 import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
@@ -316,7 +317,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                       return <td key={tf}><SignalCardFallback status={legacy} /></td>;
                     })}
                     <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
-                    <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_environment ? ` · ${row.provider_environment.replaceAll("_", " ")}` : ""}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.provider_environment && <span className="scanner-source-badge" title={`Market data source: ${row.provider_environment}`}>[{row.provider_environment.replaceAll("_", " ")}]</span>}{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
+                    <td>{healthBadge(row.data_status)}<CollectionStatus value={row.collection} freshness={row.evaluation_freshness} /><small>{row.provider ?? snapshot.source}{row.provider_environment ? ` · ${row.provider_environment.replaceAll("_", " ")}` : ""}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.provider_environment && <span className="scanner-source-badge" title={`Market data source: ${row.provider_environment}`}>[{row.provider_environment.replaceAll("_", " ")}]</span>}{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
                   </tr>
                 );
               })}

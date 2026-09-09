@@ -375,6 +375,8 @@ class ScannerCurrentFilterView(BaseModel):
 
 
 class ScannerInstrumentView(BaseModel):
+    collection: dict[str, Any] | None = None
+    evaluation_freshness: str | None = None
     instrument_id: str
     display_symbol: str
     display_name: str

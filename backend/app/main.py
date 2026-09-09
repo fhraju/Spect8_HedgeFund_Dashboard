@@ -54,8 +54,9 @@ from .market_data.normalizer import CandleNormalizer
 from .market_data.platform_authority import (
     PlatformAuthorityError,
     PlatformAuthorityRuntime,
-    UnifiedPlatformAuthorityRuntime,
 )
+from .market_data.isolated_platform import IsolatedPlatformAuthorityRuntime as UnifiedPlatformAuthorityRuntime
+from .market_data.collection_view import attach_collection_status
 from .market_data.platform_shadow import PlatformShadowRuntime
 from .market_data.registry import (
     CanonicalInstrumentRegistry,
@@ -89,6 +90,11 @@ def _live_not_ready(
     if runtime is None:
         return False
     status = runtime.status()
+    collection = status.get("collection_instruments")
+    if isinstance(collection, dict):
+        if instrument_id is None:
+            return not any(item.get("evaluation_freshness") == "CURRENT" for item in collection.values())
+        return collection.get(instrument_id, {}).get("evaluation_freshness") != "CURRENT"
     if instrument_id is None:
         readiness = status.get("overall_live_readiness")
         return readiness is not None and readiness != "LIVE_READY"
@@ -110,6 +116,9 @@ def _live_ready(
     if runtime is None:
         return False
     status = runtime.status()
+    collection = status.get("collection_instruments")
+    if isinstance(collection, dict):
+        return collection.get(instrument_id, {}).get("evaluation_freshness") == "CURRENT"
     instruments = status.get("live_instruments")
     item = instruments.get(instrument_id) if isinstance(instruments, dict) else None
     return bool(
@@ -768,6 +777,7 @@ def create_app(
                     )
                 rows.append(row)
             snapshot = snapshot.model_copy(update={"instruments": rows})
+        snapshot = attach_collection_status(snapshot, platform_authority_runtime)
         return envelope(snapshot)
 
     def historical_envelope(data: Any) -> dict[str, Any]:
@@ -935,4 +945,3 @@ except Exception:  # pragma: no cover - lazy import for tests without platform D
     import logging as _logging
 
     _logging.getLogger(__name__).debug("app not created at import time (test/config)")
-

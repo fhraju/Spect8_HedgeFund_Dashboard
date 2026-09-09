@@ -343,6 +343,8 @@ export type ScannerTimeframe = {
 };
 
 export type ScannerInstrument = {
+  collection?: import("@/components/collection-status").CollectionHealth | null;
+  evaluation_freshness?: string | null;
   instrument_id: string;
   display_symbol: string;
   display_name: string;
