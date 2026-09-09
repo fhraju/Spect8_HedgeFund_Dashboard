@@ -209,7 +209,9 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     new Set(snapshot.data.instruments.map((row) => row.exposure_category).filter(Boolean)),
   );
   const creditBudget = snapshot.data.credit_budget;
-  const creditSummary = creditBudget
+  const creditSummary = snapshot.data.instruments.some((row) => row.collection)
+    ? " · Collection and evaluation freshness shown per instrument"
+    : creditBudget
     ? ` · ${creditBudget.estimated_operational_remaining} app operational credits · ${creditBudget.estimated_total_remaining} estimated provider-day credits remaining`
     : "";
 
