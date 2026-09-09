@@ -288,11 +288,9 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
                         first_activation=False,
                         startup_replay=not child._startup_replay_complete,
                     )
-                    if state:
-                        previous_time = datetime.fromisoformat(state["updated_at"])
-                        candidates = tuple(
-                            c for c in candidates if c[3] > previous_time
-                        )
+                    # Historical repairs arrive after their candle close. Wall-clock
+                    # ingestion progress must never filter out those candidates;
+                    # the durable candidate identity makes enqueue idempotent.
                     projection.observe_recovery_inputs(batch.native_bootstrap_bars)
                     projection.enqueue(candidates)
                     processed = PlatformIncrementalProcessor(

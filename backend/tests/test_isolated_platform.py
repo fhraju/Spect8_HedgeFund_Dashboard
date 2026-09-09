@@ -86,6 +86,20 @@ def test_reader_outage_does_not_block_other_authority(tmp_path):
     )
 
 
+def test_history_repaired_behind_ingestion_time_is_queued(tmp_path):
+    source = Source("FX_USD_JPY", "IG_LIVE", stale=True)
+    value, repo = runtime(tmp_path, source)
+    value.run_once(available_as_of=NOW)
+    source.batch = Source("FX_USD_JPY", "IG_LIVE").batch
+    value.run_once(available_as_of=NOW + timedelta(minutes=10))
+    with repo._connect() as db:
+        row = db.execute(
+            "SELECT COUNT(*) FROM platform_pending_evaluations WHERE scope=? AND close_time=?",
+            ("IG_LIVE|USD_JPY", NOW.isoformat()),
+        ).fetchone()
+    assert row[0] > 0
+
+
 def test_pending_evaluation_survives_checkpoint_and_restart(tmp_path):
     value, repo = runtime(tmp_path, Source("FX_USD_JPY", "IG_LIVE", broken=True))
     child = value._children["EUR_USD"]
