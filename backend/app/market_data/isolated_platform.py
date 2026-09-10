@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..domain import FilterMode, Timeframe
 from ..service import WalkingSkeletonService
+from .forming_runtime import FormingRuntimeMixin, validate_partial
 from .platform_adapter import (
     PLATFORM_PROVIDER_ID,
     SPECT8_PLATFORM_REPLAY_LIMITS,
@@ -169,7 +170,9 @@ class InstrumentProjection(RecoveryProjectionMixin):
             db.commit()
 
 
-class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
+class IsolatedPlatformAuthorityRuntime(
+    FormingRuntimeMixin, UnifiedPlatformAuthorityRuntime
+):
     """Reuse financial calculations; isolate read, persistence and retry state."""
 
     def __init__(self, *args, **kwargs):
@@ -262,6 +265,7 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
                         for b in batch.bars
                     ):
                         raise ValueError("source authority mismatch")
+                    child._forming_batch = batch
                     history = build_platform_history(history_batch, inst)
                     child._current_histories = {inst: history}
                     child._current_partials = {
@@ -270,6 +274,10 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
                             to_current_bar_snapshot(p)
                             for p in batch.partial_bar_snapshots
                             if p.price_type == "BID"
+                            and validate_partial(
+                                p, self.authority_for(inst), inst, now
+                            )[0]
+                            == "READY"
                         )
                     }
                     child._live_readiness = _live_streaming_readiness(
@@ -494,36 +502,15 @@ class IsolatedPlatformAuthorityRuntime(UnifiedPlatformAuthorityRuntime):
                 if len(results) == len(self._children)
                 else "one or more instruments are unavailable"
             )
+            self.refresh_forming(now)
             return self._last_result
         finally:
             self._isolated_lock.release()
 
-    def forming_signals(self, *, as_of):
-        values = []
-        for inst, child in self._children.items():
-            if (
-                self._instrument_status.get(inst, {}).get("evaluation_freshness")
-                != "CURRENT"
-            ):
-                continue
-            values.extend(child.forming_signals(as_of=as_of))
-        reports = [c._forming_evaluation_report for c in self._children.values()]
-        self._forming_evaluation_report = {
-            "state": "READY"
-            if all(r["state"] == "READY" for r in reports)
-            else "NOT_READY",
-            "as_of": as_of.isoformat(),
-            "candidates": sum(r.get("candidates", 0) for r in reports),
-            "evaluations_completed": sum(
-                r.get("evaluations_completed", 0) for r in reports
-            ),
-            "signals_matched": len(values),
-            "limitations": tuple(x for r in reports for x in r.get("limitations", ())),
-        }
-        return tuple(values)
-
     def status(self):
         base = super().status()
+        base["forming_evaluation"] = self.forming_diagnostics()
+        base["forming_evaluator_state"] = base["forming_evaluation"]["state"]
         base["collection_instruments"] = dict(self._instrument_status)
         base["instrument_watermarks"] = {
             i: d.get("watermark_canonical_bar_id")

@@ -595,6 +595,19 @@ def create_app(
         """
         now = request.app.state.clock.now()
         current = request.app.state.signal_lifecycle.current_confirmed(now)
+        runtime = request.app.state.platform_authority_runtime
+        view_reader = getattr(runtime, "forming_view", None)
+        if callable(view_reader):
+            view = view_reader(as_of=now)
+            return envelope(
+                {
+                    "confirmed": current,
+                    **view,
+                    "as_of": primitive(now),
+                    "platform_healthy": runtime.status().get("overall_live_readiness")
+                    == "LIVE_READY",
+                }
+            )
         platform_healthy = False
         if request.app.state.platform_authority_runtime is not None:
             status = request.app.state.platform_authority_runtime.status()
