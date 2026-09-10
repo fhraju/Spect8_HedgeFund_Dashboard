@@ -15,6 +15,7 @@ import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 import { SignalCard, SignalCardFallback } from "./signal-card";
+import { SignalSummary } from "./signal-summary";
 
 export type ScannerFilters = {
   asset: string;
@@ -142,16 +143,18 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const [confirmed, setConfirmed] = useState("ALL");
   const [health, setHealth] = useState("ALL");
   const [liveSignals, setLiveSignals] = useState<CurrentSignals | null>(null);
+  const [signalsFailed, setSignalsFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchLive() {
       try {
         const res = await fetch("/api/signals/current", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error("Signals unavailable");
         const json = await res.json();
-        if (!cancelled) setLiveSignals(json.data as CurrentSignals);
-      } catch {}
+        if (!Array.isArray(json.data?.confirmed) || !Array.isArray(json.data?.forming)) throw new Error("Invalid signals response");
+        if (!cancelled) { setLiveSignals(json.data as CurrentSignals); setSignalsFailed(false); }
+      } catch { if (!cancelled) setSignalsFailed(true); }
     }
     fetchLive();
     const id = setInterval(fetchLive, 5000);
@@ -192,11 +195,6 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const monitored = snapshot.data.instruments.length;
   const filteredCandidates = snapshot.data.instruments.filter(
     (row) => !["NONE", "WAITING"].includes(row.current_filter.status),
-  ).length;
-  const confirmedSignals = snapshot.data.instruments.filter((row) =>
-    [row.H1.signal_status, row.H4.signal_status].some(
-      (status) => !["NONE", "WAITING"].includes(status),
-    ),
   ).length;
   const healthy = monitored - unhealthy;
   const assetClasses = Array.from(
@@ -255,11 +253,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
             <span><b>{filteredCandidates}</b><small>Filtered Candidates</small></span>
             <em>Eligible on H1 or H4</em>
           </article>
-          <article className="kpi">
-            <span className="kpi-icon green">◉</span>
-            <span><b>{confirmedSignals}</b><small>Confirmed Signals</small></span>
-            <em>Confirmed on H1 or H4</em>
-          </article>
+          <SignalSummary data={liveSignals} mode={activeFilterMode} instrumentIds={snapshot.data.instruments.map(row => row.instrument_id)} failed={signalsFailed} />
           <article className="kpi">
             <span className="kpi-icon cyan">◇</span>
             <span><b>{healthy}/{monitored}</b><small>Healthy Feeds</small></span>

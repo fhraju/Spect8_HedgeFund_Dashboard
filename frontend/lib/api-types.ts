@@ -430,6 +430,9 @@ export type ConfirmedSignal = {
 
 export type FormingSignal = {
   instrument: string;
+  instrument_id?: string;
+  authority?: string;
+  source_as_of?: string;
   mode: string;
   timeframe: string;
   direction: string;
@@ -446,6 +449,15 @@ export type CurrentSignals = {
   confirmed: ConfirmedSignal[];
   forming: FormingSignal[];
   as_of: string;
+  forming_candidates?: {
+    authority: string;
+    instrument_id: string;
+    mode: string;
+    timeframe: string;
+    state: string;
+    source_as_of: string | null;
+    source_bar_end: string | null;
+  }[];
 };
 
 export type HistorySignals = {

@@ -25,3 +25,9 @@ Deployment backups, manifests, browser evidence and progress snapshots are under
 For each affected environment, stop only its Spect8 frontend and backend services. Restore files listed in `<environment>-manifest.json` from `<environment>-before/`; remove only newly added files whose manifest value is false. Restore `frontend/.next` from `<environment>-next-before/`, then start the two dashboard services and verify health and authenticated scanner responses. Keep current projection databases, acquired bars and confirmed signal history intact. Collector services remain running. Do not reset or clean runtime worktrees wholesale: they contain pre-existing deployment changes.
 
 The subsequent frontend rollback is documented in `/home/raju/The-System/rollouts/frontend-rollback-20260910/REPORT.md`. Its saved build IDs are authoritative for the currently deployed presentation.
+
+## Scanner totals
+
+Confirmed Signals and Forming Signals use the current-signals API, scoped to all monitored instruments and the selected mode: MICRO M30/H1 or MACRO H1/H4. They count individual bar/timeframe/direction identities rather than pairs; duplicate versions are counted once. Current confirmations remain counted until their visibility deadline. Forming matches are counted independently, including when the restored row presentation gives a confirmed card precedence. The dropdown row filters do not change these dashboard-wide totals.
+
+Unavailable or delayed responses show a dash rather than a false zero. Forming totals include only fresh READY candidates, display partial coverage when some instruments cannot evaluate, and show a dash when no forming inputs are ready. The summary adds a matching card without changing filter badges or row presentation.

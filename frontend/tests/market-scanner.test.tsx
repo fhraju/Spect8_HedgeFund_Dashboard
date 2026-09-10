@@ -100,7 +100,8 @@ describe("multi-instrument market scanner", () => {
     expect(html).toContain("Provider rejected GBP/USD.");
     expect(html).toContain('<b>12</b><small>Markets Monitored</small>');
     expect(html).toContain('<b>1</b><small>Filtered Candidates</small>');
-    expect(html).toContain('<b>1</b><small>Confirmed Signals</small>');
+    expect(html).toContain('<b>—</b><small>Confirmed Signals</small>');
+    expect(html).toContain('<b>—</b><small>Forming Signals</small>');
     expect(html).toContain('<b>10/12</b><small>Healthy Feeds</small>');
     expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
     expect(html).not.toContain(">Home</a>");

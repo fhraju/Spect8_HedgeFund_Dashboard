@@ -2777,3 +2777,7 @@ td:first-child span,
 .signal-card .signal-card-header {
   min-height: 22px;
 }
+
+@media (min-width: 1200px) {
+  .scanner-kpis { grid-template-columns: repeat(5, minmax(160px, 1fr)); }
+}
