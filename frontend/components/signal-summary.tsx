@@ -25,7 +25,7 @@ export function SignalSummary({ data, mode, instrumentIds, failed = false }: {
     </article>
     <article className="kpi" data-signal-summary="forming" title={`${label} · ${totals.formingNote}`}>
       <span className="kpi-icon amber">◌</span>
-      <span><b>{totals.forming ?? "—"}</b><small>Forming Signals</small></span>
+      <span><b>{totals.forming ?? 0}</b><small>Forming Signals</small></span>
       <em>{totals.formingNote === "Current provisional signals" ? label : totals.formingNote}</em>
     </article>
   </>;
