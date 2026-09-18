@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -40,7 +40,7 @@ class InstrumentView(BaseModel):
     enabled: bool
     session_timezone: str
     timeframes: list[str]
-    price_precision: int
+    price_precision: int | None
     synthetic: bool
     provider_environment: str | None = None
 
@@ -372,6 +372,18 @@ class ScannerCurrentFilterView(BaseModel):
     as_of_h1_close_time: datetime | None
     snapshot_id: str | None
     source: Literal["COMPLETED_H1", "WAITING"]
+    # Explicit freshness vs the latest completed H1 close. A snapshot whose
+    # as_of lags the latest H1 (e.g. evaluation halted by a missing initial
+    # session bar) must never be presented as current/healthy.
+    filter_freshness: Literal["CURRENT", "STALE", "INCOMPLETE"] = "CURRENT"
+    stale_reason: str | None = None
+    latest_completed_h1: datetime | None = None
+    # Required H1 intervals absent from the same canonical projection the
+    # evaluator reads. `missing_h1_intervals` is a bounded display list;
+    # `total_missing_h1_count` is the truthful total (None when unknown), so
+    # the displayed count is never a truncation cap.
+    missing_h1_intervals: list[str] = []
+    total_missing_h1_count: int | None = None
 
 
 class ScannerInstrumentView(BaseModel):
@@ -479,6 +491,11 @@ def scanner_snapshot(
                 as_of_h1_close_time=None,
                 snapshot_id=None,
                 source="WAITING",
+                filter_freshness="INCOMPLETE",
+                stale_reason="NO_FILTER_SNAPSHOT",
+                latest_completed_h1=_parse_utc(latest.get("H1") if latest else None),
+                missing_h1_intervals=[],
+                total_missing_h1_count=0,
             )
         else:
             classification = str(latest_filter.get("final_classification") or "")
@@ -487,11 +504,29 @@ def scanner_snapshot(
                     bool(latest_filter.get("buy_matched")),
                     bool(latest_filter.get("sell_matched")),
                 )
+            latest_h1_raw = latest.get("H1") if latest else None
+            try:
+                freshness, stale_reason, missing_intervals, total_missing = _filter_freshness(
+                    repository,
+                    instrument.provider_id,
+                    instrument.instrument_id,
+                    latest_filter.get("as_of_h1_close_time_utc"),
+                    latest_h1_raw,
+                )
+            except Exception:  # noqa: BLE001 - diagnostic must stay informational only
+                freshness, stale_reason, missing_intervals, total_missing = (
+                    "INCOMPLETE", "FILTER_DIAGNOSTIC_FAILED", [], None,
+                )
             current_filter = ScannerCurrentFilterView(
                 status=classification,
                 as_of_h1_close_time=latest_filter.get("as_of_h1_close_time_utc"),
                 snapshot_id=latest_filter.get("snapshot_id"),
                 source="COMPLETED_H1",
+                filter_freshness=freshness,
+                stale_reason=stale_reason,
+                latest_completed_h1=_parse_utc(latest_h1_raw),
+                missing_h1_intervals=missing_intervals,
+                total_missing_h1_count=total_missing,
             )
 
         def timeframe(value: str) -> ScannerTimeframeView:
@@ -518,7 +553,7 @@ def scanner_snapshot(
 
         state = (
             HealthState.DATA_UNAVAILABLE.value
-            if not instrument.polling_enabled
+            if not instrument.polling_enabled and instrument.asset_class != "SHARE_SPREADBET"
             else (
                 str(health["state"])
                 if health
@@ -574,7 +609,7 @@ def scanner_snapshot(
                     (
                         "Unavailable from the configured provider; no market-data "
                         "request is made."
-                        if not instrument.polling_enabled
+                        if not instrument.polling_enabled and instrument.asset_class != "SHARE_SPREADBET"
                         else (health["latest_error_summary"] if health else None)
                     )
                 ),
@@ -760,3 +795,97 @@ def _data_state(
     if any(status["data_status"] != "READY" for status in statuses):
         return HealthState.INSUFFICIENT_HISTORY.value
     return HealthState.HEALTHY.value
+
+
+def _parse_utc(value: object) -> datetime | None:
+    """Parse an ISO-8601 UTC timestamp; None when absent/unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _expected_trading_h1_opens(provider_id: str, start: datetime, end: datetime) -> list[datetime] | None:
+    """Expected H1 opens from the shared FX session/calendar authority.
+
+    This is the same authority the collector registers
+    (`forex_calendar.load_definition`, defaulting to the frozen FX_NY_17
+    normal schedule): one definition of expected trading intervals for both
+    collection and diagnosis. Returns None when the provider is not covered
+    by that authority instead of inventing a wall-clock schedule.
+    """
+    if provider_id != "MARKET_DATA_PLATFORM":
+        return None
+    try:
+        from hedgefund_market_data.providers.ig.forex_calendar import (
+            expected_h1_opens,
+            load_definition,
+        )
+        return list(expected_h1_opens(load_definition(), start, end))
+    except Exception:
+        return None
+
+
+def _filter_freshness(
+    repository: SQLiteProjectionRepository,
+    provider_id: str,
+    instrument_id: str,
+    as_of_h1_close_time: object,
+    latest_h1_close_time: object,
+    *,
+    display_limit: int = 32,
+) -> tuple[
+    Literal["CURRENT", "STALE", "INCOMPLETE"], str | None, list[str], int | None
+]:
+    """Compare the filter snapshot as_of against the latest completed H1.
+
+    Returns (freshness, stale_reason, missing_h1_intervals, total_missing).
+    `missing_h1_intervals` lists expected H1 *opens* (bounded display list);
+    the total is truthful and calendar-aware (weekend closures are never
+    counted). Reads the same canonical projection the evaluator reads, so
+    the diagnostic can neither contradict the evaluation nor consult the
+    retired fossil store. Never raises: lookup failures degrade to an
+    unknown total instead of letting a stale filter look current.
+    """
+    as_of = _parse_utc(as_of_h1_close_time)
+    latest_h1 = _parse_utc(latest_h1_close_time)
+    if as_of is None:
+        return ("INCOMPLETE", "NO_FILTER_SNAPSHOT", [], 0)
+    if latest_h1 is None:
+        return ("INCOMPLETE", "NO_COMPLETED_H1", [], 0)
+    if as_of == latest_h1:
+        return ("CURRENT", None, [], 0)
+    if as_of > latest_h1:
+        return ("STALE", "FILTER_AHEAD_OF_LATEST_H1", [], 0)
+    try:
+        expected = _expected_trading_h1_opens(provider_id, as_of, latest_h1)
+        if expected is None:
+            return ("STALE", "FILTER_BEHIND_LATEST_H1", [], None)
+        # An expected open is satisfied by the canonical VALID bar closing
+        # one hour later; the diagnostic reports expected opens.
+        wanted = [o for o in expected if o >= as_of]
+        present = set(
+            repository.present_h1_close_times(provider_id, instrument_id)
+            if hasattr(repository, "present_h1_close_times")
+            else ()
+        )
+        missing = [
+            _iso_utc(o)
+            for o in wanted
+            if _iso_utc(o + timedelta(hours=1)) not in present
+        ]
+        return ("STALE", "FILTER_BEHIND_LATEST_H1", missing[:display_limit], len(missing))
+    except Exception:  # noqa: BLE001 - freshness must stay best-effort
+        return ("STALE", "FILTER_BEHIND_LATEST_H1", [], None)

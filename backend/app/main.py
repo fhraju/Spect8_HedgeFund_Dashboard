@@ -82,6 +82,68 @@ class FilterModeView(BaseModel):
     filter_timeframe: str
 
 
+def _filter_freshness_not_current(row: Any) -> str | None:
+    """Return the stale reason when a scanner row's filter is not current.
+
+    Streaming live-readiness must never present a stale/incomplete filter
+    snapshot as healthy: evaluation continuity (filter as_of vs latest H1)
+    is independent of bar streaming readiness.
+    """
+    current_filter = getattr(row, "current_filter", None)
+    freshness = getattr(current_filter, "filter_freshness", None)
+    if freshness in ("STALE", "INCOMPLETE"):
+        return getattr(current_filter, "stale_reason", None) or freshness
+    return None
+
+
+def _apply_scanner_row_overlay(rows: list[Any], runtime: Any) -> list[Any]:
+    """Per-row health overlay that never marks a stale/incomplete filter healthy."""
+    overlaid: list[Any] = []
+    for row in rows:
+        stale_reason = _filter_freshness_not_current(row)
+        if stale_reason is not None:
+            as_of = getattr(row.current_filter, "as_of_h1_close_time", None)
+            overlaid.append(
+                row.model_copy(
+                    update={
+                        "provider_health": "STALE",
+                        "data_status": "STALE",
+                        "stale": True,
+                        "latest_error_summary": (
+                            "Filter snapshot is stale"
+                            + (f" (as of {as_of})" if as_of else "")
+                            + f" – {stale_reason}."
+                        ),
+                    }
+                )
+            )
+        elif _live_not_ready(runtime, row.instrument_id):
+            overlaid.append(
+                row.model_copy(
+                    update={
+                        "provider_health": "STALE",
+                        "data_status": "STALE",
+                        "stale": True,
+                        "latest_error_summary": "Historical strategy state is ready, but canonical streaming or partial-data evidence is not fully ready.",
+                    }
+                )
+            )
+        elif _live_ready(runtime, row.instrument_id):
+            overlaid.append(
+                row.model_copy(
+                    update={
+                        "provider_health": "HEALTHY",
+                        "data_status": "HEALTHY",
+                        "stale": False,
+                        "latest_error_summary": None,
+                    }
+                )
+            )
+        else:
+            overlaid.append(row)
+    return overlaid
+
+
 def _live_not_ready(
     runtime: PlatformAuthorityRuntime | None, instrument_id: str | None = None
 ) -> bool:
@@ -149,7 +211,11 @@ def create_app(
         reserve=configured.market_data_credit_reserve,
     )
     platform_selected = configured.market_data_source == "MARKET_DATA_PLATFORM"
-    configured_instruments = twelve_data_instruments(configured.enabled_instrument_ids)
+    if platform_selected:
+        from .market_data.share_catalog import platform_instruments
+        configured_instruments = platform_instruments(configured.enabled_instrument_ids)
+    else:
+        configured_instruments = twelve_data_instruments(configured.enabled_instrument_ids)
     if platform_selected:
         clock = SystemClock()
         discovered_instruments = tuple(
@@ -303,26 +369,23 @@ def create_app(
             )
         runtime_task: asyncio.Task[None] | None = None
         if platform_authority_runtime is not None:
-            try:
-                app.state.platform_authority_result = (
-                    platform_authority_runtime.run_once(
-                        available_as_of=SystemClock().now()
-                    )
-                )
-            except PlatformAuthorityError as error:
-                # Fail-closed startup: stale/unavailable data must not kill the
-                # process. The runtime loop retries every poll and /health,
-                # /scanner and signal safety all report truthful STALE/UNAVAILABLE
-                # states; no evaluations occur while unhealthy.
-                logging.getLogger(__name__).warning(
-                    "platform_authority_startup_deferred error_type=%s detail=%s",
-                    type(error).__name__,
-                    str(error)[:300],
-                )
             if configured.effective_polling_enabled:
+                # History preparation belongs to the runtime task. Serve explicit
+                # waiting/stale diagnostics immediately, even for a large universe.
                 runtime_task = asyncio.create_task(
                     runtime.run(), name="spect8-platform-authority-runtime"
                 )
+            else:
+                try:
+                    app.state.platform_authority_result = await asyncio.to_thread(
+                        platform_authority_runtime.run_once,
+                        available_as_of=SystemClock().now(),
+                    )
+                except PlatformAuthorityError as error:
+                    logging.getLogger(__name__).warning(
+                        "platform_authority_startup_deferred error_type=%s detail=%s",
+                        type(error).__name__, str(error)[:300],
+                    )
         elif configured.auto_seed_synthetic and provider.identity.synthetic:
             runtime.run_once()
         elif not provider.identity.synthetic and configured.effective_polling_enabled:
@@ -518,6 +581,9 @@ def create_app(
             }
         )
 
+    def active_registry():
+        return platform_authority_runtime.registry if platform_authority_runtime is not None else registry
+
     @app.get("/instruments", dependencies=[protected])
     def instruments() -> dict[str, Any]:
         return envelope(
@@ -554,7 +620,7 @@ def create_app(
                     "price_precision": instrument.price_precision,
                     "synthetic": instrument.synthetic,
                 }
-                for instrument in registry.all()
+                for instrument in active_registry().all()
             ]
         )
 
@@ -741,7 +807,7 @@ def create_app(
     )
     def instrument_dashboard(instrument_id: str) -> dict[str, Any]:
         try:
-            instrument = registry.by_id(instrument_id)
+            instrument = active_registry().by_id(instrument_id)
         except KeyError:
             raise HTTPException(
                 status_code=404, detail="Instrument not found."
@@ -759,36 +825,15 @@ def create_app(
     def scanner() -> dict[str, Any]:
         snapshot = scanner_snapshot(
             repository,
-            registry.all(),
+            active_registry().all(),
             clock.now(),
             credit_budget=primitive(credit_budget.status(as_of=clock.now())),
             stale_after_seconds=configured.market_data_stale_after_seconds,
         )
         if platform_authority_runtime is not None:
-            rows = []
-            for row in snapshot.instruments:
-                if _live_not_ready(platform_authority_runtime, row.instrument_id):
-                    row = row.model_copy(
-                        update={
-                            "provider_health": "STALE",
-                            "data_status": "STALE",
-                            "stale": True,
-                            "latest_error_summary": (
-                                "Historical strategy state is ready, but canonical "
-                                "streaming or partial-data evidence is not fully ready."
-                            ),
-                        }
-                    )
-                elif _live_ready(platform_authority_runtime, row.instrument_id):
-                    row = row.model_copy(
-                        update={
-                            "provider_health": "HEALTHY",
-                            "data_status": "HEALTHY",
-                            "stale": False,
-                            "latest_error_summary": None,
-                        }
-                    )
-                rows.append(row)
+            rows = _apply_scanner_row_overlay(
+                list(snapshot.instruments), platform_authority_runtime
+            )
             snapshot = snapshot.model_copy(update={"instruments": rows})
         snapshot = attach_collection_status(snapshot, platform_authority_runtime)
         return envelope(snapshot)

@@ -376,6 +376,11 @@ export type ScannerInstrument = {
     as_of_h1_close_time: string | null;
     snapshot_id: string | null;
     source: "COMPLETED_H1" | "WAITING";
+    filter_freshness?: "CURRENT" | "STALE" | "INCOMPLETE";
+    stale_reason?: string | null;
+    latest_completed_h1?: string | null;
+    missing_h1_intervals?: string[];
+    total_missing_h1_count?: number | null;
   };
   H1: ScannerTimeframe;
   H4: ScannerTimeframe;
@@ -457,6 +462,11 @@ export type CurrentSignals = {
     state: string;
     source_as_of: string | null;
     source_bar_end: string | null;
+    reason?: string | null;
+    supported?: boolean;
+    max_age_seconds?: number;
+    account_type?: string;
+    cadence_seconds?: number;
   }[];
 };
 

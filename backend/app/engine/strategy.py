@@ -79,14 +79,19 @@ def _missing_issue(
     timeframe: Timeframe,
     issue: str,
 ) -> list[str]:
+    from ..market_data.share_catalog import is_share
+    from ..market_data.ig_forex_calendar import expected_gap
     step = TIMEFRAME_STEP[timeframe]
     if any(
-        current.open_time - previous.open_time != step
+        (current.open_time != previous.close_time if is_share(current.instrument_id)
+         else current.open_time - previous.open_time != step)
         and not current.expected_closure_before
-        and not is_expected_forex_weekend_gap(
+        and not (not is_share(current.instrument_id) and previous.provider == current.provider
+                 and expected_gap(current.provider, previous.close_time, current.open_time))
+        and not (not is_share(current.instrument_id) and is_expected_forex_weekend_gap(
             previous.open_time + step,
             current.open_time,
-        )
+        ))
         for previous, current in zip(bars, bars[1:])
     ):
         return [issue]

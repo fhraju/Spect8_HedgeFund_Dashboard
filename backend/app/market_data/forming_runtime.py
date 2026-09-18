@@ -51,6 +51,11 @@ class FormingRuntimeMixin:
         previous = getattr(self, "_forming_entries", {})
         entries = {}
         for inst, child in self._children.items():
+            from .share_catalog import is_share
+            if is_share(inst):
+                from .share_forming import refresh_share_forming
+                entries.update(refresh_share_forming(self, inst, child, now, previous))
+                continue
             authority = self.authority_for(inst)
             batch = getattr(child, "_forming_batch", None)
             raw_by_tf = (
@@ -237,7 +242,8 @@ class FormingRuntimeMixin:
                 end = datetime.fromisoformat(
                     entry["source_bar_end"].replace("Z", "+00:00")
                 )
-                if source > as_of or as_of >= end or as_of - source > PARTIAL_MAX_AGE:
+                maximum_age = timedelta(seconds=entry.get("max_age_seconds", PARTIAL_MAX_AGE.total_seconds()))
+                if source > as_of or as_of >= end or as_of - source > maximum_age:
                     entry.update(
                         state="STALE",
                         reason="Partial expired; waiting for fresh source data",
@@ -246,11 +252,12 @@ class FormingRuntimeMixin:
                     signals.extend(saved["signals"])
             candidates.append(entry)
         ready = sum(c["state"] == "READY" for c in candidates)
+        supported = [c for c in candidates if c["state"] != "UNSUPPORTED"]
         return {
             "forming": signals,
             "forming_candidates": candidates,
             "forming_state": "READY"
-            if candidates and ready == len(candidates)
+            if supported and ready == len(supported)
             else "DEGRADED"
             if ready
             else "NOT_READY",

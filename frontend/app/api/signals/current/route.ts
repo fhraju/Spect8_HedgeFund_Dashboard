@@ -11,5 +11,8 @@ export async function GET() {
     cache: "no-store",
   });
   const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
+  return NextResponse.json(data, { status: res.status, headers: {
+    "X-Spect8-Response-Time": new Date().toISOString(),
+    "Cache-Control": "no-store",
+  } });
 }

@@ -410,7 +410,7 @@ class CanonicalInstrumentRegistry:
         orders = [item.registry_order for item in self._instruments]
         if len(orders) != len(set(orders)):
             raise ValueError("duplicate registry order")
-        if len(self.enabled()) > 30:
+        if len(tuple(i for i in self.enabled() if i.instrument_kind is not InstrumentKind.SHARE_SPREADBET)) > 30:
             raise ValueError("at most 30 instruments may be enabled")
 
     def all(self) -> tuple[CanonicalInstrument, ...]:

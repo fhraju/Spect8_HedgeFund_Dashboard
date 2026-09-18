@@ -59,12 +59,12 @@ def _session_date_for_close(as_of_h1_close: datetime) -> date:
     return local.date() + timedelta(days=1)
 
 
-def _approved(bar: Bar, timeframe: Timeframe) -> bool:
+def _approved(bar: Bar, timeframe: Timeframe, share_contract=None) -> bool:
     return (
         bar.timeframe is timeframe
         and bar.is_complete
         and bar.quality_status == "VALID"
-        and bar.construction_profile_version in {PROFILE_ID, US_ETF_PROFILE_ID}
+        and bar.construction_profile_version in ({share_contract.profile_id} if share_contract else {PROFILE_ID, US_ETF_PROFILE_ID})
         and not bar.synthetic
         and not bar.forward_filled
     )
@@ -79,7 +79,11 @@ class CurrentDailyCandleBuilder:
         as_of_h1_close: datetime,
         h1_bars: Sequence[Bar],
         sparse_actual_h1: bool = False,
+        share_contract=None,
     ) -> CurrentPartialDailyCandle:
+        if share_contract is not None:
+            from ..market_data.share_profile import share_partial_filter
+            return share_partial_filter(share_contract, Timeframe.D1, provider, instrument, as_of_h1_close, h1_bars)
         if as_of_h1_close.tzinfo is None:
             raise ValueError("as_of_h1_close must be timezone-aware")
         session_date = _session_date_for_close(as_of_h1_close)
@@ -103,9 +107,13 @@ class CurrentDailyCandleBuilder:
             raise DailyFilterUnavailableError(
                 "NO_COMPLETED_H1_IN_CURRENT_DAILY_SESSION"
             )
-        if not sparse_actual_h1 and candidates[0].open_time != session_open:
+        from ..market_data.ig_forex_calendar import valid_coverage
+        calendar_coverage = valid_coverage(provider, candidates, session_open, as_of_h1_close) if not sparse_actual_h1 else None
+        if calendar_coverage is False:
+            raise DailyFilterUnavailableError("CURRENT_D1_UNEXPECTED_H1_GAP")
+        if calendar_coverage is None and not sparse_actual_h1 and candidates[0].open_time != session_open:
             raise DailyFilterUnavailableError("CURRENT_D1_MISSING_INITIAL_H1")
-        if any(
+        if calendar_coverage is None and any(
             current.open_time != previous.close_time
             for previous, current in zip(candidates, candidates[1:])
         ):
@@ -152,6 +160,7 @@ def build_daily_filter_snapshot(
     h1_bars: Sequence[Bar],
     completed_d1_bars: Sequence[Bar],
     sparse_actual_h1: bool = False,
+    share_contract=None,
 ) -> DailyFilterSnapshot:
     partial = CurrentDailyCandleBuilder().build(
         provider=provider,
@@ -159,13 +168,14 @@ def build_daily_filter_snapshot(
         as_of_h1_close=as_of_h1_close,
         h1_bars=h1_bars,
         sparse_actual_h1=sparse_actual_h1,
+        share_contract=share_contract,
     )
     eligible = tuple(
         bar
         for bar in completed_d1_bars
         if bar.provider == provider
         and bar.instrument_id == instrument
-        and _approved(bar, Timeframe.D1)
+        and _approved(bar, Timeframe.D1, share_contract)
         and bar.close_time <= partial.session_open_utc
     )
     if len(eligible) < ATR_PERIOD + 1:
@@ -204,7 +214,7 @@ def build_daily_filter_snapshot(
         ]
     )
     identity = {
-        "profile": PROFILE_ID,
+        "profile": share_contract.profile_id if share_contract else PROFILE_ID,
         "strategy": CURRENT_D1_FILTER_V2,
         "provider": provider,
         "instrument": instrument,
@@ -216,7 +226,7 @@ def build_daily_filter_snapshot(
     return DailyFilterSnapshot(
         snapshot_id=snapshot_id,
         strategy_version=CURRENT_D1_FILTER_V2,
-        canonical_profile_version=PROFILE_ID,
+        canonical_profile_version=share_contract.profile_id if share_contract else PROFILE_ID,
         provider=provider,
         instrument=instrument,
         evaluation_time_utc=as_of_h1_close,

@@ -1,20 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { CurrentSignals, FilterMode } from "@/lib/api-types";
 import { signalTotals } from "@/lib/signal-totals";
 
-export function SignalSummary({ data, mode, instrumentIds, failed = false }: {
+export function SignalSummary({ data, mode, instrumentIds, failed = false, now }: {
   data: CurrentSignals | null;
   mode: FilterMode;
   instrumentIds: string[];
   failed?: boolean;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  // Share the scanner's receipt/tick clock so cards and counts expire together.
   const totals = signalTotals(data, mode, instrumentIds, now, failed);
   const label = mode === "MICRO" ? "Micro · M30 + H1" : "Macro · H1 + H4";
   return <>

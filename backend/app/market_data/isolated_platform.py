@@ -28,6 +28,8 @@ from .platform_authority import (
     _live_streaming_readiness,
 )
 from .recovery_projection import RecoveryProjectionMixin
+from .share_catalog import is_share
+from .share_profile import SHARE_LIMITS, contract_from_status, share_readiness
 
 LOGGER = logging.getLogger(__name__)
 
@@ -136,6 +138,12 @@ class InstrumentProjection(RecoveryProjectionMixin):
             )
             db.commit()
 
+    def completed_candidates(self):
+        with closing(self.repository._connect()) as db:
+            return {(r["mode"], r["timeframe"]): r["close_time"] for r in db.execute(
+                "SELECT mode,timeframe,MAX(close_time) AS close_time FROM platform_pending_evaluations "
+                "WHERE scope=? AND state='DONE' GROUP BY mode,timeframe", (self.scope,))}
+
     def pending(self):
         with closing(self.repository._connect()) as db:
             return [
@@ -232,12 +240,25 @@ class IsolatedPlatformAuthorityRuntime(
                 projection = child._repository
                 try:
                     gateway = self.gateway_for(inst)
+                    share_contract = None
+                    if is_share(inst):
+                        collection = self._collection_status(inst)
+                        share_contract = contract_from_status(inst, collection)
+                        child._share_contract = share_contract
+                        from .registry import CanonicalInstrumentRegistry
+                        for owner in (child, self):
+                            owner.registry = CanonicalInstrumentRegistry(tuple(
+                                replace(item, price_precision=share_contract.precision,
+                                        display_name=share_contract.name + " · " + share_contract.provider_id.replace("_", " ") + " spread betting",
+                                        validation_status="PLATFORM_CONTRACT_VALIDATED") if item.instrument_id == inst else item
+                                for item in owner.registry.all()))
+                    limits = SHARE_LIMITS if share_contract else SPECT8_PLATFORM_REPLAY_LIMITS
                     state = projection.platform_integration_state()
                     history_batch = gateway.read(
                         (platform_instrument_id(inst),),
                         available_as_of=now,
                         after_canonical_bar_id=None,
-                        limits=SPECT8_PLATFORM_REPLAY_LIMITS,
+                        limits=limits,
                     )
                     batch = history_batch
                     if state:
@@ -245,7 +266,7 @@ class IsolatedPlatformAuthorityRuntime(
                             (platform_instrument_id(inst),),
                             available_as_of=now,
                             after_canonical_bar_id=state["watermark_canonical_bar_id"],
-                            limits=SPECT8_PLATFORM_REPLAY_LIMITS,
+                            limits=limits,
                         )
                         bars = {
                             b.canonical_bar_id: b
@@ -265,8 +286,16 @@ class IsolatedPlatformAuthorityRuntime(
                         for b in batch.bars
                     ):
                         raise ValueError("source authority mismatch")
+                    if share_contract:
+                        from hedgefund_market_data.providers.ig.share_contract import ShareNormalizationManifest
+                        checksum = ShareNormalizationManifest(share_contract).checksum()
+                        def share_batch(value):
+                            return replace(value,
+                                bars=tuple(b for b in value.bars if b.policy_id == f"{share_contract.profile_id}_{b.timeframe}_{b.price_type}"),
+                                native_bootstrap_bars=tuple(b for b in value.native_bootstrap_bars if b.normalization_manifest_checksum == checksum))
+                        history_batch, batch = share_batch(history_batch), share_batch(batch)
                     child._forming_batch = batch
-                    history = build_platform_history(history_batch, inst)
+                    history = build_platform_history(history_batch, inst, share_contract=share_contract)
                     child._current_histories = {inst: history}
                     child._current_partials = {
                         (inst, s.timeframe): s
@@ -286,6 +315,9 @@ class IsolatedPlatformAuthorityRuntime(
                         as_of=now,
                         stale_after_seconds=self._stale_after_seconds,
                     )
+                    share_fresh = False
+                    if share_contract:
+                        share_fresh, child._live_readiness = share_readiness(history, share_contract, now)
                     live.update(child._live_readiness["live_instruments"])
                     self._current_partials.update(child._current_partials)
                     self._current_histories[inst] = history
@@ -341,6 +373,8 @@ class IsolatedPlatformAuthorityRuntime(
                         now
                     ) - latest <= timedelta(seconds=self._stale_after_seconds)
                     child._connection_state = "HEALTHY"
+                    if share_contract:
+                        fresh = share_fresh
                     child._freshness_state = "HEALTHY" if fresh else "STALE"
                     child._startup_replay_complete = True
                     child._startup_replay_report["complete"] = True
@@ -405,6 +439,14 @@ class IsolatedPlatformAuthorityRuntime(
                         "watermark_canonical_bar_id": processed.new_watermark,
                         "updated_at": now.isoformat(),
                     }
+                    if share_contract:
+                        from .share_profile import share_evaluation_status
+                        detail.update(share_evaluation_status(history, projection.completed_candidates(),
+                            pending, fresh=fresh, ready=child._historical_state == "READY"))
+                    else:
+                        from .evaluation_readiness import candidate_evaluation_status, forex_candidate_ready
+                        detail.update(candidate_evaluation_status(history, projection.completed_candidates(),
+                            pending, fresh=fresh, readiness=forex_candidate_ready))
                     self._instrument_status[inst] = detail
                     projection.incident(detail)
                 except Exception as error:  # noqa: BLE001 - isolate a failed instrument

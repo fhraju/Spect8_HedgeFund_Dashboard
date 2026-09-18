@@ -37,9 +37,21 @@ it("reports partial coverage and never invents zero for missing inputs",()=>{
  const d=data([],[forming()]);d.forming_candidates![1].state="STALE";expect(count(d)).toMatchObject({forming:1,formingNote:"Available data · 1/2 evaluations ready"});d.forming_candidates![0].state="WAITING_FOR_DATA";expect(count(d).forming).toBeNull();
 });
 it("ignores wrong-authority forming matches",()=>{expect(count(data([],[forming({authority:"IG_LIVE"})])).forming).toBe(0);});
+it("share forming uses M30 freshness and excludes unsupported M30 from readiness",()=>{
+ const d=data([], [forming({instrument:"SHARE_MSFT",instrument_id:"SHARE_MSFT",timeframe:"H1",source_as_of:"2026-09-10T04:30:00Z"})]);
+ d.forming_candidates = [
+  {authority:"IG_DEMO",instrument_id:"SHARE_MSFT",mode:"MICRO",timeframe:"M30",state:"UNSUPPORTED",supported:false,source_as_of:null,source_bar_end:null},
+  {authority:"IG_DEMO",instrument_id:"SHARE_MSFT",mode:"MICRO",timeframe:"H1",state:"READY",max_age_seconds:2100,source_as_of:"2026-09-10T04:30:00Z",source_bar_end:"2026-09-10T05:00:00Z"},
+ ];
+ expect(signalTotals(d,"MICRO",["SHARE_MSFT"],now)).toMatchObject({forming:1,formingNote:"Current provisional signals"});
+ d.as_of="2026-09-10T04:55:00Z";
+ expect(signalTotals(d,"MICRO",["SHARE_MSFT"],Date.parse(d.as_of)).forming).toBe(1);
+ d.as_of="2026-09-10T05:00:00Z";
+ expect(signalTotals(d,"MICRO",["SHARE_MSFT"],Date.parse(d.as_of)).forming).toBeNull();
+});
 it("renders existing card classes and separate mode totals",()=>{
  vi.useFakeTimers();vi.setSystemTime(now);const d=data([confirmed(),confirmed({mode:"MACRO",timeframe:"H1"}),confirmed({mode:"MACRO",timeframe:"H4"})],[forming()]);
- const micro=renderToStaticMarkup(<SignalSummary data={d} mode="MICRO" instrumentIds={['EUR_USD']}/>);
- const macro=renderToStaticMarkup(<SignalSummary data={d} mode="MACRO" instrumentIds={['EUR_USD']}/>);
+ const micro=renderToStaticMarkup(<SignalSummary data={d} mode="MICRO" instrumentIds={['EUR_USD']} now={now}/>);
+ const macro=renderToStaticMarkup(<SignalSummary data={d} mode="MACRO" instrumentIds={['EUR_USD']} now={now}/>);
  expect(micro).toContain('<b>1</b><small>Confirmed Signals</small>');expect(micro).toContain('<b>1</b><small>Forming Signals</small>');expect(macro).toContain('<b>2</b><small>Confirmed Signals</small>');expect(macro).toContain('Macro · H1 + H4');expect(micro).toContain('class="kpi"');
 });

@@ -417,6 +417,11 @@ def test_scanner_api_returns_enabled_typed_ordered_bootstrap_rows(
         "as_of_h1_close_time": None,
         "snapshot_id": None,
         "source": "WAITING",
+        "filter_freshness": "INCOMPLETE",
+        "stale_reason": "NO_FILTER_SNAPSHOT",
+        "latest_completed_h1": None,
+        "missing_h1_intervals": [],
+        "total_missing_h1_count": 0,
     } for item in rows)
     assert len(rows) == 29
     assert not {"QQQ_US_ETF", "IWM_US_ETF", "FEZ_US_ETF", "EWJ_US_ETF", "EEM_US_ETF", "DBA_US_ETF", "VIXM_US_ETF", "SPY_US_ETF"}.intersection(

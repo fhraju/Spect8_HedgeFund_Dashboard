@@ -1318,6 +1318,36 @@ class SQLiteProjectionRepository:
             connection.commit()
         return mode
 
+    def set_active_filter_mode_atomic(
+        self, mode: FilterMode, *, updated_at: datetime
+    ) -> tuple[FilterMode, bool]:
+        """Atomically read-compare-set active_filter_mode under one lock/transaction.
+        Returns (active_mode, changed) where changed is True only if a write occurred.
+        Required by the deployed filter-mode endpoint; kept alongside the
+        non-atomic setter so mixed-version callers keep working.
+        """
+        value = updated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT configuration_value FROM runtime_configuration WHERE configuration_key='active_filter_mode'"
+            ).fetchone()
+            current_val = row["configuration_value"] if row is not None else None
+            if current_val == mode.value:
+                connection.rollback()
+                return FilterMode(current_val) if current_val else mode, False
+            connection.execute(
+                """INSERT INTO runtime_configuration (
+                       configuration_key, configuration_value, updated_at
+                   ) VALUES ('active_filter_mode', ?, ?)
+                   ON CONFLICT(configuration_key) DO UPDATE SET
+                       configuration_value = excluded.configuration_value,
+                       updated_at = excluded.updated_at""",
+                (mode.value, value),
+            )
+            connection.commit()
+            return mode, True
+
     def latest_daily_filter_snapshot(
         self,
         provider: str,
@@ -2196,6 +2226,47 @@ class SQLiteProjectionRepository:
             for row in rows
             if row["close_time_utc"] is not None
         }
+
+    def existing_close_times(self, provider: str, instrument_id: str, timeframe: str) -> set[str]:
+        """Stored close timestamps for one series. Used by the deployed native
+        history bootstrap to skip already-present bars."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT close_time_utc FROM canonical_bars WHERE provider=? AND instrument_id=? AND timeframe=?",
+                (provider, instrument_id, timeframe),
+            ).fetchall()
+        return {row["close_time_utc"] for row in rows}
+
+    def existing_open_times(self, provider: str, instrument_id: str, timeframe: str) -> set[str]:
+        """Stored open timestamps for one series. See existing_close_times."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT open_time_utc FROM canonical_bars WHERE provider=? AND instrument_id=? AND timeframe=?",
+                (provider, instrument_id, timeframe),
+            ).fetchall()
+        return {row["open_time_utc"] for row in rows}
+
+    def present_h1_close_times(
+        self, provider_id: str, instrument_id: str
+    ) -> set[str]:
+        """VALID H1 close timestamps in the canonical projection.
+
+        Read-model lookup for filter-freshness diagnostics: the same bars the
+        evaluator was built from, so the diagnostic cannot contradict the
+        evaluation. Reads this repository's database (the synced projection
+        in production); never the retired fossil store.
+        """
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT close_time_utc
+                FROM canonical_bars
+                WHERE provider = ? AND instrument_id = ?
+                  AND timeframe = 'H1' AND quality_status = 'VALID'
+                """,
+                (provider_id, instrument_id),
+            ).fetchall()
+        return {row["close_time_utc"] for row in rows if row["close_time_utc"] is not None}
 
     def latest_evaluation_close(
         self,

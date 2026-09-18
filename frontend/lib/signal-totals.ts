@@ -13,7 +13,7 @@ export function signalTotals(
   const unavailable = { confirmed: null, forming: null, formingNote: "Waiting for updates" };
   if (!data) return { ...unavailable, formingNote: failed ? "Updates unavailable" : unavailable.formingNote };
   const responseTime = Date.parse(data.as_of);
-  if (failed || !Number.isFinite(responseTime) || now - responseTime > 30000) {
+  if (failed || !Number.isFinite(responseTime) || responseTime > now || now - responseTime > 30000) {
     return { ...unavailable, formingNote: "Updates unavailable" };
   }
   const instruments = new Set(instrumentIds);
@@ -28,17 +28,20 @@ export function signalTotals(
 
   const candidates = (data.forming_candidates ?? []).filter(c => eligible(c.instrument_id, c.mode, c.timeframe));
   const ready = candidates.filter(c => c.state === "READY" && c.source_as_of && c.source_bar_end &&
-    Date.parse(c.source_as_of) <= now && now - Date.parse(c.source_as_of) <= 600000 && Date.parse(c.source_bar_end) > now);
+    Date.parse(c.source_as_of) <= now && now - Date.parse(c.source_as_of) <= (c.max_age_seconds ?? 600) * 1000 && Date.parse(c.source_bar_end) > now);
   const forming = new Set(data.forming.filter(s => {
     const instrument = s.instrument_id ?? s.instrument;
     const sourceTime = Date.parse(s.source_as_of ?? s.formed_at);
     return eligible(instrument, s.mode, s.timeframe) && isDirection(s.direction) &&
       Date.parse(s.source_bar_start) <= now && Date.parse(s.source_bar_end) > now &&
-      sourceTime <= now && now - sourceTime <= 600000 &&
+      sourceTime <= now &&
       ready.some(c => c.instrument_id === instrument && c.timeframe === s.timeframe &&
+        now - sourceTime <= (c.max_age_seconds ?? 600) * 1000 &&
         (!s.authority || c.authority === s.authority));
   }).map(s => JSON.stringify([s.authority, s.instrument_id ?? s.instrument, s.mode, s.timeframe, s.source_bar_start, s.direction]))).size;
-  const expected = instruments.size * timeframes.size;
+  const unsupported = new Set(candidates.filter(c => c.state === "UNSUPPORTED" && c.supported === false)
+    .map(c => JSON.stringify([c.instrument_id, c.mode, c.timeframe]))).size;
+  const expected = instruments.size * timeframes.size - unsupported;
   return {
     confirmed,
     forming: ready.length || !expected ? forming : null,
