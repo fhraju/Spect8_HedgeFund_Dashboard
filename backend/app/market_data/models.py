@@ -41,6 +41,7 @@ class TimestampSemantics(StrEnum):
 
 
 class InstrumentKind(StrEnum):
+    SHARE_SPREADBET = "SHARE_SPREADBET"
     FOREX = "FOREX"
     SPOT_METAL = "SPOT_METAL"
     CRYPTO = "CRYPTO"
@@ -66,6 +67,7 @@ class ExposureCategory(StrEnum):
 
 
 class SessionProfileKind(StrEnum):
+    IG_SHARE_24H = "IG_SHARE_24H"
     FOREX_WEEKDAY = "FOREX_WEEKDAY"
     CRYPTO_FROZEN_WEEKEND = "CRYPTO_FROZEN_WEEKEND"
     US_EQUITY_REGULAR = "US_EQUITY_REGULAR"

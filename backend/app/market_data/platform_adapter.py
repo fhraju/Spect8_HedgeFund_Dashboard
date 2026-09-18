@@ -25,6 +25,7 @@ from .forex_profile import BrokerAlignedH4Aggregator
 from .partial_snapshot import CurrentBarSnapshot
 from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
 from .session_boundaries import NEW_YORK_SESSION_TIMEZONE
+from .share_catalog import SHARE_PLATFORM_IDS
 
 PLATFORM_PROVIDER_ID = "MARKET_DATA_PLATFORM"
 SPECT8_PRICE_TYPE = "BID"
@@ -50,9 +51,28 @@ SPECT8_PLATFORM_REPLAY_LIMITS: Mapping[str, int] = MappingProxyType(
 
 PLATFORM_TO_SPECT8_INSTRUMENT: Mapping[str, str] = MappingProxyType(
     {
+        **SHARE_PLATFORM_IDS,
+        "FX_AUD_USD": "AUD_USD",
         "FX_EUR_USD": "EUR_USD",
         "FX_GBP_USD": "GBP_USD",
+        "FX_NZD_USD": "NZD_USD",
+        "FX_USD_CAD": "USD_CAD",
+        "FX_USD_CHF": "USD_CHF",
         "FX_USD_JPY": "USD_JPY",
+        "FX_AUD_JPY": "AUD_JPY",
+        "FX_CAD_JPY": "CAD_JPY",
+        "FX_EUR_JPY": "EUR_JPY",
+        "FX_GBP_JPY": "GBP_JPY",
+        "FX_NZD_JPY": "NZD_JPY",
+        "FX_AUD_CAD": "AUD_CAD",
+        "FX_EUR_AUD": "EUR_AUD",
+        "FX_EUR_CAD": "EUR_CAD",
+        "FX_EUR_CHF": "EUR_CHF",
+        "FX_EUR_GBP": "EUR_GBP",
+        "FX_GBP_AUD": "GBP_AUD",
+        "FX_GBP_CAD": "GBP_CAD",
+        "FX_GBP_CHF": "GBP_CHF",
+        "FX_NZD_CAD": "NZD_CAD",
     }
 )
 SPECT8_TO_PLATFORM_INSTRUMENT: Mapping[str, str] = MappingProxyType(
@@ -169,6 +189,8 @@ class PlatformNativeBootstrapBar:
     observed_at: datetime
     raw_snapshot_time: str | None
     raw_snapshot_time_utc: str
+    normalization_manifest_checksum: str = ""
+    provider_metadata: dict | None = None
 
     def __post_init__(self) -> None:
         if self.timeframe not in {"H1", "D1", "W1"}:
@@ -410,9 +432,12 @@ def first_accepted_versions(
     )
 
 
-def to_spect8_bar(bar: PlatformCanonicalBar) -> Bar:
+def to_spect8_bar(bar: PlatformCanonicalBar, *, share_contract=None) -> Bar:
     """Translate a directly consumable canonical BID H1/D1 into Spect8."""
 
+    if bar.instrument_id in SHARE_PLATFORM_IDS:
+        from .share_profile import share_bar
+        return share_bar(bar, share_contract)
     if bar.price_type != SPECT8_PRICE_TYPE:
         raise PlatformAdapterError("Spect8 strategy input requires BID")
     if bar.quality_status != "VALID":
@@ -459,9 +484,12 @@ def to_spect8_bar(bar: PlatformCanonicalBar) -> Bar:
     )
 
 
-def to_spect8_native_bootstrap_bar(bar: PlatformNativeBootstrapBar) -> Bar:
+def to_spect8_native_bootstrap_bar(bar: PlatformNativeBootstrapBar, *, share_contract=None) -> Bar:
     """Translate isolated native warm-up evidence without claiming canonical semantics."""
 
+    if bar.instrument_id in SHARE_PLATFORM_IDS:
+        from .share_profile import share_bar
+        return share_bar(bar, share_contract, native=True)
     if bar.price_type != SPECT8_PRICE_TYPE:
         raise PlatformAdapterError("Spect8 native bootstrap input requires BID")
     instrument_id = spect8_instrument_id(bar.instrument_id)
@@ -566,7 +594,11 @@ class PlatformInstrumentHistory:
 def build_platform_history(
     batch: PlatformReadBatch,
     spect8_id: str,
+    *, share_contract=None,
 ) -> PlatformInstrumentHistory:
+    if share_contract is not None:
+        from .share_profile import share_history
+        return share_history(batch, spect8_id, share_contract)
     platform_id = platform_instrument_id(spect8_id)
     selected = tuple(
         bar

@@ -47,6 +47,7 @@ class CurrentBarSnapshot:
     source_provider_id: str = ""
     component_ids: tuple[str, ...] = ()
     provenance: str = ""
+    construction_profile_version: str = PROFILE_ID
 
     def __post_init__(self) -> None:
         if self.is_complete is not False:
@@ -87,7 +88,7 @@ class CurrentBarSnapshot:
             raw_close=str(self.close),
             synthetic=False,
             quality_status="VALID",
-            construction_profile_version=PROFILE_ID,
+            construction_profile_version=self.construction_profile_version,
             provider_adapter_version=self.provenance or "partial:v1",
             source_candle_ids=self.component_ids,
             forward_filled=False,

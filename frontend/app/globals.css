@@ -2388,6 +2388,7 @@ td:first-child span,
 .scanner-filter-buy_and_sell { color: #7864c8; }
 .scanner-filter-none,
 .scanner-filter-waiting { color: #718096; }
+.scanner-filter-stale { color: #b45309; background: rgba(180, 83, 9, 0.08); margin-left: 0.35rem; }
 
 .scanner-signal-badge {
   border: 2px solid transparent;
@@ -2776,4 +2777,87 @@ td:first-child span,
 
 .signal-card .signal-card-header {
   min-height: 22px;
+}
+
+@media (min-width: 1200px) {
+  .scanner-kpis { grid-template-columns: repeat(5, minmax(160px, 1fr)); }
+}
+
+/* Keep scanner fields within the viewport, including long recovery diagnostics. */
+.scanner-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+.scanner-table th,
+.scanner-table td {
+  min-width: 0;
+  padding: 0.9rem clamp(0.45rem, 0.8vw, 0.9rem);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.scanner-table th:nth-child(1) { width: 13%; }
+.scanner-table th:nth-child(2),
+.scanner-table th:nth-child(3) { width: 8%; }
+.scanner-table th:nth-child(4) { width: 15%; }
+.scanner-table th:nth-child(5),
+.scanner-table th:nth-child(6) { width: 12%; }
+.scanner-table th:nth-child(7) { width: 14%; }
+.scanner-table th:nth-child(8) { width: 18%; }
+.scanner-table td > *,
+.scanner-table .zoned-time,
+.scanner-table .collection-status,
+.scanner-table .signal-card > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.scanner-table .zoned-time,
+.scanner-table .scanner-chip,
+.scanner-table .scanner-filter-badge,
+.scanner-table .scanner-signal-badge,
+.scanner-table .scanner-source-badge,
+.scanner-table .scanner-proxy-badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.scanner-table .signal-card {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.scanner-table .signal-card-header { flex-wrap: wrap; }
+.scanner-table .signal-card-header > * { min-width: 0; max-width: 100%; }
+.scanner-table .scanner-error { max-width: 100%; }
+.scanner-filters label,
+.scanner-filters select { min-width: 0; max-width: 100%; }
+
+@media (max-width: 800px) {
+  .scanner-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .scanner-table,
+  .scanner-table tbody { display: block; width: 100%; }
+  .scanner-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem;
+  }
+  .scanner-table tbody tr:last-child { border-bottom: 0; }
+  .scanner-table td { display: block; height: auto; border: 0; padding: 0.65rem; }
+  .scanner-table td:first-child,
+  .scanner-table td:last-child { grid-column: 1 / -1; }
+  .scanner-table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
 }

@@ -26,5 +26,6 @@ export const config = {
     "/historical-replay/:path*",
     "/api/dashboard/:path*",
     "/api/historical-replays/:path*",
+    "/api/signals/:path*",
   ],
 };

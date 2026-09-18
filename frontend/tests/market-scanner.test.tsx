@@ -100,7 +100,8 @@ describe("multi-instrument market scanner", () => {
     expect(html).toContain("Provider rejected GBP/USD.");
     expect(html).toContain('<b>12</b><small>Markets Monitored</small>');
     expect(html).toContain('<b>1</b><small>Filtered Candidates</small>');
-    expect(html).toContain('<b>1</b><small>Confirmed Signals</small>');
+    expect(html).toContain('<b>—</b><small>Confirmed Signals</small>');
+    expect(html).toContain('<b>0</b><small>Forming Signals</small>');
     expect(html).toContain('<b>10/12</b><small>Healthy Feeds</small>');
     expect(html).toContain('aria-label="Home — Spect8 Strategy Intelligence" href="/"');
     expect(html).not.toContain(">Home</a>");
@@ -259,5 +260,85 @@ describe("multi-instrument market scanner", () => {
     expect(filterScannerRows([rows[0], spy], { ...common, exposure: "US_LARGE_CAP_EQUITY" })).toEqual([spy]);
     expect(filterScannerRows([rows[0], spy], { ...common, proxy: "PROXY" })).toEqual([spy]);
     expect(filterScannerRows([rows[0], spy], { ...common, proxy: "DIRECT" })).toEqual([rows[0]]);
+  });
+
+  it("marks stale and incomplete filters explicitly instead of presenting them as current", () => {
+    const staleUsdChf: ScannerInstrument = {
+      ...row("USD_CHF", 3),
+      data_status: "STALE",
+      provider_health: "STALE",
+      latest_completed_h1_timestamp: "2026-09-04T16:00:00Z",
+      current_filter: {
+        status: "BUY",
+        as_of_h1_close_time: "2026-09-03T21:00:00Z",
+        snapshot_id: "dfs_stale",
+        source: "COMPLETED_H1",
+        filter_freshness: "STALE",
+        stale_reason: "FILTER_BEHIND_LATEST_H1",
+        latest_completed_h1: "2026-09-04T16:00:00Z",
+        missing_h1_intervals: ["2026-09-03T22:00:00Z"],
+        total_missing_h1_count: 1,
+      },
+      latest_error_summary: "Filter snapshot is stale – FILTER_BEHIND_LATEST_H1.",
+    };
+    const incomplete: ScannerInstrument = {
+      ...row("NZD_JPY", 4),
+      current_filter: {
+        status: "WAITING",
+        as_of_h1_close_time: null,
+        snapshot_id: null,
+        source: "WAITING",
+        filter_freshness: "INCOMPLETE",
+        stale_reason: "NO_FILTER_SNAPSHOT",
+        latest_completed_h1: "2026-09-04T16:00:00Z",
+        missing_h1_intervals: [],
+        total_missing_h1_count: 0,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner snapshot={{ ...snapshot, data: { ...snapshot.data, instruments: [rows[0], staleUsdChf, incomplete] } }} />,
+    );
+    // Stale filter is visibly marked and never shown as a plain current value.
+    expect(html).toContain("STALE FILTER");
+    expect(html).toContain("FILTER_BEHIND_LATEST_H1");
+    expect(html).toContain("missing 1 H1 interval");
+    expect(html).toContain("NO_FILTER_SNAPSHOT");
+    // No dashboard error boundary from the freshness fields.
+    expect(html).not.toContain("Dashboard projection could not be loaded");
+    expect(html).toContain("Multi-instrument market scanner");
+    // Current rows keep the plain completed-H1 line without a stale chip.
+    expect(html).toContain("Completed H1");
+  });
+
+  it("keeps the IC Markets broker-time conversion for 21:00Z NY-close snapshots", () => {
+    const badge = renderToStaticMarkup(
+      <FilterBadge
+        status="BUY"
+        asOf="2026-09-03T21:00:00Z"
+        freshness="STALE"
+        staleReason="FILTER_BEHIND_LATEST_H1"
+        latestH1="2026-09-04T16:00:00Z"
+        missingIntervals={["2026-09-03T22:00:00Z"]}
+        totalMissing={1}
+      />,
+    );
+    expect(badge).toContain("STALE FILTER");
+    expect(badge).toContain("2026-09-03T21:00:00Z");
+  });
+
+  it("displays the truthful total when the interval list is display-bounded", () => {
+    const badge = renderToStaticMarkup(
+      <FilterBadge
+        status="BUY"
+        asOf="2026-09-11T21:00:00Z"
+        freshness="STALE"
+        staleReason="FILTER_BEHIND_LATEST_H1"
+        latestH1="2026-09-18T06:00:00Z"
+        missingIntervals={["2026-09-13T21:00:00Z", "2026-09-15T21:00:00Z"]}
+        totalMissing={2}
+      />,
+    );
+    expect(badge).toContain("missing 2 H1 intervals");
+    expect(badge).toContain("2026-09-13T21:00:00Z");
   });
 });

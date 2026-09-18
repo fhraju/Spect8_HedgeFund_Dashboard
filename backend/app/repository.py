@@ -260,10 +260,21 @@ class SQLiteProjectionRepository:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS platform_authority_state (
+                    authority TEXT PRIMARY KEY
+                        CHECK (authority IN ('IG_DEMO', 'IG_LIVE')),
+                    watermark_canonical_bar_id INTEGER NOT NULL
+                        CHECK (watermark_canonical_bar_id >= 0),
+                    instrument_master_checksum TEXT NOT NULL,
+                    session_calendar_checksum TEXT NOT NULL,
+                    timezone_data_version TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS platform_canonical_consumption (
                     logical_identity TEXT PRIMARY KEY,
                     immutable_identity TEXT NOT NULL UNIQUE,
-                    canonical_bar_id INTEGER NOT NULL UNIQUE
+                    canonical_bar_id INTEGER NOT NULL
                         CHECK (canonical_bar_id > 0),
                     platform_instrument_id TEXT NOT NULL,
                     spect8_instrument_id TEXT NOT NULL,
@@ -282,7 +293,8 @@ class SQLiteProjectionRepository:
 
                 CREATE TABLE IF NOT EXISTS platform_canonical_revisions (
                     revised_canonical_bar_id INTEGER PRIMARY KEY
-                        CHECK (revised_canonical_bar_id > 0),
+                        CHECK (revised_canonical_bar_id > 0) -- uniqueness per DB, but multi-DB offset not needed as revisions are rare
+                        ,
                     logical_identity TEXT NOT NULL,
                     first_canonical_bar_id INTEGER NOT NULL,
                     revised_version_number INTEGER NOT NULL
@@ -721,6 +733,77 @@ class SQLiteProjectionRepository:
                     "low": bar.raw_low,
                     "close": bar.raw_close,
                 }
+                # Canonical precedence: exact native fallback authority only
+                _NATIVE_FALLBACK_VERSIONS = {
+                    "NATIVE_IG_HISTORICAL_BOOTSTRAP:native-ig-v1",
+                    "TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP:native-ig-v1",
+                }
+                incoming_is_native = bar.provider_adapter_version in _NATIVE_FALLBACK_VERSIONS
+                existing = connection.execute(
+                    """
+                    SELECT provider_adapter_version, open, high, low, close
+                    FROM canonical_bars
+                    WHERE provider = ? AND instrument_id = ? AND timeframe = ? AND close_time_utc = ?
+                    """,
+                    (
+                        bar.provider,
+                        bar.instrument_id,
+                        bar.timeframe.value,
+                        value["close_time"],
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    existing_is_native = str(existing["provider_adapter_version"]) in _NATIVE_FALLBACK_VERSIONS
+                    if not incoming_is_native and existing_is_native:
+                        # Canonical arrives after native fallback -> upgrade native to canonical
+                        cursor = connection.execute(
+                            """
+                            UPDATE canonical_bars SET
+                                open_time_utc = ?, raw_open_time = ?, raw_close_time = ?,
+                                raw_provider_symbol = ?, session_timezone = ?, open = ?, high = ?, low = ?,
+                                close = ?, volume = ?, raw_evidence_json = ?, synthetic = ?,
+                                quality_status = ?, construction_profile_version = ?,
+                                provider_adapter_version = ?, source_timeframe = ?,
+                                source_candle_ids_json = ?, forward_filled = ?,
+                                expected_closure_before = ?, ingestion_run_id = ?, created_at = ?,
+                                session_identifier = ?, session_open_broker_time = ?, session_close_broker_time = ?
+                            WHERE provider = ? AND instrument_id = ? AND timeframe = ? AND close_time_utc = ?
+                            """,
+                            (
+                                value["open_time"],
+                                bar.raw_open_time or value["open_time"],
+                                bar.raw_close_time or value["close_time"],
+                                bar.raw_provider_symbol or bar.instrument_id,
+                                bar.session_timezone,
+                                str(bar.open),
+                                str(bar.high),
+                                str(bar.low),
+                                str(bar.close),
+                                str(bar.volume) if bar.volume is not None else None,
+                                json.dumps(raw_evidence, sort_keys=True),
+                                int(bar.synthetic),
+                                bar.quality_status,
+                                bar.construction_profile_version,
+                                bar.provider_adapter_version,
+                                bar.source_timeframe.value if bar.source_timeframe else None,
+                                json.dumps(bar.source_candle_ids),
+                                int(bar.forward_filled),
+                                int(bar.expected_closure_before),
+                                bar.ingestion_run_id,
+                                value["created_at"] or value["close_time"],
+                                bar.session_identifier,
+                                bar.session_open_broker_time,
+                                bar.session_close_broker_time,
+                                bar.provider,
+                                bar.instrument_id,
+                                bar.timeframe.value,
+                                value["close_time"],
+                            ),
+                        )
+                        inserted += max(cursor.rowcount, 0)
+                        continue
+                    # Otherwise preserve existing authority: canonical stays, native duplicate is idempotent
+                    continue
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO canonical_bars (
@@ -1156,6 +1239,68 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
 
+    # Multi-authority watermarks (deterministic per IG_DEMO / IG_LIVE)
+    def platform_authority_state(self, authority: str) -> dict[str, Any] | None:
+        if authority not in {"IG_DEMO", "IG_LIVE"}:
+            raise ValueError(f"Unknown authority {authority}")
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT authority, watermark_canonical_bar_id,
+                          instrument_master_checksum,
+                          session_calendar_checksum, timezone_data_version,
+                          updated_at
+                   FROM platform_authority_state
+                   WHERE authority = ?""",
+                (authority,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def advance_platform_authority_watermark(
+        self,
+        *,
+        authority: str,
+        watermark_canonical_bar_id: int,
+        instrument_master_checksum: str,
+        session_calendar_checksum: str,
+        timezone_data_version: str,
+        updated_at: datetime,
+    ) -> None:
+        if authority not in {"IG_DEMO", "IG_LIVE"}:
+            raise ValueError(f"Unknown authority {authority}")
+        if watermark_canonical_bar_id < 0:
+            raise ValueError("Platform watermark cannot be negative")
+        meta = (
+            instrument_master_checksum,
+            session_calendar_checksum,
+            timezone_data_version,
+        )
+        if any(not value for value in meta):
+            raise ValueError("Platform authority metadata must be non-empty")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT watermark_canonical_bar_id
+                   FROM platform_authority_state WHERE authority = ?""",
+                (authority,),
+            ).fetchone()
+            if row is not None and watermark_canonical_bar_id < int(row["watermark_canonical_bar_id"]):
+                raise ValueError("Platform authority watermark cannot move backwards")
+            connection.execute(
+                """INSERT INTO platform_authority_state (
+                       authority, watermark_canonical_bar_id,
+                       instrument_master_checksum, session_calendar_checksum,
+                       timezone_data_version, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(authority) DO UPDATE SET
+                       watermark_canonical_bar_id = excluded.watermark_canonical_bar_id,
+                       instrument_master_checksum = excluded.instrument_master_checksum,
+                       session_calendar_checksum = excluded.session_calendar_checksum,
+                       timezone_data_version = excluded.timezone_data_version,
+                       updated_at = excluded.updated_at""",
+                (authority, watermark_canonical_bar_id, *meta, _exact_value(updated_at)),
+            )
+            connection.commit()
+
     def set_active_filter_mode(
         self, mode: FilterMode, *, updated_at: datetime
     ) -> FilterMode:
@@ -1172,6 +1317,36 @@ class SQLiteProjectionRepository:
             )
             connection.commit()
         return mode
+
+    def set_active_filter_mode_atomic(
+        self, mode: FilterMode, *, updated_at: datetime
+    ) -> tuple[FilterMode, bool]:
+        """Atomically read-compare-set active_filter_mode under one lock/transaction.
+        Returns (active_mode, changed) where changed is True only if a write occurred.
+        Required by the deployed filter-mode endpoint; kept alongside the
+        non-atomic setter so mixed-version callers keep working.
+        """
+        value = updated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT configuration_value FROM runtime_configuration WHERE configuration_key='active_filter_mode'"
+            ).fetchone()
+            current_val = row["configuration_value"] if row is not None else None
+            if current_val == mode.value:
+                connection.rollback()
+                return FilterMode(current_val) if current_val else mode, False
+            connection.execute(
+                """INSERT INTO runtime_configuration (
+                       configuration_key, configuration_value, updated_at
+                   ) VALUES ('active_filter_mode', ?, ?)
+                   ON CONFLICT(configuration_key) DO UPDATE SET
+                       configuration_value = excluded.configuration_value,
+                       updated_at = excluded.updated_at""",
+                (mode.value, value),
+            )
+            connection.commit()
+            return mode, True
 
     def latest_daily_filter_snapshot(
         self,
@@ -2051,6 +2226,47 @@ class SQLiteProjectionRepository:
             for row in rows
             if row["close_time_utc"] is not None
         }
+
+    def existing_close_times(self, provider: str, instrument_id: str, timeframe: str) -> set[str]:
+        """Stored close timestamps for one series. Used by the deployed native
+        history bootstrap to skip already-present bars."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT close_time_utc FROM canonical_bars WHERE provider=? AND instrument_id=? AND timeframe=?",
+                (provider, instrument_id, timeframe),
+            ).fetchall()
+        return {row["close_time_utc"] for row in rows}
+
+    def existing_open_times(self, provider: str, instrument_id: str, timeframe: str) -> set[str]:
+        """Stored open timestamps for one series. See existing_close_times."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT open_time_utc FROM canonical_bars WHERE provider=? AND instrument_id=? AND timeframe=?",
+                (provider, instrument_id, timeframe),
+            ).fetchall()
+        return {row["open_time_utc"] for row in rows}
+
+    def present_h1_close_times(
+        self, provider_id: str, instrument_id: str
+    ) -> set[str]:
+        """VALID H1 close timestamps in the canonical projection.
+
+        Read-model lookup for filter-freshness diagnostics: the same bars the
+        evaluator was built from, so the diagnostic cannot contradict the
+        evaluation. Reads this repository's database (the synced projection
+        in production); never the retired fossil store.
+        """
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT close_time_utc
+                FROM canonical_bars
+                WHERE provider = ? AND instrument_id = ?
+                  AND timeframe = 'H1' AND quality_status = 'VALID'
+                """,
+                (provider_id, instrument_id),
+            ).fetchall()
+        return {row["close_time_utc"] for row in rows if row["close_time_utc"] is not None}
 
     def latest_evaluation_close(
         self,

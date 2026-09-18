@@ -10,6 +10,7 @@ interface SignalCardProps {
   timeframe: "M30" | "H1" | "H4";
   signal: CurrentSignals["forming"][0] | CurrentSignals["confirmed"][0];
   isForming: boolean;
+  showSource?: boolean;
 }
 
 function modeColor(mode: string): string {
@@ -38,6 +39,7 @@ export function SignalCard({
   timeframe,
   signal,
   isForming,
+  showSource = false,
 }: SignalCardProps) {
   const direction = signal.direction;
   const isConfirmed = !isForming;
@@ -70,6 +72,9 @@ export function SignalCard({
           </span>
         )}
       </div>
+      {showSource && isForming && "source_as_of" in signal && (
+        <small>Bar <ZonedTimestamp value={signal.source_bar_start} /> – <ZonedTimestamp value={signal.source_bar_end} /> · Source <ZonedTimestamp value={signal.source_as_of ?? signal.formed_at} /></small>
+      )}
     </div>
   );
 }

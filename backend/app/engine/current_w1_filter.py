@@ -120,6 +120,10 @@ def _has_valid_forex_coverage(
 ) -> bool:
     if not members:
         return False
+    from ..market_data.ig_forex_calendar import valid_coverage
+    coverage = valid_coverage(members[0].provider, members, start, end)
+    if coverage is not None:
+        return coverage
     start_date = start.astimezone(NEW_YORK).date()
     expected_first = new_york_session_close(start_date + timedelta(days=2))
     return (
@@ -143,7 +147,11 @@ class CurrentWeeklyCandleBuilder:
         as_of_h1_close: datetime,
         h1_bars: Sequence[Bar],
         sparse_actual_h1: bool = False,
+        share_contract=None,
     ) -> CurrentPartialWeeklyCandle:
+        if share_contract is not None:
+            from ..market_data.share_profile import share_partial_filter
+            return share_partial_filter(share_contract, Timeframe.W1, provider, instrument, as_of_h1_close, h1_bars)
         if as_of_h1_close.tzinfo is None:
             raise ValueError("as_of_h1_close must be timezone-aware")
         close_date, session_open, session_close = active_new_york_weekly_session(
@@ -163,7 +171,11 @@ class CurrentWeeklyCandleBuilder:
             )
         if candidates[-1].close_time != as_of_h1_close:
             raise WeeklyFilterUnavailableError("CURRENT_W1_MISSING_LATEST_H1")
-        if not sparse_actual_h1:
+        from ..market_data.ig_forex_calendar import valid_coverage
+        coverage = valid_coverage(provider, candidates, session_open, as_of_h1_close) if not sparse_actual_h1 else None
+        if coverage is False:
+            raise WeeklyFilterUnavailableError("CURRENT_W1_UNEXPECTED_H1_GAP")
+        if not sparse_actual_h1 and coverage is None:
             expected_first = new_york_session_close(
                 session_open.astimezone(NEW_YORK).date() + timedelta(days=2)
             )
@@ -277,6 +289,7 @@ def _temporary_completed_weekly_candles(
     instrument: str,
     active_session_open: datetime,
     completed_w1_bars: Sequence[Bar],
+    share_contract=None,
 ) -> tuple[CompletedWeeklyCandle, ...]:
     """Accept only explicitly tagged native IG W1 bootstrap evidence."""
 
@@ -297,6 +310,11 @@ def _temporary_completed_weekly_candles(
             raise WeeklyFilterUnavailableError(
                 "INVALID_TEMPORARY_NATIVE_W1_BOOTSTRAP"
             )
+        if share_contract is not None:
+            from hedgefund_market_data.domain import Timeframe as PlatformTimeframe
+            if (bar.construction_profile_version != share_contract.profile_id or
+                    share_contract.bucket(bar.open_time, PlatformTimeframe.W1) != (bar.open_time, bar.close_time)):
+                raise WeeklyFilterUnavailableError("SHARE_W1_PROFILE_MISMATCH")
         provenance_kinds.add(
             TEMPORARY_NATIVE_IG_FILTER_BOOTSTRAP in bar.provider_adapter_version
         )
@@ -314,7 +332,7 @@ def _temporary_completed_weekly_candles(
                 source_h1_ids=(source_id,),
             )
         )
-    if len(provenance_kinds) > 1:
+    if len(provenance_kinds) > 1 and share_contract is None:
         raise WeeklyFilterUnavailableError("MIXED_CANONICAL_AND_TEMPORARY_W1")
     return tuple(sorted(selected, key=lambda bar: bar.close_time))
 
@@ -327,6 +345,7 @@ def build_w1_filter_snapshot(
     h1_bars: Sequence[Bar],
     sparse_actual_h1: bool = False,
     completed_w1_bars: Sequence[Bar] | None = None,
+    share_contract=None,
 ) -> WeeklyFilterSnapshot:
     partial = CurrentWeeklyCandleBuilder().build(
         provider=provider,
@@ -334,6 +353,7 @@ def build_w1_filter_snapshot(
         as_of_h1_close=as_of_h1_close,
         h1_bars=h1_bars,
         sparse_actual_h1=sparse_actual_h1,
+        share_contract=share_contract,
     )
     completed = (
         _temporary_completed_weekly_candles(
@@ -341,6 +361,7 @@ def build_w1_filter_snapshot(
             instrument=instrument,
             active_session_open=partial.session_open_utc,
             completed_w1_bars=completed_w1_bars,
+            share_contract=share_contract,
         )
         if completed_w1_bars is not None
         else derive_completed_weekly_candles(
@@ -385,7 +406,7 @@ def build_w1_filter_snapshot(
         ]
     )
     identity = {
-        "profile": PROFILE_ID,
+        "profile": share_contract.profile_id if share_contract else PROFILE_ID,
         "strategy": CURRENT_W1_FILTER_V1,
         "provider": provider,
         "instrument": instrument,
@@ -397,7 +418,7 @@ def build_w1_filter_snapshot(
         snapshot_id=f"wfs_{_digest(identity)}",
         filter_mode=FilterMode.MACRO,
         strategy_version=CURRENT_W1_FILTER_V1,
-        canonical_profile_version=PROFILE_ID,
+        canonical_profile_version=share_contract.profile_id if share_contract else PROFILE_ID,
         provider=provider,
         instrument=instrument,
         evaluation_time_utc=as_of_h1_close,

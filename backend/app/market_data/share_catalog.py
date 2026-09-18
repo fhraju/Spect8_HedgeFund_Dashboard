@@ -1,0 +1,42 @@
+"""Approved dashboard share identities; collection stays in the data platform."""
+
+LIVE_SHARES = ("AAPL", "AMD", "AMZN", "ARM", "ASML", "AVGO", "BAC", "BRK.B", "CSCO", "CVX",
+               "DIS", "FDX", "GE", "GM", "GME", "GOOG", "INTC", "JNJ", "JPM", "META")
+DEMO_SHARES = ("MSFT", "MSTR", "NFLX", "NKE", "PFE", "PLTR", "QCOM", "RTX", "SNOW", "SPCX", "TSLA", "WMT", "ZM")
+SHARE_AUTHORITIES = {"SHARE_" + symbol.replace(".", "_"): "IG_" + env
+                     for env, symbols in (("LIVE", LIVE_SHARES), ("DEMO", DEMO_SHARES)) for symbol in symbols}
+SHARE_PLATFORM_IDS = {("SHARE_CFD_AAPL" if symbol == "AAPL" else "SHARE_SPREADBET_" + symbol.replace(".", "_")):
+                      "SHARE_" + symbol.replace(".", "_") for symbol in (*LIVE_SHARES, *DEMO_SHARES)}
+SHARE_SYMBOLS = {"SHARE_" + s.replace(".", "_"): s for s in (*LIVE_SHARES, *DEMO_SHARES)}
+
+
+def is_share(instrument):
+    return instrument in SHARE_AUTHORITIES
+
+
+def platform_instruments(instrument_ids):
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ..domain import Timeframe
+    from .models import ExposureCategory, InstrumentKind, SessionProfileKind
+    from .registry import twelve_data_instruments
+    regular = tuple(i for i in instrument_ids if not is_share(i))
+    existing = twelve_data_instruments(regular or ("EUR_USD",))
+    result = [i for i in existing if i.instrument_id in regular]
+    template = next(i for i in existing if i.instrument_id == "EUR_USD")
+    for index, inst in enumerate(SHARE_AUTHORITIES, start=100):
+        if inst not in instrument_ids:
+            continue
+        symbol = SHARE_SYMBOLS[inst]
+        result.append(replace(template, instrument_id=inst, display_symbol=symbol,
+            display_name=f"{symbol} · {SHARE_AUTHORITIES[inst].replace('_', ' ')} spread betting",
+            provider_id="MARKET_DATA_PLATFORM", provider_symbol=SHARE_AUTHORITIES[inst] + ":" + symbol,
+            asset_class="SHARE_SPREADBET", point_size=Decimal("0.01"), price_precision=None,
+            quote_currency="USD", profit_currency="USD", enabled=True, polling_enabled=False,
+            registry_order=index, validation_status="AWAITING_PLATFORM_VALIDATION",
+            instrument_kind=InstrumentKind.SHARE_SPREADBET, exposure_category=ExposureCategory.US_LARGE_CAP_EQUITY,
+            session_profile=SessionProfileKind.IG_SHARE_24H,
+            candle_boundary_convention="IG share calendar; completed M30 REST",
+            available_timeframes=(Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1)))
+    return tuple(result)

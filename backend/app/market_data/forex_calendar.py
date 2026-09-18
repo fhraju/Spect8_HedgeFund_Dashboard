@@ -47,6 +47,11 @@ class ForexMarketCalendar:
         )
 
     def is_expected_closure(self, previous: Bar, current: Bar) -> bool:
+        from .ig_forex_calendar import expected_opens
+        if previous.provider == current.provider and previous.close_time < current.open_time:
+            expected = expected_opens(current.provider, previous.close_time, current.open_time)
+            if expected is not None:
+                return not expected
         return (
             self.is_expected_weekend_closure(previous, current)
             or self.configured_closure(previous.close_time, current.open_time)

@@ -307,6 +307,7 @@ export type DashboardData = {
     timeframes: string[];
     price_precision: number;
     synthetic: boolean;
+    provider_environment?: string | null;
   };
   latest_candles: {
     H1: string | null;
@@ -329,7 +330,7 @@ export type DashboardData = {
 
 export type DashboardSnapshot = {
   synthetic: boolean;
-  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
+  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER" | "MARKET_DATA_PLATFORM";
   notice: string;
   data: DashboardData;
 };
@@ -342,6 +343,8 @@ export type ScannerTimeframe = {
 };
 
 export type ScannerInstrument = {
+  collection?: import("@/components/collection-status").CollectionHealth | null;
+  evaluation_freshness?: string | null;
   instrument_id: string;
   display_symbol: string;
   display_name: string;
@@ -350,6 +353,7 @@ export type ScannerInstrument = {
   polling_enabled?: boolean;
   provider_symbol: string;
   provider?: string;
+  provider_environment?: string | null;
   exchange?: string | null;
   mic_code?: string | null;
   provider_instrument_type?: string | null;
@@ -372,6 +376,11 @@ export type ScannerInstrument = {
     as_of_h1_close_time: string | null;
     snapshot_id: string | null;
     source: "COMPLETED_H1" | "WAITING";
+    filter_freshness?: "CURRENT" | "STALE" | "INCOMPLETE";
+    stale_reason?: string | null;
+    latest_completed_h1?: string | null;
+    missing_h1_intervals?: string[];
+    total_missing_h1_count?: number | null;
   };
   H1: ScannerTimeframe;
   H4: ScannerTimeframe;
@@ -381,7 +390,7 @@ export type ScannerInstrument = {
 
 export type ScannerSnapshot = {
   synthetic: boolean;
-  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER";
+  source: "REPLAY_MARKET_DATA_PROVIDER" | "TWELVE_DATA_PROVIDER" | "MARKET_DATA_PLATFORM";
   notice: string;
   data: {
     generated_at: string;
@@ -426,6 +435,9 @@ export type ConfirmedSignal = {
 
 export type FormingSignal = {
   instrument: string;
+  instrument_id?: string;
+  authority?: string;
+  source_as_of?: string;
   mode: string;
   timeframe: string;
   direction: string;
@@ -442,6 +454,20 @@ export type CurrentSignals = {
   confirmed: ConfirmedSignal[];
   forming: FormingSignal[];
   as_of: string;
+  forming_candidates?: {
+    authority: string;
+    instrument_id: string;
+    mode: string;
+    timeframe: string;
+    state: string;
+    source_as_of: string | null;
+    source_bar_end: string | null;
+    reason?: string | null;
+    supported?: boolean;
+    max_age_seconds?: number;
+    account_type?: string;
+    cadence_seconds?: number;
+  }[];
 };
 
 export type HistorySignals = {

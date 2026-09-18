@@ -38,6 +38,13 @@ ADDITIONAL_FOREX_INSTRUMENT_IDS = (
     "USD_CHF",
 )
 
+# Client FX universe extensions beyond the 29-default (not in DEFAULT_ENABLED to respect 30-limit).
+CLIENT_FX_ADDITIONAL_IDS = (
+    "AUD_JPY",
+    "CAD_JPY",
+    "GBP_CHF",
+)
+
 PHASE3C1_ENABLED_INSTRUMENT_IDS = BASELINE_ENABLED_INSTRUMENT_IDS + (
     "BTC_USD",
     "ETH_USD",
@@ -102,6 +109,7 @@ ALL_INSTRUMENT_IDS = (
     TARGET_INSTRUMENT_IDS
     + LEGACY_DIRECT_MARKET_IDS
     + ADDITIONAL_FOREX_INSTRUMENT_IDS
+    + CLIENT_FX_ADDITIONAL_IDS
 )
 
 # The 2026-08-06 controlled live report validated 12 ETF listings. TLT remains
@@ -308,6 +316,9 @@ _INSTRUMENT_SPECS = (
     _forex("NZD_JPY", "NZD/JPY", "New Zealand Dollar / Japanese Yen", "0.001", 3, "JPY"),
     _forex("AUD_NZD", "AUD/NZD", "Australian Dollar / New Zealand Dollar", "0.00001", 5, "NZD"),
     _forex("USD_CHF", "USD/CHF", "US Dollar / Swiss Franc", "0.00001", 5, "CHF"),
+    _forex("AUD_JPY", "AUD/JPY", "Australian Dollar / Japanese Yen", "0.001", 3, "JPY"),
+    _forex("CAD_JPY", "CAD/JPY", "Canadian Dollar / Japanese Yen", "0.001", 3, "JPY"),
+    _forex("GBP_CHF", "GBP/CHF", "British Pound / Swiss Franc", "0.00001", 5, "CHF"),
 )
 
 
@@ -399,7 +410,7 @@ class CanonicalInstrumentRegistry:
         orders = [item.registry_order for item in self._instruments]
         if len(orders) != len(set(orders)):
             raise ValueError("duplicate registry order")
-        if len(self.enabled()) > 30:
+        if len(tuple(i for i in self.enabled() if i.instrument_kind is not InstrumentKind.SHARE_SPREADBET)) > 30:
             raise ValueError("at most 30 instruments may be enabled")
 
     def all(self) -> tuple[CanonicalInstrument, ...]:

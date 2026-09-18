@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 
 import { createSessionToken, SESSION_COOKIE } from "@/lib/crypto-auth";
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -31,11 +31,19 @@ describe("server-only protection and strategy boundary", () => {
     const replayApi = proxy(
       new NextRequest("http://localhost/api/historical-replays"),
     );
+    const currentSignalsApi = proxy(
+      new NextRequest("http://localhost/api/signals/current"),
+    );
+    const signalsHistoryApi = proxy(
+      new NextRequest("http://localhost/api/signals/history"),
+    );
     expect(page.status).toBe(307);
     expect(page.headers.get("location")).toBe("http://localhost/login");
     expect(api.status).toBe(401);
     expect(replayPage.status).toBe(307);
     expect(replayApi.status).toBe(401);
+    expect(currentSignalsApi.status).toBe(401);
+    expect(signalsHistoryApi.status).toBe(401);
   });
 
   it("allows a correctly signed session through the proxy", () => {
@@ -46,6 +54,16 @@ describe("server-only protection and strategy boundary", () => {
       headers: { cookie: `${SESSION_COOKIE}=${token}` },
     });
     expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
+    for (const path of ["/api/signals/current", "/api/signals/history"]) {
+      const apiRequest = new NextRequest(`http://localhost${path}`, {
+        headers: { cookie: `${SESSION_COOKIE}=${token}` },
+      });
+      expect(proxy(apiRequest).headers.get("x-middleware-next")).toBe("1");
+    }
+  });
+
+  it("runs signals API requests through the existing session proxy", () => {
+    expect(config.matcher).toContain("/api/signals/:path*");
   });
 
   it("protects both the dashboard page and browser-facing API routes", () => {

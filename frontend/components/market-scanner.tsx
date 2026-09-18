@@ -7,13 +7,16 @@ import type {
   ScannerTimeframe,
 } from "@/lib/api-types";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { SignalClock } from "@/lib/signal-clock";
 
+import { CollectionStatus } from "./collection-status";
 import { FilterModeSelector } from "./filter-mode-selector";
 import { LogoutButton } from "./logout-button";
 import { RefreshButton } from "./refresh-button";
 import { ZonedTimestamp } from "./zoned-timestamp";
 import { SignalCard, SignalCardFallback } from "./signal-card";
+import { SignalSummary } from "./signal-summary";
 
 export type ScannerFilters = {
   asset: string;
@@ -45,22 +48,52 @@ export function FilterBadge({
   status,
   asOf,
   timeframe = "D1",
+  freshness,
+  staleReason,
+  latestH1,
+  missingIntervals,
+  totalMissing,
 }: {
   status: string;
   asOf?: string | null;
   timeframe?: "D1" | "W1";
+  freshness?: "CURRENT" | "STALE" | "INCOMPLETE";
+  staleReason?: string | null;
+  latestH1?: string | null;
+  missingIntervals?: string[];
+  totalMissing?: number | null;
 }) {
   const label = filterLabels[status] ?? status.replaceAll("_", " ");
+  const isStale = freshness === "STALE" || freshness === "INCOMPLETE";
   const title = asOf
-    ? `Current ${timeframe} Filter · completed H1 snapshot at ${asOf}`
-    : `Filter = ${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility`;
+    ? `Current ${timeframe} Filter · completed H1 snapshot at ${asOf}${isStale ? ` · STALE (${staleReason ?? freshness}) · latest completed H1 ${latestH1 ?? "unknown"}` : ""}`
+    : `Filter = ${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility${isStale ? ` · ${staleReason ?? freshness}` : ""}`;
+  const shownTotal = totalMissing ?? missingIntervals?.length ?? 0;
   return (
-    <span
-      aria-label={`${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility filter: ${label}`}
-      className={`scanner-filter-badge scanner-filter-${status.toLowerCase()}`}
-      title={title}
-    >
-      {label}
+    <span>
+      <span
+        aria-label={`${timeframe === "D1" ? "Daily" : "Weekly"} market eligibility filter: ${label}`}
+        className={`scanner-filter-badge scanner-filter-${status.toLowerCase()}`}
+        title={title}
+      >
+        {label}
+      </span>
+      {isStale && (
+        <span
+          role="status"
+          aria-label={`${timeframe} filter stale: ${staleReason ?? freshness}`}
+          className="scanner-filter-badge scanner-filter-stale"
+          title={title}
+        >
+          STALE FILTER
+        </span>
+      )}
+      {isStale && asOf && latestH1 && shownTotal > 0 && missingIntervals && missingIntervals.length > 0 && (
+        <div className="scanner-filter-time">
+          Filter as of <ZonedTimestamp value={asOf} /> · latest H1 <ZonedTimestamp value={latestH1} />
+          <span> · missing {shownTotal} H1 interval{shownTotal === 1 ? "" : "s"} (oldest {missingIntervals[0]})</span>
+        </div>
+      )}
     </span>
   );
 }
@@ -141,16 +174,29 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const [confirmed, setConfirmed] = useState("ALL");
   const [health, setHealth] = useState("ALL");
   const [liveSignals, setLiveSignals] = useState<CurrentSignals | null>(null);
+  const [signalsFailed, setSignalsFailed] = useState(false);
+  const signalClock = useRef(new SignalClock());
+  const [signalNow, setSignalNow] = useState(Number.NaN);
+  useEffect(() => {
+    const timer = setInterval(() => setSignalNow(signalClock.current.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchLive() {
       try {
         const res = await fetch("/api/signals/current", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error("Signals unavailable");
         const json = await res.json();
-        if (!cancelled) setLiveSignals(json.data as CurrentSignals);
-      } catch {}
+        if (!Array.isArray(json.data?.confirmed) || !Array.isArray(json.data?.forming)) throw new Error("Invalid signals response");
+        if (!cancelled) {
+          // Use the proxy's clock for both cards and totals, never device UTC.
+          setSignalNow(signalClock.current.receive(res.headers.get("X-Spect8-Response-Time")));
+          setLiveSignals(json.data as CurrentSignals);
+          setSignalsFailed(false);
+        }
+      } catch { if (!cancelled) setSignalsFailed(true); }
     }
     fetchLive();
     const id = setInterval(fetchLive, 5000);
@@ -175,12 +221,18 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     [asset, confirmed, exposure, health, kind, match, proxy, snapshot.data.instruments],
   );
 
+  const responseTime = Date.parse(liveSignals?.as_of ?? "");
+  const signalsUnavailable = signalsFailed || !liveSignals || !Number.isFinite(responseTime) || responseTime > signalNow || signalNow - responseTime > 30000;
+
   function getLiveSignal(instrumentId: string, timeframe: string) {
-    if (!liveSignals) return null;
+    if (!liveSignals || signalsUnavailable) return null;
     const mode = activeFilterMode;
-    const confirmed = liveSignals.confirmed.find((s) => s.instrument_id === instrumentId && s.mode === mode && s.timeframe === timeframe);
+    const confirmed = liveSignals.confirmed.find((s) => s.instrument_id === instrumentId && s.mode === mode && s.timeframe === timeframe && Date.parse(s.visible_until) > signalNow);
     if (confirmed) return { direction: confirmed.direction, state: "CONFIRMED" as const, signal: confirmed };
-    const forming = liveSignals.forming.find((s) => s.instrument === instrumentId && s.mode === mode && s.timeframe === timeframe);
+    const candidate = liveSignals.forming_candidates?.find(c => c.instrument_id === instrumentId && c.mode === mode && c.timeframe === timeframe);
+    const forming = liveSignals.forming.find((s) => (s.instrument_id ?? s.instrument) === instrumentId && s.mode === mode && s.timeframe === timeframe &&
+      Date.parse(s.source_bar_start) <= signalNow && Date.parse(s.source_as_of ?? s.formed_at) <= signalNow &&
+      Date.parse(s.source_bar_end) > signalNow && signalNow - Date.parse(s.source_as_of ?? s.formed_at) <= (candidate?.max_age_seconds ?? 600) * 1000);
     if (forming) return { direction: forming.direction, state: "FORMING" as const, signal: forming };
     return null;
   }
@@ -191,11 +243,6 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const monitored = snapshot.data.instruments.length;
   const filteredCandidates = snapshot.data.instruments.filter(
     (row) => !["NONE", "WAITING"].includes(row.current_filter.status),
-  ).length;
-  const confirmedSignals = snapshot.data.instruments.filter((row) =>
-    [row.H1.signal_status, row.H4.signal_status].some(
-      (status) => !["NONE", "WAITING"].includes(status),
-    ),
   ).length;
   const healthy = monitored - unhealthy;
   const assetClasses = Array.from(
@@ -208,7 +255,9 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     new Set(snapshot.data.instruments.map((row) => row.exposure_category).filter(Boolean)),
   );
   const creditBudget = snapshot.data.credit_budget;
-  const creditSummary = creditBudget
+  const creditSummary = snapshot.data.instruments.some((row) => row.collection)
+    ? " · Collection and evaluation freshness shown per instrument"
+    : creditBudget
     ? ` · ${creditBudget.estimated_operational_remaining} app operational credits · ${creditBudget.estimated_total_remaining} estimated provider-day credits remaining`
     : "";
 
@@ -252,11 +301,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
             <span><b>{filteredCandidates}</b><small>Filtered Candidates</small></span>
             <em>Eligible on H1 or H4</em>
           </article>
-          <article className="kpi">
-            <span className="kpi-icon green">◉</span>
-            <span><b>{confirmedSignals}</b><small>Confirmed Signals</small></span>
-            <em>Confirmed on H1 or H4</em>
-          </article>
+          <SignalSummary data={liveSignals} mode={activeFilterMode} instrumentIds={snapshot.data.instruments.map(row => row.instrument_id)} failed={signalsFailed} now={signalNow} />
           <article className="kpi">
             <span className="kpi-icon cyan">◇</span>
             <span><b>{healthy}/{monitored}</b><small>Healthy Feeds</small></span>
@@ -282,8 +327,8 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                 const latest = row.latest_completed_h1_timestamp;
                 return (
                   <tr key={row.instrument_id}>
-                    <td>
-                      {row.polling_enabled === false ? (
+                    <td data-label="Instrument">
+                      {row.polling_enabled === false && row.asset_class !== "SHARE_SPREADBET" ? (
                         <span className="scanner-unavailable-instrument" title="Provider data unavailable; this instrument is not polled.">
                           <strong>{row.display_symbol}</strong>
                           <small>{row.display_name}</small>
@@ -292,31 +337,38 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                         <Link href={`/instruments/${row.instrument_id}`}><strong>{row.display_symbol}</strong>{row.is_proxy && <span className="scanner-proxy-badge" title="Signals use this ETF price series, not the direct underlying market.">ETF PROXY</span>}<small>{row.display_name}</small></Link>
                       )}
                     </td>
-                    <td><span>{(row.exposure_category ?? row.asset_class).replaceAll("_", " ")}</span>{row.underlying_description && <small title={row.underlying_description}>{row.underlying_description}</small>}</td>
-                    <td>{(row.instrument_kind ?? row.asset_class).replaceAll("_", " ")}</td>
-                    <td className="scanner-current-filter"><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} timeframe={filterTimeframe} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
+                    <td data-label="Exposure"><span>{(row.exposure_category ?? row.asset_class).replaceAll("_", " ")}</span>{row.underlying_description && <small title={row.underlying_description}>{row.underlying_description}</small>}</td>
+                    <td data-label="Type">{(row.instrument_kind ?? row.asset_class).replaceAll("_", " ")}</td>
+                    <td className="scanner-current-filter" data-label={`Current ${filterTimeframe} Filter`}><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} timeframe={filterTimeframe} freshness={row.current_filter.filter_freshness} staleReason={row.current_filter.stale_reason} latestH1={row.current_filter.latest_completed_h1} missingIntervals={row.current_filter.missing_h1_intervals} totalMissing={row.current_filter.total_missing_h1_count} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
                     {timeframes.map((tf) => {
                       const live = getLiveSignal(row.instrument_id, tf);
                       if (live) {
                         const isForming = live.state === "FORMING";
                         return (
-                          <td key={tf}>
+                          <td key={tf} data-label={`${tf} Signal`}>
                             <SignalCard
                               instrument={row.instrument_id}
                               mode={activeFilterMode}
                               timeframe={tf}
                               signal={live.signal}
                               isForming={isForming}
+                              showSource={row.asset_class === "SHARE_SPREADBET"}
                             />
                           </td>
                         );
                       }
                       // Fallback to legacy H1/H4 status for non-live timeframes (should not happen for M30)
+                      if (row.asset_class === "SHARE_SPREADBET") {
+                        const candidate = liveSignals?.forming_candidates?.find(c => c.instrument_id === row.instrument_id && c.mode === activeFilterMode && c.timeframe === tf);
+                        const unavailable = signalsUnavailable;
+                        const state = unavailable ? "STALE" : candidate?.state ?? "WAITING FOR DATA";
+                        return <td key={tf} data-label={`${tf} Signal`}>{state === "READY" && <SignalCardFallback status="NONE" />}<small title={candidate?.reason ?? undefined}>{state === "READY" ? "No forming signal" : state.replaceAll("_", " ")}</small>{candidate?.reason && <small>{candidate.reason}</small>}</td>;
+                      }
                       const legacy = tf === "M30" ? "NONE" : row[tf as "H1" | "H4"]?.signal_status ?? "NONE";
-                      return <td key={tf}><SignalCardFallback status={legacy} /></td>;
+                      return <td key={tf} data-label={`${tf} Signal`}><SignalCardFallback status={legacy} /></td>;
                     })}
-                    <td>{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
-                    <td>{healthBadge(row.data_status)}<small>{row.provider ?? snapshot.source}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
+                    <td data-label="Latest completed bar">{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
+                    <td data-label="Provider / Data status">{healthBadge(row.data_status)}<CollectionStatus value={row.collection} freshness={row.evaluation_freshness} /><small>{row.provider ?? snapshot.source}{row.provider_environment ? ` · ${row.provider_environment.replaceAll("_", " ")}` : ""}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.provider_environment && <span className="scanner-source-badge" title={`Market data source: ${row.provider_environment}`}>[{row.provider_environment.replaceAll("_", " ")}]</span>}{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
                   </tr>
                 );
               })}
