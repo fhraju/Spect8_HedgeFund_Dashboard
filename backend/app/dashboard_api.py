@@ -505,6 +505,16 @@ def scanner_snapshot(
                     bool(latest_filter.get("sell_matched")),
                 )
             latest_h1_raw = latest.get("H1") if latest else None
+            dependency_valid = None
+            dependency_reason = None
+            if instrument.asset_class == "SHARE_SPREADBET":
+                dependency_valid, dependency_reason = _filter_dependency_valid(
+                    repository,
+                    instrument.provider_id,
+                    instrument.instrument_id,
+                    active_mode,
+                    _parse_utc(latest_filter.get("as_of_h1_close_time_utc")),
+                )
             try:
                 freshness, stale_reason, missing_intervals, total_missing = _filter_freshness(
                     repository,
@@ -512,6 +522,8 @@ def scanner_snapshot(
                     instrument.instrument_id,
                     latest_filter.get("as_of_h1_close_time_utc"),
                     latest_h1_raw,
+                    dependency_valid=dependency_valid,
+                    dependency_reason=dependency_reason,
                 )
             except Exception:  # noqa: BLE001 - diagnostic must stay informational only
                 freshness, stale_reason, missing_intervals, total_missing = (
@@ -838,6 +850,53 @@ def _expected_trading_h1_opens(provider_id: str, start: datetime, end: datetime)
         return None
 
 
+def _filter_dependency_valid(
+    repository: SQLiteProjectionRepository,
+    provider_id: str,
+    instrument_id: str,
+    mode: FilterMode,
+    as_of: datetime | None,
+) -> tuple[bool | None, str | None]:
+    """Whether the filter's required dependency window is currently contiguous.
+
+    Filter validity is independent of the filter's own H1 timestamp: a filter
+    can be timestamp-current while its required daily/weekly dependency context
+    has an unexpected hole. This reads the same canonical projection the
+    evaluator reads and applies the frozen continuity rule (consecutive
+    intervals must abut; an ``expected_closure_before`` bar is the only allowed
+    gap). Returns ``(None, None)`` when the projection cannot be inspected so a
+    diagnostic failure degrades to "unknown" rather than a false CURRENT.
+    """
+    required = ("W1", "D1") if mode is FilterMode.MACRO else ("D1",)
+    reader = getattr(repository, "canonical_bar_objects", None)
+    if not callable(reader) or as_of is None:
+        return (None, None)
+    try:
+        for timeframe in required:
+            bars = tuple(
+                sorted(
+                    (
+                        bar
+                        for bar in reader(provider_id, instrument_id, timeframe)
+                        if bar.quality_status == "VALID"
+                        and not bar.synthetic
+                        and not bar.forward_filled
+                        and bar.close_time <= as_of
+                    ),
+                    key=lambda bar: bar.open_time,
+                )
+            )
+            if len(bars) < 2 or any(
+                current.open_time != previous.close_time
+                and not current.expected_closure_before
+                for previous, current in zip(bars, bars[1:])
+            ):
+                return (False, f"FILTER_DEPENDENCY_{timeframe}_INCOMPLETE")
+        return (True, None)
+    except Exception:  # noqa: BLE001 - freshness must stay best-effort
+        return (None, None)
+
+
 def _filter_freshness(
     repository: SQLiteProjectionRepository,
     provider_id: str,
@@ -846,6 +905,8 @@ def _filter_freshness(
     latest_h1_close_time: object,
     *,
     display_limit: int = 32,
+    dependency_valid: bool | None = None,
+    dependency_reason: str | None = None,
 ) -> tuple[
     Literal["CURRENT", "STALE", "INCOMPLETE"], str | None, list[str], int | None
 ]:
@@ -856,8 +917,11 @@ def _filter_freshness(
     the total is truthful and calendar-aware (weekend closures are never
     counted). Reads the same canonical projection the evaluator reads, so
     the diagnostic can neither contradict the evaluation nor consult the
-    retired fossil store. Never raises: lookup failures degrade to an
-    unknown total instead of letting a stale filter look current.
+    retired fossil store. A matching H1 timestamp is not sufficient for
+    CURRENT: when the filter's required dependency window is known to be
+    incomplete the filter is reported STALE instead of advertising health.
+    Never raises: lookup failures degrade to an unknown total instead of
+    letting a stale filter look current.
     """
     as_of = _parse_utc(as_of_h1_close_time)
     latest_h1 = _parse_utc(latest_h1_close_time)
@@ -866,6 +930,13 @@ def _filter_freshness(
     if latest_h1 is None:
         return ("INCOMPLETE", "NO_COMPLETED_H1", [], 0)
     if as_of == latest_h1:
+        if dependency_valid is False:
+            return (
+                "STALE",
+                dependency_reason or "FILTER_DEPENDENCY_INCOMPLETE",
+                [],
+                0,
+            )
         return ("CURRENT", None, [], 0)
     if as_of > latest_h1:
         return ("STALE", "FILTER_AHEAD_OF_LATEST_H1", [], 0)

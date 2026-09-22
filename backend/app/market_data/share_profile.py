@@ -134,9 +134,12 @@ def prepare_share_history(child, batch, history):
     m30 = mark_closures(tuple(share_bar(b, c) for b in history.m30), c)
     child._repository.persist_canonical_bars((*m30, *history.h1, *history.h4))
     # Native D1/W1 remain explicit filter bootstrap inputs; they do not pretend
-    # to be platform canonical data in the dashboard projection.
-    canonical_filters = tuple(share_bar(b, c) for b in batch.bars if b.price_type == "BID"
-                              and b.timeframe in {"D1", "W1"})
+    # to be platform canonical data in the dashboard projection. Expected
+    # closures are marked exactly as the filter builder marks them, so the
+    # persisted dependency series is a truthful continuity reference.
+    canonical_filters = mark_closures(tuple(share_bar(b, c) for b in batch.bars
+                                            if b.price_type == "BID"
+                                            and b.timeframe in {"D1", "W1"}), c)
     child._repository.persist_canonical_bars(canonical_filters)
     candidates = []
     for tf, bars, modes in ((Timeframe.M30, m30, (FilterMode.MICRO,)),
