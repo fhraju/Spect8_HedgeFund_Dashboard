@@ -3,11 +3,43 @@
 LIVE_SHARES = ("AAPL", "AMD", "AMZN", "ARM", "ASML", "AVGO", "BAC", "BRK.B", "CSCO", "CVX",
                "DIS", "FDX", "GE", "GM", "GME", "GOOG", "INTC", "JNJ", "JPM", "META")
 DEMO_SHARES = ("MSFT", "MSTR", "NFLX", "NKE", "PFE", "PLTR", "QCOM", "RTX", "SNOW", "SPCX", "TSLA", "WMT", "ZM")
+
+# Persisted platform IDs that predate the generic account-type naming. This is
+# explicit configuration data, never a per-symbol runtime branch: onboarding a
+# new share uses the generic derivation below and needs no code change.
+LEGACY_PLATFORM_IDS = {"AAPL": "SHARE_CFD_AAPL"}
+
+
+def share_platform_id(symbol):
+    """Generic persisted platform instrument ID for an approved share symbol."""
+    legacy = LEGACY_PLATFORM_IDS.get(symbol)
+    return legacy if legacy is not None else "SHARE_SPREADBET_" + symbol.replace(".", "_")
+
+
 SHARE_AUTHORITIES = {"SHARE_" + symbol.replace(".", "_"): "IG_" + env
                      for env, symbols in (("LIVE", LIVE_SHARES), ("DEMO", DEMO_SHARES)) for symbol in symbols}
-SHARE_PLATFORM_IDS = {("SHARE_CFD_AAPL" if symbol == "AAPL" else "SHARE_SPREADBET_" + symbol.replace(".", "_")):
-                      "SHARE_" + symbol.replace(".", "_") for symbol in (*LIVE_SHARES, *DEMO_SHARES)}
+SHARE_PLATFORM_IDS = {share_platform_id(symbol): "SHARE_" + symbol.replace(".", "_")
+                      for symbol in (*LIVE_SHARES, *DEMO_SHARES)}
 SHARE_SYMBOLS = {"SHARE_" + s.replace(".", "_"): s for s in (*LIVE_SHARES, *DEMO_SHARES)}
+
+
+def register_share(symbol, environment):
+    """Register an approved compatible share as configuration, not a code branch.
+
+    The frontend renders rows dynamically, so a newly approved share only needs
+    its identity/environment supplied here (mirroring the platform authority).
+    """
+    if environment not in {"LIVE", "DEMO"}:
+        raise ValueError("unsupported share environment")
+    instrument = "SHARE_" + symbol.replace(".", "_")
+    authority = "IG_" + environment
+    existing = SHARE_AUTHORITIES.get(instrument)
+    if existing is not None and existing != authority:
+        raise ValueError("share symbol already registered with different authority")
+    SHARE_AUTHORITIES[instrument] = authority
+    SHARE_PLATFORM_IDS[share_platform_id(symbol)] = instrument
+    SHARE_SYMBOLS[instrument] = symbol
+    return instrument
 
 
 def is_share(instrument):

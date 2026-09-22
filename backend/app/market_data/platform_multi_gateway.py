@@ -15,6 +15,7 @@ from .platform_adapter import (
     PlatformCanonicalReadGateway,
     PlatformReadBatch,
 )
+from .share_catalog import SHARE_AUTHORITIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,9 +40,10 @@ class PlatformMultiGateway:
                     raise ValueError(
                         f"Duplicate instrument assignment {inst}: {seen[inst]} and {auth}"
                     )
-                if INSTRUMENT_AUTHORITY_MAP.get(inst) != auth:
+                expected = INSTRUMENT_AUTHORITY_MAP.get(inst) or SHARE_AUTHORITIES.get(inst)
+                if expected != auth:
                     raise ValueError(
-                        f"Instrument {inst} assigned to {auth} but authority map expects {INSTRUMENT_AUTHORITY_MAP.get(inst)}"
+                        f"Instrument {inst} assigned to {auth} but authority map expects {expected}"
                     )
                 seen[inst] = auth
         # Ensure all gateway instruments are subset of approved map

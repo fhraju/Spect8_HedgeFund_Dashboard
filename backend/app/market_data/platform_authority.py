@@ -124,6 +124,7 @@ class PlatformAuthorityRuntime:
     ) -> None:
         if not instrument_ids or any(
             item not in APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS
+            and item not in SHARE_AUTHORITIES
             for item in instrument_ids
         ):
             raise ValueError(
@@ -1260,7 +1261,9 @@ class UnifiedPlatformAuthorityRuntime:
         signal_lifecycle: SignalLifecycleService | None = None,
     ) -> None:
         if not instrument_ids or any(
-            item not in APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS for item in instrument_ids
+            item not in APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS
+            and item not in SHARE_AUTHORITIES
+            for item in instrument_ids
         ):
             raise ValueError("Platform authority instruments must be an approved subset")
         # validate mapping

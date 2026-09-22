@@ -70,6 +70,25 @@ def _approved(bar: Bar, timeframe: Timeframe, share_contract=None) -> bool:
     )
 
 
+def _require_dependency_continuity(bars: Sequence[Bar], issue: str) -> None:
+    """Fail closed when the completed dependency window has an unexpected hole.
+
+    A Filter must never advertise VALID when its required D1 dependency context
+    is incomplete. This mirrors the frozen signal-continuity rule for shares
+    (``_missing_issue``): consecutive intervals must abut exactly, and an
+    ``expected_closure_before`` bar is the only permitted gap. No filter
+    arithmetic changes. Only explicit share contracts are gated so the legacy
+    FX/ETF paths keep their existing behaviour.
+    """
+    ordered = tuple(sorted(bars, key=lambda bar: bar.open_time))
+    if any(
+        current.open_time != previous.close_time
+        and not current.expected_closure_before
+        for previous, current in zip(ordered, ordered[1:])
+    ):
+        raise DailyFilterUnavailableError(issue)
+
+
 class CurrentDailyCandleBuilder:
     def build(
         self,
@@ -178,6 +197,17 @@ def build_daily_filter_snapshot(
         and _approved(bar, Timeframe.D1, share_contract)
         and bar.close_time <= partial.session_open_utc
     )
+    if share_contract is not None:
+        _require_dependency_continuity(
+            (
+                bar
+                for bar in completed_d1_bars
+                if bar.provider == provider
+                and bar.instrument_id == instrument
+                and _approved(bar, Timeframe.D1, share_contract)
+            ),
+            "MISSING_DAILY_CANDLE",
+        )
     if len(eligible) < ATR_PERIOD + 1:
         raise DailyFilterUnavailableError("INSUFFICIENT_COMPLETED_D1_FOR_ATR5")
     previous = eligible[-1]

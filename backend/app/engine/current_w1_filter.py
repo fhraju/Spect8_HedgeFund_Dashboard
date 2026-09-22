@@ -33,6 +33,23 @@ class WeeklyFilterUnavailableError(ValueError):
     """Raised when canonical H1 inputs cannot produce a weekly snapshot."""
 
 
+def _require_share_dependency_continuity(bars: Sequence[Bar], issue: str) -> None:
+    """Fail closed when the completed W1 dependency window has an unexpected hole.
+
+    Mirrors the frozen share signal-continuity rule: consecutive weekly
+    intervals must abut exactly, and an ``expected_closure_before`` bar is the
+    only permitted gap. No filter arithmetic changes; only explicit share
+    contracts are gated so legacy FX/ETF paths keep their behaviour.
+    """
+    ordered = tuple(sorted(bars, key=lambda bar: bar.open_time))
+    if any(
+        current.open_time != previous.close_time
+        and not current.expected_closure_before
+        for previous, current in zip(ordered, ordered[1:])
+    ):
+        raise WeeklyFilterUnavailableError(issue)
+
+
 @dataclass(frozen=True, slots=True)
 class CompletedWeeklyCandle:
     candle_id: str
@@ -372,6 +389,22 @@ def build_w1_filter_snapshot(
             sparse_actual_h1=sparse_actual_h1,
         )
     )
+    if share_contract is not None and completed_w1_bars is not None:
+        _require_share_dependency_continuity(
+            (
+                bar
+                for bar in completed_w1_bars
+                if bar.timeframe is Timeframe.W1
+                and bar.provider == provider
+                and bar.instrument_id == instrument
+                and bar.is_complete
+                and bar.quality_status == "VALID"
+                and bar.construction_profile_version == share_contract.profile_id
+                and not bar.synthetic
+                and not bar.forward_filled
+            ),
+            "MISSING_WEEKLY_CANDLE",
+        )
     if len(completed) < ATR_PERIOD + 1:
         raise WeeklyFilterUnavailableError("INSUFFICIENT_COMPLETED_W1_FOR_ATR5")
     previous = completed[-1]

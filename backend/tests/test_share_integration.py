@@ -84,6 +84,68 @@ def test_share_history_filters_and_partial_prefix_are_calendar_bound():
         forming_snapshot(c, "SHARE_MSFT", Timeframe.H4, history.m30[:-2] + history.m30[-1:], NOW)
 
 
+def test_micro_filter_is_not_valid_when_daily_dependency_has_an_unexpected_hole():
+    from backend.app.engine.current_daily_filter import (
+        DailyFilterUnavailableError,
+        build_daily_filter_snapshot,
+    )
+
+    c, batch = source()
+    history = share_history(batch, "SHARE_MSFT", c)
+    healthy = build_daily_filter_snapshot(
+        provider="MARKET_DATA_PLATFORM",
+        instrument="SHARE_MSFT",
+        as_of_h1_close=history.h1[-1].close_time,
+        h1_bars=history.h1,
+        completed_d1_bars=history.d1,
+        share_contract=c,
+    )
+    assert healthy.data_quality_status == "VALID"
+
+    index = len(history.d1) // 2
+    holed = history.d1[:index] + history.d1[index + 1 :]
+    with pytest.raises(DailyFilterUnavailableError, match="MISSING_DAILY_CANDLE"):
+        build_daily_filter_snapshot(
+            provider="MARKET_DATA_PLATFORM",
+            instrument="SHARE_MSFT",
+            as_of_h1_close=history.h1[-1].close_time,
+            h1_bars=history.h1,
+            completed_d1_bars=holed,
+            share_contract=c,
+        )
+
+
+def test_macro_filter_is_not_valid_when_weekly_dependency_has_an_unexpected_hole():
+    from backend.app.engine.current_w1_filter import (
+        WeeklyFilterUnavailableError,
+        build_w1_filter_snapshot,
+    )
+
+    c, batch = source()
+    history = share_history(batch, "SHARE_MSFT", c)
+    healthy = build_w1_filter_snapshot(
+        provider="MARKET_DATA_PLATFORM",
+        instrument="SHARE_MSFT",
+        as_of_h1_close=history.h1[-1].close_time,
+        h1_bars=history.h1,
+        completed_w1_bars=history.w1,
+        share_contract=c,
+    )
+    assert healthy.data_quality_status == "VALID"
+
+    index = len(history.w1) // 2
+    holed = history.w1[:index] + history.w1[index + 1 :]
+    with pytest.raises(WeeklyFilterUnavailableError, match="MISSING_WEEKLY_CANDLE"):
+        build_w1_filter_snapshot(
+            provider="MARKET_DATA_PLATFORM",
+            instrument="SHARE_MSFT",
+            as_of_h1_close=history.h1[-1].close_time,
+            h1_bars=history.h1,
+            completed_w1_bars=holed,
+            share_contract=c,
+        )
+
+
 def runtime(tmp_path, *, symbol="MSFT"):
     c, batch = source(symbol)
     inst = "SHARE_" + symbol

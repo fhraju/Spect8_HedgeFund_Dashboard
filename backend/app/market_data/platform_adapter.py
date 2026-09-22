@@ -379,6 +379,9 @@ def _public_fields(value: object) -> dict[str, object]:
 
 
 def platform_instrument_id(spect8_instrument_id: str) -> str:
+    for platform_id, spect8_id in SHARE_PLATFORM_IDS.items():
+        if spect8_id == spect8_instrument_id:
+            return platform_id
     try:
         return SPECT8_TO_PLATFORM_INSTRUMENT[spect8_instrument_id]
     except KeyError as error:
@@ -388,6 +391,9 @@ def platform_instrument_id(spect8_instrument_id: str) -> str:
 
 
 def spect8_instrument_id(platform_id: str) -> str:
+    live = SHARE_PLATFORM_IDS.get(platform_id)
+    if live is not None:
+        return live
     try:
         return PLATFORM_TO_SPECT8_INSTRUMENT[platform_id]
     except KeyError as error:
