@@ -96,6 +96,31 @@ class ShareH4Aggregator:
         return SimpleNamespace(bars=mark_closures(result, c), issues=())
 
 
+def active_share_policy_id(contract, timeframe, price_type="BID"):
+    """The one approved/current canonical policy id for a share series."""
+    return f"{contract.profile_id}_{timeframe}_{price_type}"
+
+
+def authoritative_canonical_rows(batch, contract):
+    """Retained canonical rows bound to the exact approved/current policy.
+
+    The Platform bounded reader intentionally preserves every policy/revision
+    row for the retained logical intervals so downstream authority selection
+    stays possible. Only rows whose policy id matches this contract's active
+    policy may become Spect8 inputs. Obsolete/non-authoritative policies fail
+    closed and are never silently substituted. This is the single selection
+    rule used by both ``share_history`` and ``prepare_share_history``.
+    """
+    return tuple(
+        row
+        for row in batch.bars
+        if row.price_type == "BID"
+        and row.instrument_id == contract.instrument_id
+        and row.policy_id == active_share_policy_id(contract, row.timeframe)
+        and row.close_time <= batch.available_as_of
+    )
+
+
 def share_history(batch, instrument, contract):
     from hedgefund_market_data.providers.ig.share_contract import (
         ShareNormalizationManifest,
@@ -104,10 +129,9 @@ def share_history(batch, instrument, contract):
     from .platform_adapter import PlatformInstrumentHistory
     c = contract
     checksum = ShareNormalizationManifest(c).checksum()
-    # Legacy AAPL rows use an incompatible profile. Retain them in the source
-    # audit, but they cannot become inputs to this approved share profile.
-    canonical = [r for r in batch.bars if r.price_type == "BID" and r.instrument_id == c.instrument_id
-                 and r.policy_id == f"{c.profile_id}_{r.timeframe}_BID" and r.close_time <= batch.available_as_of]
+    # Legacy/incompatible policy rows stay in the source audit but never become
+    # inputs to this approved share profile.
+    canonical = list(authoritative_canonical_rows(batch, c))
     native = [r for r in batch.native_bootstrap_bars if r.price_type == "BID"
               and r.instrument_id == c.instrument_id and r.normalization_manifest_checksum == checksum
               and r.close_time <= batch.available_as_of]
@@ -134,12 +158,13 @@ def prepare_share_history(child, batch, history):
     m30 = mark_closures(tuple(share_bar(b, c) for b in history.m30), c)
     child._repository.persist_canonical_bars((*m30, *history.h1, *history.h4))
     # Native D1/W1 remain explicit filter bootstrap inputs; they do not pretend
-    # to be platform canonical data in the dashboard projection. Expected
-    # closures are marked exactly as the filter builder marks them, so the
-    # persisted dependency series is a truthful continuity reference.
-    canonical_filters = mark_closures(tuple(share_bar(b, c) for b in batch.bars
-                                            if b.price_type == "BID"
-                                            and b.timeframe in {"D1", "W1"}), c)
+    # to be platform canonical data in the dashboard projection. Select the
+    # exact authoritative policy first: the reader retains obsolete policy rows
+    # for the same logical interval and they must never reach share_bar().
+    # Expected closures are marked exactly as the filter builder marks them, so
+    # the persisted dependency series is a truthful continuity reference.
+    canonical_filters = mark_closures(tuple(share_bar(b, c) for b in authoritative_canonical_rows(batch, c)
+                                            if b.timeframe in {"D1", "W1"}), c)
     child._repository.persist_canonical_bars(canonical_filters)
     candidates = []
     for tf, bars, modes in ((Timeframe.M30, m30, (FilterMode.MICRO,)),
