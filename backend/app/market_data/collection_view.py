@@ -81,14 +81,14 @@ def attach_collection_status(snapshot, runtime, *, now=None, stale_after_seconds
         telemetry_expired = _collection_telemetry_expired(
             collection, now, stale_after_seconds
         )
-        if telemetry_expired and collection_state not in {
-            "STREAMING",
-            "COLLECTING",
-            "RECOVERING",
-        }:
+        if telemetry_expired:
             # Expired telemetry is not authoritative evidence of a CURRENT
-            # recovery failure: present the collection state as unavailable
-            # rather than BLOCKED, and contribute no recovery attention reason.
+            # recovery state. Normalize the returned read model so the existing
+            # API/frontend contract cannot advertise a historical BLOCKED /
+            # STREAMING / COLLECTING / RECOVERING state or an old failure_reason
+            # as current truth. Harmless provenance/timestamp fields are kept
+            # for diagnostics; nothing persisted is altered.
+            collection = {**collection, "state": "UNKNOWN", "failure_reason": None}
             collection_state = "UNKNOWN"
         if collection_state in NON_AUTHORITATIVE_COLLECTION_STATES:
             pass

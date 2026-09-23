@@ -10,6 +10,7 @@ must never touch feed/filter/signal readiness.
 """
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 from backend.app.market_data.collection_view import (
@@ -104,6 +105,42 @@ def test_healthy_feed_with_expired_blocked_telemetry_is_not_a_current_failure():
     assert not any(reason.startswith("RECOVERY_") for reason in row.attention_reasons)
     assert row.stale is False
     assert row.data_status == "HEALTHY"
+    # The returned read model must not advertise the expired row as current
+    # recovery truth: the frontend renders collection.state/failure_reason.
+    assert row.collection["state"] == "UNKNOWN"
+    assert row.collection["failure_reason"] is None
+    assert row.collection["state"] != "BLOCKED"
+    # Harmless provenance is retained for diagnostics.
+    assert row.collection["updated_at"] == expired
+    assert row.collection["stream_health"] == "HEALTHY"
+
+
+@pytest.mark.parametrize("state", ["STREAMING", "COLLECTING", "RECOVERING"])
+def test_expired_positive_state_with_old_failure_reason_is_non_authoritative(state):
+    expired = (NOW - timedelta(days=1)).isoformat()
+    row = _attach(
+        state, updated_at=expired, failure_reason="RECOVERY_LONG_AGO_FAILURE"
+    )
+    # An old failure_reason on an expired row must not become current attention.
+    assert row.collection_health == "UNKNOWN"
+    assert not any(reason.startswith("RECOVERY_") for reason in row.attention_reasons)
+    assert row.collection["state"] == "UNKNOWN"
+    assert row.collection["failure_reason"] is None
+
+
+def test_expired_payload_cannot_render_collection_blocked():
+    """Frontend reads collection.state/failure_reason from the returned row."""
+    expired = (NOW - timedelta(days=1)).isoformat()
+    row = _attach(
+        "BLOCKED", updated_at=expired, failure_reason="RECOVERY_HEARTBEAT_STALE"
+    )
+    payload = {"collection": row.collection, "collection_health": row.collection_health}
+    assert payload["collection"]["state"] != "BLOCKED"
+    assert payload["collection"].get("failure_reason") is None
+    assert payload["collection_health"] == "UNKNOWN"
+    assert not any(
+        reason.startswith("RECOVERY_") for reason in row.attention_reasons
+    )
 
 
 def test_expired_telemetry_does_not_affect_filter_or_signal_readiness():
@@ -190,8 +227,9 @@ def test_expired_recovery_does_not_obscure_nzdjpy_provider_hole():
     assert row.data_status == "STALE"
 
 
-def test_expired_recovery_does_not_change_share_readiness():
-    """AAPL/MSFT share dimensions are untouched by recovery-telemetry expiry."""
+@pytest.mark.parametrize("instrument", ["SHARE_AAPL", "SHARE_MSFT"])
+def test_expired_recovery_does_not_change_share_readiness(instrument):
+    """AAPL and MSFT share dimensions are untouched by recovery-telemetry expiry."""
     expired = (NOW - timedelta(days=1)).isoformat()
     detail = {
         "collection": _collection("COLLECTING", updated_at=expired),
@@ -203,15 +241,15 @@ def test_expired_recovery_does_not_change_share_readiness():
         "evaluation_candidates": [],
     }
     snapshot = Snapshot(
-        active_filter_mode="MACRO", instruments=[Row(instrument_id="SHARE_MSFT")]
+        active_filter_mode="MACRO", instruments=[Row(instrument_id=instrument)]
     )
     row = attach_collection_status(
         snapshot,
-        _Runtime({"collection_instruments": {"SHARE_MSFT": detail}}),
+        _Runtime({"collection_instruments": {instrument: detail}}),
         now=NOW,
         stale_after_seconds=STALE_AFTER_SECONDS,
     ).instruments[0]
-    assert row.collection_health == "COLLECTING"
+    assert row.collection_health == "UNKNOWN"
     assert row.feed_health == "HEALTHY"
     assert row.filter_readiness == "CURRENT"
     assert row.signal_readiness == "CURRENT"
