@@ -69,6 +69,7 @@ def platform_instruments(instrument_ids):
             registry_order=index, validation_status="AWAITING_PLATFORM_VALIDATION",
             instrument_kind=InstrumentKind.SHARE_SPREADBET, exposure_category=ExposureCategory.US_LARGE_CAP_EQUITY,
             session_profile=SessionProfileKind.IG_SHARE_24H,
+            session_timezone="Europe/London",
             candle_boundary_convention="IG share calendar; completed M30 REST",
             available_timeframes=(Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1)))
     return tuple(result)

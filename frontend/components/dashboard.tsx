@@ -6,7 +6,7 @@ import type {
   FilterAuditDailySession,
   InstrumentStatus,
 } from "@/lib/api-types";
-import { formatDashboardTimestamp, formatNewYorkSessionDate } from "@/lib/time";
+import { formatDashboardTimestamp, formatNewYorkSessionDate, resolveDashboardTimeProfile, type DashboardTimeProfile } from "@/lib/time";
 import Link from "next/link";
 import { Fragment } from "react";
 
@@ -88,12 +88,12 @@ function AuditComparison({
   );
 }
 
-function SessionEvidence({ session }: { session: FilterAuditDailySession }) {
+function SessionEvidence({ session, profile }: { session: FilterAuditDailySession; profile?: DashboardTimeProfile }) {
   return (
     <li>
       <b>{formatNewYorkSessionDate(session.session_identifier)}</b>
-      <span>Open <ZonedTimestamp value={session.session_open_time} newYorkPrefix="New York open" /></span>
-      <span>Close <ZonedTimestamp value={session.session_close_time} newYorkPrefix="New York close" /></span>
+      <span>Open <ZonedTimestamp profile={profile} value={session.session_open_time} newYorkPrefix="New York open" /></span>
+      <span>Close <ZonedTimestamp profile={profile} value={session.session_close_time} newYorkPrefix="New York close" /></span>
       <small>High {session.daily_high} / Low {session.daily_low}</small>
     </li>
   );
@@ -103,13 +103,15 @@ function SourceCandleEvidence({
   label,
   openTime,
   closeTime,
+  profile,
 }: {
   label: string;
   openTime: string;
   closeTime: string;
+  profile?: DashboardTimeProfile;
 }) {
-  const open = formatDashboardTimestamp(openTime);
-  const close = formatDashboardTimestamp(closeTime);
+  const open = formatDashboardTimestamp(openTime, profile);
+  const close = formatDashboardTimestamp(closeTime, profile);
   return (
     <div className="source-candle-evidence" aria-label={label}>
       <span>{label}</span>
@@ -122,7 +124,7 @@ function SourceCandleEvidence({
   );
 }
 
-function FilterAuditView({ status }: { status: InstrumentStatus }) {
+function FilterAuditView({ status, profile }: { status: InstrumentStatus; profile?: DashboardTimeProfile }) {
   const audit = status.filter_audit;
   if (!audit) {
     if (
@@ -155,12 +157,12 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
     <>
       <div className="filter-audit-summary" aria-label={`${status.timeframe} filter audit summary`}>
         <div><span>Lookback</span><b>{audit.lookback_period} completed bars</b></div>
-        <div><span>Window start</span><b><ZonedTimestamp value={audit.lookback_start_time} /></b></div>
-        <div><span>Window end</span><b><ZonedTimestamp value={audit.lookback_end_time} /></b></div>
+        <div><span>Window start</span><b><ZonedTimestamp profile={profile} value={audit.lookback_start_time} /></b></div>
+        <div><span>Window end</span><b><ZonedTimestamp profile={profile} value={audit.lookback_end_time} /></b></div>
         <div><span>Recent {audit.lookback_period}-bar low</span><b>{audit.recent_low}</b></div>
-        <SourceCandleEvidence label="Recent-low source candle" openTime={audit.recent_low_bar_open_time} closeTime={audit.recent_low_bar_close_time} />
+        <SourceCandleEvidence label="Recent-low source candle" openTime={audit.recent_low_bar_open_time} closeTime={audit.recent_low_bar_close_time} profile={profile} />
         <div><span>Recent {audit.lookback_period}-bar high</span><b>{audit.recent_high}</b></div>
-        <SourceCandleEvidence label="Recent-high source candle" openTime={audit.recent_high_bar_open_time} closeTime={audit.recent_high_bar_close_time} />
+        <SourceCandleEvidence label="Recent-high source candle" openTime={audit.recent_high_bar_open_time} closeTime={audit.recent_high_bar_close_time} profile={profile} />
         <div><span>BUY threshold</span><b>{audit.buy_threshold}</b></div>
         <div><span>SELL threshold</span><b>{audit.sell_threshold}</b></div>
         <div><span>BUY matched</span><b>{audit.buy_comparison.matched ? "YES" : "NO"}</b></div>
@@ -178,9 +180,9 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
             <div><dt>Instrument</dt><dd>{audit.instrument_id}</dd></div>
             <div><dt>Strategy version</dt><dd>{audit.strategy_version}</dd></div>
             <div><dt>Timeframe</dt><dd>{audit.timeframe}</dd></div>
-            <div><dt>Evaluated at</dt><dd><ZonedTimestamp value={audit.evaluation_time} /></dd></div>
-            <div><dt>Bar open</dt><dd><ZonedTimestamp value={audit.evaluation_bar_open_time} /></dd></div>
-            <div><dt>Bar close</dt><dd><ZonedTimestamp value={audit.evaluation_bar_close_time} /></dd></div>
+            <div><dt>Evaluated at</dt><dd><ZonedTimestamp profile={profile} value={audit.evaluation_time} /></dd></div>
+            <div><dt>Bar open</dt><dd><ZonedTimestamp profile={profile} value={audit.evaluation_bar_open_time} /></dd></div>
+            <div><dt>Bar close</dt><dd><ZonedTimestamp profile={profile} value={audit.evaluation_bar_close_time} /></dd></div>
             <div><dt>Bar OHLC</dt><dd>{audit.evaluation_bar_open} / {audit.evaluation_bar_high} / {audit.evaluation_bar_low} / {audit.evaluation_bar_close}</dd></div>
             <div><dt>Confirmed closed</dt><dd>{audit.evaluation_bar_confirmed_closed ? "Yes" : "No"}</dd></div>
             <div><dt>Filter bars used</dt><dd>{audit.completed_bar_count} completed bars</dd></div>
@@ -203,7 +205,7 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
                   <Fragment key={bar.source_id}>
                     {bar.expected_market_closure_before && <tr className="expected-closure"><td colSpan={8}>Expected market closure — no candles</td></tr>}
                     <tr>
-                      <td>{bar.sequence}</td><td><ZonedTimestamp value={bar.open_time} /></td><td><ZonedTimestamp value={bar.close_time} /></td>
+                      <td>{bar.sequence}</td><td><ZonedTimestamp profile={profile} value={bar.open_time} /></td><td><ZonedTimestamp profile={profile} value={bar.close_time} /></td>
                       <td>{bar.open}</td><td>{bar.high}</td><td>{bar.low}</td><td>{bar.close}</td>
                       <td><code>{bar.source_id}</code>{bar.recent_low && <b> Recent low</b>}{bar.recent_high && <b> Recent high</b>}</td>
                     </tr>
@@ -218,14 +220,14 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
           <h3>Timeframe-specific extrema</h3>
           <dl>
             <div><dt>Lookback</dt><dd>{audit.lookback_period} completed {audit.timeframe} bars</dd></div>
-            <div><dt>Window start</dt><dd><ZonedTimestamp value={audit.lookback_start_time} /></dd></div>
-            <div><dt>Window end</dt><dd><ZonedTimestamp value={audit.lookback_end_time} /></dd></div>
+            <div><dt>Window start</dt><dd><ZonedTimestamp profile={profile} value={audit.lookback_start_time} /></dd></div>
+            <div><dt>Window end</dt><dd><ZonedTimestamp profile={profile} value={audit.lookback_end_time} /></dd></div>
             <div><dt>Recent low</dt><dd>{audit.recent_low}</dd></div>
-            <div><dt>Low source open</dt><dd><ZonedTimestamp value={audit.recent_low_bar_open_time} /></dd></div>
-            <div><dt>Low source close</dt><dd><ZonedTimestamp value={audit.recent_low_bar_close_time} /></dd></div>
+            <div><dt>Low source open</dt><dd><ZonedTimestamp profile={profile} value={audit.recent_low_bar_open_time} /></dd></div>
+            <div><dt>Low source close</dt><dd><ZonedTimestamp profile={profile} value={audit.recent_low_bar_close_time} /></dd></div>
             <div><dt>Recent high</dt><dd>{audit.recent_high}</dd></div>
-            <div><dt>High source open</dt><dd><ZonedTimestamp value={audit.recent_high_bar_open_time} /></dd></div>
-            <div><dt>High source close</dt><dd><ZonedTimestamp value={audit.recent_high_bar_close_time} /></dd></div>
+            <div><dt>High source open</dt><dd><ZonedTimestamp profile={profile} value={audit.recent_high_bar_open_time} /></dd></div>
+            <div><dt>High source close</dt><dd><ZonedTimestamp profile={profile} value={audit.recent_high_bar_close_time} /></dd></div>
           </dl>
         </div>
 
@@ -233,21 +235,21 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
           <h3>New York daily context</h3>
           <dl>
             <div><dt>Session date</dt><dd>{formatNewYorkSessionDate(audit.daily_session.session_identifier)}</dd></div>
-            <div><dt>Session open</dt><dd><ZonedTimestamp value={audit.daily_session.session_open_time} newYorkPrefix="New York open" /></dd></div>
-            <div><dt>Session close</dt><dd><ZonedTimestamp value={audit.daily_session.session_close_time} newYorkPrefix="New York close" /></dd></div>
+            <div><dt>Session open</dt><dd><ZonedTimestamp profile={profile} value={audit.daily_session.session_open_time} newYorkPrefix="New York open" /></dd></div>
+            <div><dt>Session close</dt><dd><ZonedTimestamp profile={profile} value={audit.daily_session.session_close_time} newYorkPrefix="New York close" /></dd></div>
             <div><dt>Daily low</dt><dd>{audit.daily_low}</dd></div>
             <div><dt>Daily high</dt><dd>{audit.daily_high}</dd></div>
-            <div><dt>D1 eligible as of</dt><dd><ZonedTimestamp value={audit.d1_context_eligibility_time} /></dd></div>
+            <div><dt>D1 eligible as of</dt><dd><ZonedTimestamp profile={profile} value={audit.d1_context_eligibility_time} /></dd></div>
             <div><dt>Daily volatility</dt><dd>Wilder period {audit.atr_period} = {audit.atr_value}</dd></div>
             <div><dt>Buffer</dt><dd>{audit.atr_value} x {audit.buffer_percentage} = {audit.buffer_value}</dd></div>
           </dl>
           <h4>Two daily reference sessions</h4>
           <ul className="audit-session-list">
-            {audit.daily_reference_sessions.map((session) => <SessionEvidence key={`reference-${session.session_close_time}`} session={session} />)}
+            {audit.daily_reference_sessions.map((session) => <SessionEvidence key={`reference-${session.session_close_time}`} session={session} profile={profile} />)}
           </ul>
           <h4>Exact D1 input sessions used by Wilder period {audit.atr_period}</h4>
           <ul className="audit-session-list compact">
-            {audit.atr_sessions.map((session) => <SessionEvidence key={`atr-${session.session_close_time}`} session={session} />)}
+            {audit.atr_sessions.map((session) => <SessionEvidence key={`atr-${session.session_close_time}`} session={session} profile={profile} />)}
           </ul>
         </div>
 
@@ -264,7 +266,7 @@ function FilterAuditView({ status }: { status: InstrumentStatus }) {
   );
 }
 
-function SharedDailyFilter({ snapshot }: { snapshot: DailyFilterSnapshot }) {
+function SharedDailyFilter({ snapshot, profile }: { snapshot: DailyFilterSnapshot; profile?: DashboardTimeProfile }) {
   const partial = snapshot.current_partial_d1;
   const classification = snapshot.final_classification === "BUY_AND_SELL"
     ? "BUY + SELL"
@@ -281,11 +283,11 @@ function SharedDailyFilter({ snapshot }: { snapshot: DailyFilterSnapshot }) {
       <dl className="market-values">
         <div><dt>Strategy version</dt><dd>{snapshot.strategy_version}</dd></div>
         <div><dt>Snapshot ID</dt><dd><code>{snapshot.snapshot_id}</code></dd></div>
-        <div><dt>H1 as-of close</dt><dd><ZonedTimestamp value={snapshot.as_of_h1_close_time_utc} /></dd></div>
+        <div><dt>H1 as-of close</dt><dd><ZonedTimestamp profile={profile} value={snapshot.as_of_h1_close_time_utc} /></dd></div>
         <div><dt>New York session</dt><dd>{formatNewYorkSessionDate(partial.session_identifier)}</dd></div>
-        <div><dt>Session open</dt><dd><ZonedTimestamp value={partial.session_open_utc} newYorkPrefix="New York open" /></dd></div>
-        <div><dt>Scheduled session close</dt><dd><ZonedTimestamp value={partial.session_close_utc} newYorkPrefix="New York close" /></dd></div>
-        <div><dt>Latest included H1 close</dt><dd><ZonedTimestamp value={partial.last_h1_close_time_utc} /></dd></div>
+        <div><dt>Session open</dt><dd><ZonedTimestamp profile={profile} value={partial.session_open_utc} newYorkPrefix="New York open" /></dd></div>
+        <div><dt>Scheduled session close</dt><dd><ZonedTimestamp profile={profile} value={partial.session_close_utc} newYorkPrefix="New York close" /></dd></div>
+        <div><dt>Latest included H1 close</dt><dd><ZonedTimestamp profile={profile} value={partial.last_h1_close_time_utc} /></dd></div>
         <div><dt>Completed H1 bars used</dt><dd>{partial.h1_count}</dd></div>
         <div><dt>Current partial D1 high</dt><dd>{partial.high}</dd></div>
         <div><dt>Current partial D1 low</dt><dd>{partial.low}</dd></div>
@@ -304,7 +306,7 @@ function SharedDailyFilter({ snapshot }: { snapshot: DailyFilterSnapshot }) {
   );
 }
 
-function SharedWeeklyFilter({ snapshot }: { snapshot: WeeklyFilterSnapshot }) {
+function SharedWeeklyFilter({ snapshot, profile }: { snapshot: WeeklyFilterSnapshot; profile?: DashboardTimeProfile }) {
   const partial = snapshot.current_partial_w1;
   const classification = snapshot.final_classification === "BUY_AND_SELL"
     ? "BUY + SELL"
@@ -322,11 +324,11 @@ function SharedWeeklyFilter({ snapshot }: { snapshot: WeeklyFilterSnapshot }) {
         <div><dt>Filter mode</dt><dd>Macro — Weekly Filter</dd></div>
         <div><dt>Strategy version</dt><dd>{snapshot.strategy_version}</dd></div>
         <div><dt>Snapshot ID</dt><dd><code>{snapshot.snapshot_id}</code></dd></div>
-        <div><dt>H1 as-of close</dt><dd><ZonedTimestamp value={snapshot.as_of_h1_close_time_utc} /></dd></div>
+        <div><dt>H1 as-of close</dt><dd><ZonedTimestamp profile={profile} value={snapshot.as_of_h1_close_time_utc} /></dd></div>
         <div><dt>Weekly session</dt><dd>{formatNewYorkSessionDate(partial.session_identifier)}</dd></div>
-        <div><dt>Friday 17:00 session open</dt><dd><ZonedTimestamp value={partial.session_open_utc} newYorkPrefix="New York open" /></dd></div>
-        <div><dt>Friday 17:00 session close</dt><dd><ZonedTimestamp value={partial.session_close_utc} newYorkPrefix="New York close" /></dd></div>
-        <div><dt>Latest included H1 close</dt><dd><ZonedTimestamp value={partial.last_h1_close_time_utc} /></dd></div>
+        <div><dt>Friday 17:00 session open</dt><dd><ZonedTimestamp profile={profile} value={partial.session_open_utc} newYorkPrefix="New York open" /></dd></div>
+        <div><dt>Friday 17:00 session close</dt><dd><ZonedTimestamp profile={profile} value={partial.session_close_utc} newYorkPrefix="New York close" /></dd></div>
+        <div><dt>Latest included H1 close</dt><dd><ZonedTimestamp profile={profile} value={partial.last_h1_close_time_utc} /></dd></div>
         <div><dt>Completed H1 bars used</dt><dd>{partial.h1_count}</dd></div>
         <div><dt>Current partial W1 high</dt><dd>{partial.high}</dd></div>
         <div><dt>Current partial W1 low</dt><dd>{partial.low}</dd></div>
@@ -348,9 +350,11 @@ function SharedWeeklyFilter({ snapshot }: { snapshot: WeeklyFilterSnapshot }) {
 function EvaluationCard({
   status,
   precision,
+  profile,
 }: {
   status: InstrumentStatus;
   precision: number;
+  profile?: DashboardTimeProfile;
 }) {
   const values = status.market_values;
   return (
@@ -377,11 +381,11 @@ function EvaluationCard({
         </div>
         <div>
           <small>Signal candle close</small>
-          <strong><ZonedTimestamp value={status.signal_bar_close_time} /></strong>
+          <strong><ZonedTimestamp profile={profile} value={status.signal_bar_close_time} /></strong>
         </div>
       </div>
 
-      <FilterAuditView status={status} />
+      <FilterAuditView status={status} profile={profile} />
 
       {values ? (
         <>
@@ -399,10 +403,10 @@ function EvaluationCard({
                 {status.filter_audit ? (
                   <>
                     <b>{formatNewYorkSessionDate(status.filter_audit.daily_session.session_identifier)}</b>
-                    <ZonedTimestamp value={status.filter_audit.daily_session.session_close_time} newYorkPrefix="New York close" />
+                    <ZonedTimestamp profile={profile} value={status.filter_audit.daily_session.session_close_time} newYorkPrefix="New York close" />
                   </>
                 ) : (
-                  <ZonedTimestamp value={values.daily_context_close_time} newYorkPrefix="New York close" />
+                  <ZonedTimestamp profile={profile} value={values.daily_context_close_time} newYorkPrefix="New York close" />
                 )}
               </dd>
             </div>
@@ -440,6 +444,7 @@ function EvaluationCard({
 
 export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
   const { data } = snapshot;
+  const profile = resolveDashboardTimeProfile(data.instrument);
   const activeFilterMode = data.active_filter_mode ?? "MICRO";
   const filterTimeframe = data.filter_timeframe ?? "D1";
   const precision = data.instrument.price_precision;
@@ -537,21 +542,21 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
               <h2>Data freshness</h2>
             </div>
             <dl>
-              <div><dt>Last successful sync</dt><dd><ZonedTimestamp value={data.provider_sync?.last_success_at} /></dd></div>
-              <div><dt>Latest H1</dt><dd><ZonedTimestamp value={data.latest_candles.H1} /></dd></div>
-              <div><dt>Latest H4</dt><dd><ZonedTimestamp value={data.latest_candles.H4} /></dd></div>
-              <div><dt>Latest D1</dt><dd><ZonedTimestamp value={data.latest_candles.D1} newYorkPrefix="New York close" /></dd></div>
+              <div><dt>Last successful sync</dt><dd><ZonedTimestamp profile={profile} value={data.provider_sync?.last_success_at} /></dd></div>
+              <div><dt>Latest H1</dt><dd><ZonedTimestamp profile={profile} value={data.latest_candles.H1} /></dd></div>
+              <div><dt>Latest H4</dt><dd><ZonedTimestamp profile={profile} value={data.latest_candles.H4} /></dd></div>
+              <div><dt>Latest D1</dt><dd><ZonedTimestamp profile={profile} value={data.latest_candles.D1} newYorkPrefix="New York close" /></dd></div>
             </dl>
           </section>
 
           {activeFilterMode === "MACRO" ? (
             data.weekly_filter ? (
-              <SharedWeeklyFilter snapshot={data.weekly_filter} />
+              <SharedWeeklyFilter snapshot={data.weekly_filter} profile={profile} />
             ) : (
               <section className="panel filter-audit-unavailable" role="status"><strong>Current Weekly Filter</strong><span>Unavailable until completed canonical H1 history produces a valid W1 snapshot.</span></section>
             )
           ) : data.daily_filter ? (
-            <SharedDailyFilter snapshot={data.daily_filter} />
+            <SharedDailyFilter snapshot={data.daily_filter} profile={profile} />
           ) : (
             <section className="panel filter-audit-unavailable" role="status"><strong>Current Daily Filter</strong><span>Unavailable until a valid completed H1 produces a V2 snapshot.</span></section>
           )}
@@ -563,6 +568,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
                   key={status.idempotency_key}
                   status={status}
                   precision={precision}
+                  profile={profile}
                 />
               ))}
             </section>
@@ -573,7 +579,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
             </section>
           )}
 
-          <InstrumentSignalsHistory instrumentId={data.instrument.instrument_id} />
+          <InstrumentSignalsHistory instrumentId={data.instrument.instrument_id} profile={profile} />
 
           <section className="lower-grid">
             <article className="activity-panel panel">
@@ -587,7 +593,7 @@ export function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
                       <i>{eventMark(event)}</i>
                       <strong>{event.timeframe}</strong>
                       <span>{event.event_type.replaceAll("_", " ")}</span>
-                      <ZonedTimestamp value={event.occurred_at} />
+                      <ZonedTimestamp profile={profile} value={event.occurred_at} />
                     </div>
                   ))
                 ) : (

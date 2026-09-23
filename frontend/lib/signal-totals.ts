@@ -1,12 +1,19 @@
-import type { CurrentSignals, FilterMode } from "./api-types";
+import type { CurrentSignals, FilterMode, ScannerInstrument } from "./api-types";
+import { hasCurrentEvaluation } from "./signal-eligibility";
 
 const isDirection = (value: string) => value === "BUY" || value === "SELL";
+
+type InstrumentReference = string | ScannerInstrument;
+
+function scannerRow(value: InstrumentReference): ScannerInstrument | null {
+  return typeof value === "string" ? null : value;
+}
 
 /** Count current signal identities, not instruments or historical scanner statuses. */
 export function signalTotals(
   data: CurrentSignals | null,
   mode: FilterMode,
-  instrumentIds: readonly string[],
+  instruments: readonly InstrumentReference[],
   now: number,
   failed = false,
 ) {
@@ -16,14 +23,29 @@ export function signalTotals(
   if (failed || !Number.isFinite(responseTime) || responseTime > now || now - responseTime > 30000) {
     return { ...unavailable, formingNote: "Updates unavailable" };
   }
-  const instruments = new Set(instrumentIds);
+  const monitored = new Set(
+    instruments.map((item) => (typeof item === "string" ? item : item.instrument_id)),
+  );
+  const rows = new Map(
+    instruments
+      .map(scannerRow)
+      .filter((row): row is ScannerInstrument => row !== null)
+      .map((row) => [row.instrument_id, row]),
+  );
   const timeframes = new Set(mode === "MICRO" ? ["M30", "H1"] : ["H1", "H4"]);
   const eligible = (instrument: string, signalMode: string, timeframe: string) =>
-    instruments.has(instrument) && signalMode === mode && timeframes.has(timeframe);
+    monitored.has(instrument) && signalMode === mode && timeframes.has(timeframe);
+  // One eligibility rule for signal cards and the headline total: a confirmed
+  // signal also needs its matching evaluation (dependencies) still current.
+  const evaluationCurrent = (instrument: string, timeframe: string) => {
+    const row = rows.get(instrument);
+    return row ? hasCurrentEvaluation(row, mode, timeframe) : true;
+  };
   const confirmed = new Set(data.confirmed.filter(s =>
     eligible(s.instrument_id, s.mode, s.timeframe) && isDirection(s.direction) &&
     Date.parse(s.confirmed_at) <= now && Date.parse(s.visible_until) > now &&
-    Number.isFinite(Date.parse(s.source_bar_start)),
+    Number.isFinite(Date.parse(s.source_bar_start)) &&
+    evaluationCurrent(s.instrument_id, s.timeframe),
   ).map(s => JSON.stringify([s.source_provider, s.instrument_id, s.mode, s.timeframe, s.source_bar_start, s.direction]))).size;
 
   const candidates = (data.forming_candidates ?? []).filter(c => eligible(c.instrument_id, c.mode, c.timeframe));
@@ -41,7 +63,7 @@ export function signalTotals(
   }).map(s => JSON.stringify([s.authority, s.instrument_id ?? s.instrument, s.mode, s.timeframe, s.source_bar_start, s.direction]))).size;
   const unsupported = new Set(candidates.filter(c => c.state === "UNSUPPORTED" && c.supported === false)
     .map(c => JSON.stringify([c.instrument_id, c.mode, c.timeframe]))).size;
-  const expected = instruments.size * timeframes.size - unsupported;
+  const expected = monitored.size * timeframes.size - unsupported;
   return {
     confirmed,
     forming: ready.length || !expected ? forming : null,

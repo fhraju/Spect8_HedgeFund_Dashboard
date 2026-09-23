@@ -1,6 +1,7 @@
 "use client";
 
 import type { CurrentSignals } from "@/lib/api-types";
+import type { DashboardTimeProfile } from "@/lib/time";
 import { SignalBadge } from "./market-scanner";
 import { ZonedTimestamp } from "./zoned-timestamp";
 
@@ -11,6 +12,7 @@ interface SignalCardProps {
   signal: CurrentSignals["forming"][0] | CurrentSignals["confirmed"][0];
   isForming: boolean;
   showSource?: boolean;
+  profile?: DashboardTimeProfile;
 }
 
 function modeColor(mode: string): string {
@@ -40,6 +42,7 @@ export function SignalCard({
   signal,
   isForming,
   showSource = false,
+  profile,
 }: SignalCardProps) {
   const direction = signal.direction;
   const isConfirmed = !isForming;
@@ -68,12 +71,12 @@ export function SignalCard({
         <span className="signal-mode">{mode}</span>
         {!isForming && signal.visible_until && (
           <span className="signal-visible-until">
-            <ZonedTimestamp value={signal.visible_until} />
+            <ZonedTimestamp value={signal.visible_until} profile={profile} />
           </span>
         )}
       </div>
       {showSource && isForming && "source_as_of" in signal && (
-        <small>Bar <ZonedTimestamp value={signal.source_bar_start} /> – <ZonedTimestamp value={signal.source_bar_end} /> · Source <ZonedTimestamp value={signal.source_as_of ?? signal.formed_at} /></small>
+        <small>Bar <ZonedTimestamp value={signal.source_bar_start} profile={profile} /> – <ZonedTimestamp value={signal.source_bar_end} profile={profile} /> · Source <ZonedTimestamp value={signal.source_as_of ?? signal.formed_at} profile={profile} /></small>
       )}
     </div>
   );

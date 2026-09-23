@@ -6,6 +6,7 @@ import {
   formatDashboardTimestamp,
   formatNewYorkSessionDate,
   NEW_YORK_TIME_ZONE,
+  resolveDashboardTimeProfile,
 } from "@/lib/time";
 
 describe("broker and strategy timestamp formatting", () => {
@@ -40,5 +41,32 @@ describe("broker and strategy timestamp formatting", () => {
 
   it("formats the aggregator session date as the New York closing date", () => {
     expect(formatNewYorkSessionDate("2026-08-04")).toBe("04 Aug 2026");
+  });
+
+  it("uses approved metadata for share session time and never infers from a ticker", () => {
+    const london = resolveDashboardTimeProfile({
+      display_timezone: "Europe/London",
+      display_timezone_label: "IG session time",
+    });
+    expect(london).toEqual({ timeZone: "Europe/London", label: "IG session time" });
+    const formatted = formatDashboardTimestamp("2026-08-05T07:00:00Z", london);
+    expect(formatted.primary).toBe("05 Aug 2026, 08:00 IG session time");
+    expect(formatted.utc).toBe("07:00 UTC");
+  });
+
+  it("preserves the FX broker profile and falls back to explicit UTC without metadata", () => {
+    const fx = resolveDashboardTimeProfile({
+      display_timezone: DEFAULT_DASHBOARD_DISPLAY_TIME_ZONE,
+      display_timezone_label: DEFAULT_DASHBOARD_DISPLAY_TIME_ZONE_LABEL,
+    });
+    expect(formatDashboardTimestamp("2026-08-05T07:00:00Z", fx).primary).toBe(
+      "05 Aug 2026, 10:00 IC Markets Broker Time",
+    );
+    const fallback = resolveDashboardTimeProfile(null);
+    expect(fallback).toEqual({ timeZone: "UTC", label: "UTC" });
+    expect(formatDashboardTimestamp("2026-08-05T07:00:00Z", fallback).primary).toBe(
+      "05 Aug 2026, 07:00 UTC",
+    );
+    expect(resolveDashboardTimeProfile({}).label).toBe("UTC");
   });
 });

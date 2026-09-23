@@ -49,6 +49,15 @@ it("share forming uses M30 freshness and excludes unsupported M30 from readiness
  d.as_of="2026-09-10T05:00:00Z";
  expect(signalTotals(d,"MICRO",["SHARE_MSFT"],Date.parse(d.as_of)).forming).toBeNull();
 });
+it("requires the matching current evaluation for confirmed totals",()=>{
+ const d=data([confirmed()]);
+ const row=(state:string)=>({instrument_id:"EUR_USD",data_status:"HEALTHY",stale:false,
+   current_filter:{status:"NONE",filter_freshness:"CURRENT"},
+   evaluation_candidates:[{mode:"MICRO",timeframe:"M30",state}]} as never);
+ expect(signalTotals(d,"MICRO",[row("STALE")],now).confirmed).toBe(0);
+ expect(signalTotals(d,"MICRO",[row("BLOCKED")],now).confirmed).toBe(0);
+ expect(signalTotals(d,"MICRO",[row("CURRENT")],now).confirmed).toBe(1);
+});
 it("renders existing card classes and separate mode totals",()=>{
  vi.useFakeTimers();vi.setSystemTime(now);const d=data([confirmed(),confirmed({mode:"MACRO",timeframe:"H1"}),confirmed({mode:"MACRO",timeframe:"H4"})],[forming()]);
  const micro=renderToStaticMarkup(<SignalSummary data={d} mode="MICRO" instrumentIds={['EUR_USD']} now={now}/>);

@@ -97,18 +97,24 @@ def _filter_freshness_not_current(row: Any) -> str | None:
 
 
 def _apply_scanner_row_overlay(rows: list[Any], runtime: Any) -> list[Any]:
-    """Per-row health overlay that never marks a stale/incomplete filter healthy."""
+    """Per-row readiness overlay that never collapses health dimensions.
+
+    Filter and evaluation readiness are recorded as attention reasons; the
+    source/feed health of the row is preserved independently.
+    """
     overlaid: list[Any] = []
     for row in rows:
+        attention = list(getattr(row, "attention_reasons", []) or [])
         stale_reason = _filter_freshness_not_current(row)
         if stale_reason is not None:
             as_of = getattr(row.current_filter, "as_of_h1_close_time", None)
+            attention.append(stale_reason)
             overlaid.append(
                 row.model_copy(
                     update={
-                        "provider_health": "STALE",
                         "data_status": "STALE",
                         "stale": True,
+                        "attention_reasons": list(dict.fromkeys(attention)),
                         "latest_error_summary": (
                             "Filter snapshot is stale"
                             + (f" (as of {as_of})" if as_of else "")
@@ -118,12 +124,13 @@ def _apply_scanner_row_overlay(rows: list[Any], runtime: Any) -> list[Any]:
                 )
             )
         elif _live_not_ready(runtime, row.instrument_id):
+            attention.append("SIGNAL_EVALUATION_NOT_READY")
             overlaid.append(
                 row.model_copy(
                     update={
-                        "provider_health": "STALE",
                         "data_status": "STALE",
                         "stale": True,
+                        "attention_reasons": list(dict.fromkeys(attention)),
                         "latest_error_summary": "Historical strategy state is ready, but canonical streaming or partial-data evidence is not fully ready.",
                     }
                 )
@@ -132,9 +139,8 @@ def _apply_scanner_row_overlay(rows: list[Any], runtime: Any) -> list[Any]:
             overlaid.append(
                 row.model_copy(
                     update={
-                        "provider_health": "HEALTHY",
                         "data_status": "HEALTHY",
-                        "stale": False,
+                        "stale": bool(attention),
                         "latest_error_summary": None,
                     }
                 )
@@ -823,12 +829,16 @@ def create_app(
         response_model=ScannerEnvelope,
     )
     def scanner() -> dict[str, Any]:
+        dependency_view = getattr(
+            platform_authority_runtime, "dependency_filter_view", None
+        )
         snapshot = scanner_snapshot(
             repository,
             active_registry().all(),
             clock.now(),
             credit_budget=primitive(credit_budget.status(as_of=clock.now())),
             stale_after_seconds=configured.market_data_stale_after_seconds,
+            dependency_view=dependency_view if callable(dependency_view) else None,
         )
         if platform_authority_runtime is not None:
             rows = _apply_scanner_row_overlay(

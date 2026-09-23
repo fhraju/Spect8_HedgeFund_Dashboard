@@ -178,6 +178,27 @@ class InstrumentProjection(RecoveryProjectionMixin):
             db.commit()
 
 
+def _missing_share_dependency_h1_opens(contract, as_of, latest, h1):
+    """Expected H1 opens absent from the bounded native+canonical share history.
+
+    Uses the same share contract calendar the evaluator uses (``expected``);
+    never a wall-clock or FX schedule. Bounded display input only: the
+    evaluator's continuity rule decides validity.
+    """
+    from hedgefund_market_data.domain import Timeframe as PlatformTimeframe
+
+    present = {bar.close_time for bar in h1}
+    missing = []
+    cursor = as_of
+    while cursor < latest and len(missing) < 64:
+        if contract.expected(cursor, PlatformTimeframe.H1) and (
+            cursor + timedelta(hours=1)
+        ) not in present:
+            missing.append(cursor)
+        cursor += timedelta(hours=1)
+    return missing
+
+
 class IsolatedPlatformAuthorityRuntime(
     FormingRuntimeMixin, UnifiedPlatformAuthorityRuntime
 ):
@@ -225,6 +246,54 @@ class IsolatedPlatformAuthorityRuntime(
                 {"p": self.authority_for(inst), "i": platform_instrument_id(inst)},
             ).fetchone()
             return dict(row[0]) if row else {"state": "UNKNOWN", "automatic": False}
+
+    def dependency_filter_view(self, instrument_id, mode, as_of=None):
+        """Filter dependency continuity from the evaluator's share history.
+
+        The evaluator builds share filters from the bounded native+canonical
+        share history and validates the required H1 prefix with
+        ``current_filter_components``. The scanner diagnostic must use that
+        same history and continuity rule instead of the canonical projection
+        alone. Returns None for non-shares or when no authoritative history is
+        available so the diagnostic falls back to its certified projection
+        check (never weakened).
+        """
+        if not is_share(instrument_id):
+            return None
+        child = self._children.get(instrument_id)
+        history = getattr(self, "_current_histories", {}).get(instrument_id)
+        contract = getattr(child, "_share_contract", None)
+        if history is None or contract is None or not history.h1:
+            return None
+        from .share_profile import current_filter_components
+
+        latest = history.h1[-1].close_time
+        if as_of is None or as_of > latest:
+            as_of = latest
+        timeframe = Timeframe("W1") if mode is FilterMode.MACRO else Timeframe("D1")
+        missing: list[datetime] = []
+        valid = True
+        reason = None
+        try:
+            current_filter_components(
+                contract,
+                timeframe,
+                PLATFORM_PROVIDER_ID,
+                instrument_id,
+                as_of,
+                tuple(history.h1),
+            )
+        except ValueError as error:
+            valid, reason = False, str(error)
+            missing = _missing_share_dependency_h1_opens(
+                contract, as_of, latest, history.h1
+            )
+        return {
+            "valid": valid,
+            "reason": reason,
+            "latest_h1_close": latest,
+            "missing_opens": missing,
+        }
 
     def run_once(self, *, available_as_of=None):
         if not self._isolated_lock.acquire(blocking=False):

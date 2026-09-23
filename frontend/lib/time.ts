@@ -65,6 +65,36 @@ export function dashboardTimeProfile(): DashboardTimeProfile {
   };
 }
 
+export type DisplayTimeMetadata = {
+  display_timezone?: string | null;
+  display_timezone_label?: string | null;
+};
+
+/**
+ * Resolve the display-time profile from instrument metadata.
+ *
+ * Metadata drives the choice; the ticker never does. When the approved
+ * profile is the existing FX broker profile the behaviour is unchanged.
+ * When metadata names another approved zone (e.g. shares use the approved
+ * IG session timezone Europe/London) that zone is used. When metadata is
+ * absent the fallback is explicit UTC, never an inferred zone.
+ */
+export function resolveDashboardTimeProfile(
+  metadata?: DisplayTimeMetadata | null,
+): DashboardTimeProfile {
+  const timeZone = metadata?.display_timezone ?? null;
+  if (timeZone === DEFAULT_DASHBOARD_DISPLAY_TIME_ZONE) {
+    return dashboardTimeProfile();
+  }
+  if (timeZone) {
+    return {
+      timeZone,
+      label: metadata?.display_timezone_label ?? timeZone,
+    };
+  }
+  return { timeZone: "UTC", label: "UTC" };
+}
+
 export function formatDashboardTimestamp(
   value: string,
   profile: DashboardTimeProfile = dashboardTimeProfile(),

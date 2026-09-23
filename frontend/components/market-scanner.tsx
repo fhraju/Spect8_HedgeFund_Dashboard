@@ -9,6 +9,14 @@ import type {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SignalClock } from "@/lib/signal-clock";
+import {
+  hasAttention,
+  feedHealthy,
+  hasCurrentEvaluation,
+  isCurrentDirectionalFilter,
+  resolveSignalCell,
+} from "@/lib/signal-eligibility";
+import { resolveDashboardTimeProfile, type DashboardTimeProfile } from "@/lib/time";
 
 import { CollectionStatus } from "./collection-status";
 import { FilterModeSelector } from "./filter-mode-selector";
@@ -53,6 +61,7 @@ export function FilterBadge({
   latestH1,
   missingIntervals,
   totalMissing,
+  profile,
 }: {
   status: string;
   asOf?: string | null;
@@ -62,6 +71,7 @@ export function FilterBadge({
   latestH1?: string | null;
   missingIntervals?: string[];
   totalMissing?: number | null;
+  profile?: DashboardTimeProfile;
 }) {
   const label = filterLabels[status] ?? status.replaceAll("_", " ");
   const isStale = freshness === "STALE" || freshness === "INCOMPLETE";
@@ -90,7 +100,7 @@ export function FilterBadge({
       )}
       {isStale && asOf && latestH1 && shownTotal > 0 && missingIntervals && missingIntervals.length > 0 && (
         <div className="scanner-filter-time">
-          Filter as of <ZonedTimestamp value={asOf} /> · latest H1 <ZonedTimestamp value={latestH1} />
+          Filter as of <ZonedTimestamp value={asOf} profile={profile} /> · latest H1 <ZonedTimestamp value={latestH1} profile={profile} />
           <span> · missing {shownTotal} H1 interval{shownTotal === 1 ? "" : "s"} (oldest {missingIntervals[0]})</span>
         </div>
       )}
@@ -126,7 +136,8 @@ export function SignalBadge({ status }: { status: string }) {
 function matchesCurrentFilter(row: ScannerInstrument, direction: string) {
   return direction === "ALL"
     ? true
-    : row.current_filter.status.split("_AND_").includes(direction);
+    : isCurrentDirectionalFilter(row) &&
+        row.current_filter.status.split("_AND_").includes(direction);
 }
 
 export function filterScannerRows(
@@ -175,6 +186,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const [health, setHealth] = useState("ALL");
   const [liveSignals, setLiveSignals] = useState<CurrentSignals | null>(null);
   const [signalsFailed, setSignalsFailed] = useState(false);
+  const [signalsLoading, setSignalsLoading] = useState(true);
   const signalClock = useRef(new SignalClock());
   const [signalNow, setSignalNow] = useState(Number.NaN);
   useEffect(() => {
@@ -195,8 +207,14 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           setSignalNow(signalClock.current.receive(res.headers.get("X-Spect8-Response-Time")));
           setLiveSignals(json.data as CurrentSignals);
           setSignalsFailed(false);
+          setSignalsLoading(false);
         }
-      } catch { if (!cancelled) setSignalsFailed(true); }
+      } catch {
+        if (!cancelled) {
+          setSignalsFailed(true);
+          setSignalsLoading(false);
+        }
+      }
     }
     fetchLive();
     const id = setInterval(fetchLive, 5000);
@@ -221,30 +239,27 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
     [asset, confirmed, exposure, health, kind, match, proxy, snapshot.data.instruments],
   );
 
-  const responseTime = Date.parse(liveSignals?.as_of ?? "");
-  const signalsUnavailable = signalsFailed || !liveSignals || !Number.isFinite(responseTime) || responseTime > signalNow || signalNow - responseTime > 30000;
-
-  function getLiveSignal(instrumentId: string, timeframe: string) {
-    if (!liveSignals || signalsUnavailable) return null;
-    const mode = activeFilterMode;
-    const confirmed = liveSignals.confirmed.find((s) => s.instrument_id === instrumentId && s.mode === mode && s.timeframe === timeframe && Date.parse(s.visible_until) > signalNow);
-    if (confirmed) return { direction: confirmed.direction, state: "CONFIRMED" as const, signal: confirmed };
-    const candidate = liveSignals.forming_candidates?.find(c => c.instrument_id === instrumentId && c.mode === mode && c.timeframe === timeframe);
-    const forming = liveSignals.forming.find((s) => (s.instrument_id ?? s.instrument) === instrumentId && s.mode === mode && s.timeframe === timeframe &&
-      Date.parse(s.source_bar_start) <= signalNow && Date.parse(s.source_as_of ?? s.formed_at) <= signalNow &&
-      Date.parse(s.source_bar_end) > signalNow && signalNow - Date.parse(s.source_as_of ?? s.formed_at) <= (candidate?.max_age_seconds ?? 600) * 1000);
-    if (forming) return { direction: forming.direction, state: "FORMING" as const, signal: forming };
-    return null;
+  function getSignalCell(row: ScannerInstrument, timeframe: string) {
+    return resolveSignalCell({
+      data: liveSignals,
+      failed: signalsFailed,
+      now: signalNow,
+      instrumentId: row.instrument_id,
+      mode: activeFilterMode,
+      timeframe,
+      evaluationCurrent: hasCurrentEvaluation(row, activeFilterMode, timeframe),
+    });
   }
 
-  const unhealthy = snapshot.data.instruments.filter(
-    (row) => !["HEALTHY", "RECOVERED"].includes(row.data_status),
-  ).length;
+  // Deduplicated instruments with any actual source/recovery/filter/signal
+  // issue. Feed health stays independent: a stale recovery heartbeat or a
+  // blocked evaluation never becomes an unhealthy feed.
+  const attention = snapshot.data.instruments.filter(hasAttention).length;
   const monitored = snapshot.data.instruments.length;
   const filteredCandidates = snapshot.data.instruments.filter(
-    (row) => !["NONE", "WAITING"].includes(row.current_filter.status),
+    isCurrentDirectionalFilter,
   ).length;
-  const healthy = monitored - unhealthy;
+  const healthy = snapshot.data.instruments.filter(feedHealthy).length;
   const assetClasses = Array.from(
     new Set(snapshot.data.instruments.map((row) => row.asset_class)),
   );
@@ -282,7 +297,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           <div>
             <span className="section-kicker">Completed H1 bars · read only</span>
             <h1>Multi-instrument market scanner</h1>
-            <p>{snapshot.data.instruments.length} enabled instruments · {unhealthy} require attention{creditSummary}</p>
+            <p>{snapshot.data.instruments.length} enabled instruments · {attention} require attention{creditSummary}</p>
           </div>
           <div className="scanner-header-actions">
             <FilterModeSelector activeMode={activeFilterMode} />
@@ -299,13 +314,13 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
           <article className="kpi">
             <span className="kpi-icon amber">▽</span>
             <span><b>{filteredCandidates}</b><small>Filtered Candidates</small></span>
-            <em>Eligible on H1 or H4</em>
+            <em>Current directional filters</em>
           </article>
-          <SignalSummary data={liveSignals} mode={activeFilterMode} instrumentIds={snapshot.data.instruments.map(row => row.instrument_id)} failed={signalsFailed} now={signalNow} />
+          <SignalSummary data={liveSignals} mode={activeFilterMode} instrumentIds={snapshot.data.instruments.map(row => row.instrument_id)} rows={snapshot.data.instruments} failed={signalsFailed} now={signalNow} />
           <article className="kpi">
             <span className="kpi-icon cyan">◇</span>
             <span><b>{healthy}/{monitored}</b><small>Healthy Feeds</small></span>
-            <em>{unhealthy === 0 ? "All markets current" : `${unhealthy} require attention`}</em>
+            <em>{attention === 0 ? "All markets current" : `${attention} require attention`}</em>
           </article>
         </section>
 
@@ -325,6 +340,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
             <tbody>
               {rows.map((row) => {
                 const latest = row.latest_completed_h1_timestamp;
+                const profile = resolveDashboardTimeProfile(row);
                 return (
                   <tr key={row.instrument_id}>
                     <td data-label="Instrument">
@@ -339,35 +355,55 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
                     </td>
                     <td data-label="Exposure"><span>{(row.exposure_category ?? row.asset_class).replaceAll("_", " ")}</span>{row.underlying_description && <small title={row.underlying_description}>{row.underlying_description}</small>}</td>
                     <td data-label="Type">{(row.instrument_kind ?? row.asset_class).replaceAll("_", " ")}</td>
-                    <td className="scanner-current-filter" data-label={`Current ${filterTimeframe} Filter`}><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} timeframe={filterTimeframe} freshness={row.current_filter.filter_freshness} staleReason={row.current_filter.stale_reason} latestH1={row.current_filter.latest_completed_h1} missingIntervals={row.current_filter.missing_h1_intervals} totalMissing={row.current_filter.total_missing_h1_count} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} /></div>}</td>
+                    <td className="scanner-current-filter" data-label={`Current ${filterTimeframe} Filter`}><FilterBadge status={row.current_filter.status} asOf={row.current_filter.as_of_h1_close_time} timeframe={filterTimeframe} freshness={row.current_filter.filter_freshness} staleReason={row.current_filter.stale_reason} latestH1={row.current_filter.latest_completed_h1} missingIntervals={row.current_filter.missing_h1_intervals} totalMissing={row.current_filter.total_missing_h1_count} profile={profile} />{row.current_filter.as_of_h1_close_time && <div className="scanner-filter-time">Completed H1 · <ZonedTimestamp value={row.current_filter.as_of_h1_close_time} profile={profile} /></div>}</td>
                     {timeframes.map((tf) => {
-                      const live = getLiveSignal(row.instrument_id, tf);
-                      if (live) {
-                        const isForming = live.state === "FORMING";
+                      const cell = getSignalCell(row, tf);
+                      if (cell.kind === "live") {
                         return (
                           <td key={tf} data-label={`${tf} Signal`}>
                             <SignalCard
                               instrument={row.instrument_id}
                               mode={activeFilterMode}
                               timeframe={tf}
-                              signal={live.signal}
-                              isForming={isForming}
+                              signal={cell.signal}
+                              isForming={cell.state === "FORMING"}
                               showSource={row.asset_class === "SHARE_SPREADBET"}
+                              profile={profile}
                             />
                           </td>
                         );
                       }
-                      // Fallback to legacy H1/H4 status for non-live timeframes (should not happen for M30)
+                      // Initial loading, update-unavailable, unsupported and
+                      // genuinely stale signal states stay distinguishable.
                       if (row.asset_class === "SHARE_SPREADBET") {
-                        const candidate = liveSignals?.forming_candidates?.find(c => c.instrument_id === row.instrument_id && c.mode === activeFilterMode && c.timeframe === tf);
-                        const unavailable = signalsUnavailable;
-                        const state = unavailable ? "STALE" : candidate?.state ?? "WAITING FOR DATA";
-                        return <td key={tf} data-label={`${tf} Signal`}>{state === "READY" && <SignalCardFallback status="NONE" />}<small title={candidate?.reason ?? undefined}>{state === "READY" ? "No forming signal" : state.replaceAll("_", " ")}</small>{candidate?.reason && <small>{candidate.reason}</small>}</td>;
+                        const label =
+                          cell.kind === "loading"
+                            ? "LOADING"
+                            : cell.kind === "unavailable"
+                              ? "UPDATES UNAVAILABLE"
+                              : cell.kind === "unsupported"
+                                ? "UNSUPPORTED"
+                                : cell.kind === "expired"
+                                  ? "EXPIRED"
+                                  : cell.kind === "stale"
+                                    ? "STALE"
+                                    : cell.kind === "waiting"
+                                      ? "WAITING FOR DATA"
+                                      : "NO SIGNAL";
+                        const reason = "reason" in cell ? cell.reason : null;
+                        return (
+                          <td key={tf} data-label={`${tf} Signal`}>
+                            {cell.kind === "none" && <SignalCardFallback status="NONE" />}
+                            <small title={reason ?? undefined}>{label}</small>
+                            {reason && <small>{reason}</small>}
+                          </td>
+                        );
                       }
+                      // Fallback to legacy H1/H4 status for non-live timeframes (should not happen for M30)
                       const legacy = tf === "M30" ? "NONE" : row[tf as "H1" | "H4"]?.signal_status ?? "NONE";
                       return <td key={tf} data-label={`${tf} Signal`}><SignalCardFallback status={legacy} /></td>;
                     })}
-                    <td data-label="Latest completed bar">{latest ? <ZonedTimestamp value={latest} /> : <span>Waiting</span>}</td>
+                    <td data-label="Latest completed bar">{latest ? <ZonedTimestamp value={latest} profile={profile} /> : <span>Waiting</span>}</td>
                     <td data-label="Provider / Data status">{healthBadge(row.data_status)}<CollectionStatus value={row.collection} freshness={row.evaluation_freshness} /><small>{row.provider ?? snapshot.source}{row.provider_environment ? ` · ${row.provider_environment.replaceAll("_", " ")}` : ""}{row.provider_exchange ? ` · ${row.provider_exchange}` : ""}{row.validation_status ? ` · ${row.validation_status.replaceAll("_", " ")}` : ""}</small>{row.provider_environment && <span className="scanner-source-badge" title={`Market data source: ${row.provider_environment}`}>[{row.provider_environment.replaceAll("_", " ")}]</span>}{row.latest_error_summary && <small className="scanner-error">{row.latest_error_summary}</small>}</td>
                   </tr>
                 );

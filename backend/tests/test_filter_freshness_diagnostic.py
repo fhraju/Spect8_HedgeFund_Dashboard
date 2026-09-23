@@ -7,6 +7,8 @@ truncation cap presented as the total.
 """
 from datetime import datetime, timezone
 
+import pytest
+
 from backend.app.dashboard_api import _filter_freshness
 from backend.app.repository import SQLiteProjectionRepository
 
@@ -57,6 +59,21 @@ def test_two_terminal_holes_reported_exactly():
     assert freshness == "STALE"
     assert total == 2
     assert missing == ["2026-09-13T21:00:00Z", "2026-09-15T21:00:00Z"]
+
+
+@pytest.mark.parametrize("pair", ["EUR_USD", "GBP_USD", "AUD_USD", "USD_JPY"])
+def test_representative_fx_diagnostic_unchanged_without_dependency(pair):
+    """Representative FX keeps the canonical projection diagnostic.
+
+    An authoritative dependency view is only supplied for shares. For FX the
+    certified calendar-aware canonical check must be untouched by the bounded
+    change (no dependency kwargs are passed).
+    """
+    repo = FakeRepository(closes(trading_opens()))
+    assert _filter_freshness(
+        repo, "MARKET_DATA_PLATFORM", pair,
+        "2026-09-11T21:00:00Z", "2026-09-18T06:00:00Z") == (
+        "STALE", "FILTER_BEHIND_LATEST_H1", [], 0)
 
 
 def test_healthy_pair_reports_zero():

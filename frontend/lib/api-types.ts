@@ -308,6 +308,8 @@ export type DashboardData = {
     price_precision: number;
     synthetic: boolean;
     provider_environment?: string | null;
+    display_timezone?: string | null;
+    display_timezone_label?: string | null;
   };
   latest_candles: {
     H1: string | null;
@@ -342,9 +344,26 @@ export type ScannerTimeframe = {
   latest_filter_snapshot_id: string | null;
 };
 
+export type EvaluationCandidate = {
+  mode: string;
+  timeframe: string;
+  state: string;
+  latest_completed_close?: string | null;
+  last_successful_evaluation_timestamp?: string | null;
+  failure_reason?: string | null;
+};
+
 export type ScannerInstrument = {
   collection?: import("@/components/collection-status").CollectionHealth | null;
   evaluation_freshness?: string | null;
+  evaluation_candidates?: EvaluationCandidate[];
+  feed_health?: string | null;
+  collection_health?: string | null;
+  filter_readiness?: "CURRENT" | "STALE" | "INCOMPLETE" | null;
+  signal_readiness?: string | null;
+  attention_reasons?: string[];
+  display_timezone?: string | null;
+  display_timezone_label?: string | null;
   instrument_id: string;
   display_symbol: string;
   display_name: string;

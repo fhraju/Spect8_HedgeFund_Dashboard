@@ -262,6 +262,107 @@ describe("multi-instrument market scanner", () => {
     expect(filterScannerRows([rows[0], spy], { ...common, proxy: "DIRECT" })).toEqual([rows[0]]);
   });
 
+  it("counts only current directional filters as candidates", () => {
+    const staleBuy: ScannerInstrument = {
+      ...row("USD_CHF", 3),
+      current_filter: {
+        status: "BUY",
+        as_of_h1_close_time: "2026-08-05T10:00:00Z",
+        snapshot_id: "stale-buy",
+        source: "COMPLETED_H1",
+        filter_freshness: "STALE",
+        stale_reason: "FILTER_BEHIND_LATEST_H1",
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{
+          ...snapshot,
+          data: { ...snapshot.data, instruments: [rows[0], staleBuy] },
+        }}
+      />,
+    );
+    expect(html).toContain('<b>1</b><small>Filtered Candidates</small>');
+    const common = {
+      asset: "ALL",
+      match: "ALL",
+      confirmed: "ALL",
+      health: "ALL",
+    };
+    // A stale BUY filter is not eligible for the BUY match.
+    expect(filterScannerRows([staleBuy], { ...common, match: "BUY" })).toEqual([]);
+    expect(filterScannerRows([rows[0]], { ...common, match: "SELL" })).toEqual([rows[0]]);
+  });
+
+  it("counts feed health independently from recovery and evaluation attention", () => {
+    const blocked: ScannerInstrument = {
+      ...row("NZD_JPY", 3),
+      data_status: "STALE",
+      feed_health: "HEALTHY",
+      attention_reasons: ["SIGNAL_MISSING_SIGNAL_CANDLE"],
+      collection_health: "BLOCKED",
+      evaluation_freshness: "STALE",
+      latest_error_summary: "MISSING_SIGNAL_CANDLE",
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{
+          ...snapshot,
+          data: { ...snapshot.data, instruments: [rows[0], blocked] },
+        }}
+      />,
+    );
+    // Healthy feed despite blocked evaluation; attention still reported.
+    expect(html).toContain('<b>2/2</b><small>Healthy Feeds</small>');
+    expect(html).toContain("1 require attention");
+  });
+
+  it("shows initial signal loading instead of STALE and renders IG share session time", () => {
+    const share: ScannerInstrument = {
+      ...row("SHARE_MSFT", 0),
+      instrument_id: "SHARE_MSFT",
+      display_symbol: "MSFT",
+      display_name: "MSFT · IG DEMO spread betting",
+      asset_class: "SHARE_SPREADBET",
+      provider_symbol: "IG_DEMO:MSFT",
+      polling_enabled: false,
+      current_filter: {
+        status: "BUY",
+        as_of_h1_close_time: "2026-08-05T10:00:00Z",
+        snapshot_id: "share-filter",
+        source: "COMPLETED_H1",
+        filter_freshness: "CURRENT",
+      },
+      display_timezone: "Europe/London",
+      display_timezone_label: "IG session time",
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{ ...snapshot, data: { ...snapshot.data, instruments: [share] } }}
+      />,
+    );
+    // Initial render has no signals response yet: loading, never stale.
+    expect(html).toContain("LOADING");
+    expect(html).not.toContain("UPDATES UNAVAILABLE");
+    // Approved IG session display metadata is used, UTC stays available.
+    expect(html).toContain("IG session time");
+    expect(html).toContain("UTC");
+  });
+
+  it("keeps the FX broker display profile when instrument metadata says so", () => {
+    const fx: ScannerInstrument = {
+      ...rows[0],
+      display_timezone: "IC_MARKETS_NY_CLOSE_FOREX_V1",
+      display_timezone_label: "IC Markets Broker Time",
+    };
+    const html = renderToStaticMarkup(
+      <MarketScanner
+        snapshot={{ ...snapshot, data: { ...snapshot.data, instruments: [fx] } }}
+      />,
+    );
+    expect(html).toContain("IC Markets Broker Time");
+  });
+
   it("marks stale and incomplete filters explicitly instead of presenting them as current", () => {
     const staleUsdChf: ScannerInstrument = {
       ...row("USD_CHF", 3),

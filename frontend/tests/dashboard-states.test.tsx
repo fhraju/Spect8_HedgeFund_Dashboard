@@ -245,6 +245,8 @@ function snapshot(
         timeframes: ["H1", "H4", "D1"],
         price_precision: 5,
         synthetic: false,
+        display_timezone: "IC_MARKETS_NY_CLOSE_FOREX_V1",
+        display_timezone_label: "IC Markets Broker Time",
       },
       latest_candles: {
         H1: "2026-07-31T10:00:00Z",

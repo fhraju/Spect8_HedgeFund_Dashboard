@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { HistorySignals } from "@/lib/api-types";
+import type { DashboardTimeProfile } from "@/lib/time";
 import { ZonedTimestamp } from "./zoned-timestamp";
 
 function SignalBadge({ status }: { status: string }) {
@@ -18,7 +19,7 @@ function SignalBadge({ status }: { status: string }) {
   );
 }
 
-export function InstrumentSignalsHistory({ instrumentId }: { instrumentId: string }) {
+export function InstrumentSignalsHistory({ instrumentId, profile }: { instrumentId: string; profile?: DashboardTimeProfile }) {
   const [data, setData] = useState<HistorySignals | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -85,7 +86,7 @@ export function InstrumentSignalsHistory({ instrumentId }: { instrumentId: strin
                 return (
                   <tr key={s.signal_id}>
                     <td>
-                      <ZonedTimestamp value={s.confirmed_at} />
+                      <ZonedTimestamp value={s.confirmed_at} profile={profile} />
                     </td>
                     <td>
                       <span className={`mode-badge mode-${s.mode.toLowerCase()}`}>{s.mode}</span>
@@ -97,10 +98,10 @@ export function InstrumentSignalsHistory({ instrumentId }: { instrumentId: strin
                       <SignalBadge status={s.direction} />
                     </td>
                     <td>
-                      <ZonedTimestamp value={s.source_bar_start} /> → <ZonedTimestamp value={s.source_bar_end} />
+                      <ZonedTimestamp value={s.source_bar_start} profile={profile} /> → <ZonedTimestamp value={s.source_bar_end} profile={profile} />
                     </td>
                     <td>
-                      <ZonedTimestamp value={s.visible_until} />
+                      <ZonedTimestamp value={s.visible_until} profile={profile} />
                     </td>
                     <td>
                       <span className={`signal-state state-${isCurrent ? "confirmed" : "expired"}`}>{isCurrent ? "CURRENT" : "EXPIRED"}</span>

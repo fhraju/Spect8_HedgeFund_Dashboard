@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -43,6 +44,8 @@ class InstrumentView(BaseModel):
     price_precision: int | None
     synthetic: bool
     provider_environment: str | None = None
+    display_timezone: str | None = None
+    display_timezone_label: str | None = None
 
 
 class CandleTimesView(BaseModel):
@@ -413,6 +416,17 @@ class ScannerInstrumentView(BaseModel):
     provider_health: str
     stale: bool
     data_status: str
+    # Independent health dimensions, never collapsed into one status.
+    # `feed_health` is source-data freshness only; collection, filter and
+    # signal readiness stay separately observable.
+    feed_health: str | None = None
+    collection_health: str | None = None
+    filter_readiness: Literal["CURRENT", "STALE", "INCOMPLETE"] | None = None
+    signal_readiness: str | None = None
+    evaluation_candidates: list[dict[str, Any]] = []
+    attention_reasons: list[str] = []
+    display_timezone: str | None = None
+    display_timezone_label: str | None = None
     latest_completed_h1_timestamp: datetime | None
     latest_completed_h4_timestamp: datetime | None
     current_filter: ScannerCurrentFilterView
@@ -444,6 +458,8 @@ def scanner_snapshot(
     *,
     credit_budget: dict[str, Any] | None = None,
     stale_after_seconds: int = 7200,
+    dependency_view: Callable[[str, Any, datetime | None], dict[str, Any] | None]
+    | None = None,
 ) -> ScannerData:
     mode_reader = getattr(repository, "active_filter_mode", None)
     active_mode = mode_reader() if callable(mode_reader) else FilterMode.MICRO
@@ -507,14 +523,38 @@ def scanner_snapshot(
             latest_h1_raw = latest.get("H1") if latest else None
             dependency_valid = None
             dependency_reason = None
+            dependency_latest = None
+            dependency_missing: list[datetime] | None = None
             if instrument.asset_class == "SHARE_SPREADBET":
-                dependency_valid, dependency_reason = _filter_dependency_valid(
-                    repository,
-                    instrument.provider_id,
-                    instrument.instrument_id,
-                    active_mode,
-                    _parse_utc(latest_filter.get("as_of_h1_close_time_utc")),
-                )
+                # The evaluator builds share filters from the approved bounded
+                # native+canonical share history and validates the required H1
+                # prefix with ``current_filter_components``. Prefer that same
+                # authoritative view when the runtime can supply it; otherwise
+                # fall back to the certified canonical-projection continuity
+                # check (never weakened).
+                view = None
+                if dependency_view is not None:
+                    try:
+                        view = dependency_view(
+                            instrument.instrument_id,
+                            active_mode,
+                            _parse_utc(latest_filter.get("as_of_h1_close_time_utc")),
+                        )
+                    except Exception:  # noqa: BLE001 - diagnostic stays informational
+                        view = None
+                if view:
+                    dependency_valid = view.get("valid")
+                    dependency_reason = view.get("reason")
+                    dependency_latest = _parse_utc(view.get("latest_h1_close"))
+                    dependency_missing = list(view.get("missing_opens") or [])
+                else:
+                    dependency_valid, dependency_reason = _filter_dependency_valid(
+                        repository,
+                        instrument.provider_id,
+                        instrument.instrument_id,
+                        active_mode,
+                        _parse_utc(latest_filter.get("as_of_h1_close_time_utc")),
+                    )
             try:
                 freshness, stale_reason, missing_intervals, total_missing = _filter_freshness(
                     repository,
@@ -524,6 +564,8 @@ def scanner_snapshot(
                     latest_h1_raw,
                     dependency_valid=dependency_valid,
                     dependency_reason=dependency_reason,
+                    dependency_latest_h1=dependency_latest,
+                    dependency_missing=dependency_missing,
                 )
             except Exception:  # noqa: BLE001 - diagnostic must stay informational only
                 freshness, stale_reason, missing_intervals, total_missing = (
@@ -536,7 +578,9 @@ def scanner_snapshot(
                 source="COMPLETED_H1",
                 filter_freshness=freshness,
                 stale_reason=stale_reason,
-                latest_completed_h1=_parse_utc(latest_h1_raw),
+                latest_completed_h1=(
+                    dependency_latest or _parse_utc(latest_h1_raw)
+                ),
                 missing_h1_intervals=missing_intervals,
                 total_missing_h1_count=total_missing,
             )
@@ -577,6 +621,21 @@ def scanner_snapshot(
                 )
             )
         )
+        feed_health = _feed_health_state(
+            repository, instrument, health, generated_at, stale_after_seconds
+        )
+        attention_reasons: list[str] = []
+        if feed_health not in {
+            HealthState.HEALTHY.value,
+            HealthState.RECOVERED.value,
+        }:
+            attention_reasons.append(f"SOURCE_{feed_health}")
+        if current_filter.filter_freshness != "CURRENT":
+            attention_reasons.append(
+                current_filter.stale_reason
+                or f"FILTER_{current_filter.filter_freshness}"
+            )
+        display_timezone, display_timezone_label = _display_time_profile(instrument)
         try:
             from .config import INSTRUMENT_AUTHORITY_MAP
             _provider_env = INSTRUMENT_AUTHORITY_MAP.get(instrument.instrument_id)
@@ -612,6 +671,11 @@ def scanner_snapshot(
                 provider_health=state,
                 stale=state == HealthState.STALE.value,
                 data_status=state,
+                feed_health=feed_health,
+                filter_readiness=current_filter.filter_freshness,
+                attention_reasons=attention_reasons,
+                display_timezone=display_timezone,
+                display_timezone_label=display_timezone_label,
                 latest_completed_h1_timestamp=latest.get("H1"),
                 latest_completed_h4_timestamp=latest.get("H4"),
                 current_filter=current_filter,
@@ -682,6 +746,63 @@ def _fallback_data_state(
     if age_seconds > stale_after_seconds:
         return HealthState.STALE.value
     return "BOOTSTRAPPING"
+
+
+def _feed_health_state(
+    repository: SQLiteProjectionRepository,
+    instrument: CanonicalInstrument,
+    health: dict[str, Any] | None,
+    generated_at: datetime,
+    stale_after_seconds: int,
+) -> str:
+    """Source/feed health: completed source-data freshness only.
+
+    Deliberately independent of filter readiness, collection recovery and
+    signal/evaluation readiness. A fresh canonical H1 without a polling
+    health row is HEALTHY source data, not BOOTSTRAPPING.
+    """
+    if not instrument.polling_enabled and instrument.asset_class != "SHARE_SPREADBET":
+        return HealthState.DATA_UNAVAILABLE.value
+    if health is not None:
+        return str(health["state"])
+    latest = repository.latest_candle_timestamps(
+        instrument.provider_id, instrument.instrument_id
+    )
+    latest_h1 = latest.get("H1") if latest else None
+    if latest_h1 is None:
+        return "BOOTSTRAPPING"
+    try:
+        closed_at = (
+            latest_h1.astimezone(timezone.utc)
+            if isinstance(latest_h1, datetime)
+            else datetime.fromisoformat(str(latest_h1).replace("Z", "+00:00"))
+        )
+        age_seconds = (
+            generated_at.astimezone(timezone.utc) - closed_at.astimezone(timezone.utc)
+        ).total_seconds()
+    except (ValueError, TypeError):
+        return "BOOTSTRAPPING"
+    if age_seconds > stale_after_seconds:
+        return HealthState.STALE.value
+    return HealthState.HEALTHY.value
+
+
+def _display_time_profile(
+    instrument: CanonicalInstrument,
+) -> tuple[str | None, str | None]:
+    """Approved display-time metadata; never inferred from a ticker.
+
+    FX keeps the existing IC Markets broker-time display. Shares use the
+    approved IG session display timezone (Europe/London). Anything without
+    approved metadata resolves to an explicit UTC fallback in the frontend.
+    """
+    session_timezone = getattr(instrument, "session_timezone", None)
+    asset_class = getattr(instrument, "asset_class", None)
+    if asset_class == "SHARE_SPREADBET" or session_timezone == "Europe/London":
+        return "Europe/London", "IG session time"
+    if asset_class in {"FOREX", "METAL"}:
+        return "IC_MARKETS_NY_CLOSE_FOREX_V1", "IC Markets Broker Time"
+    return None, None
 
 
 def dashboard_snapshot(
@@ -767,6 +888,8 @@ def dashboard_snapshot(
             price_precision=instrument.price_precision,
             synthetic=instrument.synthetic,
             provider_environment=provider_env,
+            display_timezone=_display_time_profile(instrument)[0],
+            display_timezone_label=_display_time_profile(instrument)[1],
         ),
         latest_candles=repository.latest_candle_timestamps(
             instrument.provider_id, instrument.instrument_id
@@ -907,6 +1030,8 @@ def _filter_freshness(
     display_limit: int = 32,
     dependency_valid: bool | None = None,
     dependency_reason: str | None = None,
+    dependency_latest_h1: datetime | None = None,
+    dependency_missing: list[datetime] | None = None,
 ) -> tuple[
     Literal["CURRENT", "STALE", "INCOMPLETE"], str | None, list[str], int | None
 ]:
@@ -922,24 +1047,41 @@ def _filter_freshness(
     incomplete the filter is reported STALE instead of advertising health.
     Never raises: lookup failures degrade to an unknown total instead of
     letting a stale filter look current.
+
+    For shares the evaluator's bounded native+canonical history may supply
+    ``dependency_latest_h1`` (authoritative latest completed H1) and
+    ``dependency_missing`` (expected H1 opens absent from that same history);
+    those replace the canonical projection comparison without weakening the
+    fail-closed dependency verdict.
     """
     as_of = _parse_utc(as_of_h1_close_time)
     latest_h1 = _parse_utc(latest_h1_close_time)
+    if dependency_latest_h1 is not None:
+        latest_h1 = dependency_latest_h1
     if as_of is None:
         return ("INCOMPLETE", "NO_FILTER_SNAPSHOT", [], 0)
     if latest_h1 is None:
         return ("INCOMPLETE", "NO_COMPLETED_H1", [], 0)
     if as_of == latest_h1:
         if dependency_valid is False:
+            missing = [_iso_utc(o) for o in (dependency_missing or [])]
             return (
                 "STALE",
                 dependency_reason or "FILTER_DEPENDENCY_INCOMPLETE",
-                [],
-                0,
+                missing[:display_limit],
+                len(missing),
             )
         return ("CURRENT", None, [], 0)
     if as_of > latest_h1:
         return ("STALE", "FILTER_AHEAD_OF_LATEST_H1", [], 0)
+    if dependency_missing is not None:
+        missing = [_iso_utc(o) for o in dependency_missing]
+        return (
+            "STALE",
+            "FILTER_BEHIND_LATEST_H1",
+            missing[:display_limit],
+            len(missing),
+        )
     try:
         expected = _expected_trading_h1_opens(provider_id, as_of, latest_h1)
         if expected is None:
