@@ -845,7 +845,12 @@ def create_app(
                 list(snapshot.instruments), platform_authority_runtime
             )
             snapshot = snapshot.model_copy(update={"instruments": rows})
-        snapshot = attach_collection_status(snapshot, platform_authority_runtime)
+        snapshot = attach_collection_status(
+            snapshot,
+            platform_authority_runtime,
+            now=clock.now(),
+            stale_after_seconds=configured.market_data_stale_after_seconds,
+        )
         return envelope(snapshot)
 
     def historical_envelope(data: Any) -> dict[str, Any]:

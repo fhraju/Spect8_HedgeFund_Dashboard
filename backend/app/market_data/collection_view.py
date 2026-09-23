@@ -7,6 +7,8 @@ health of a row (a stale recovery heartbeat or a blocked evaluation is not
 an unhealthy feed).
 """
 
+from datetime import datetime, timezone
+
 # A blocked evaluation only invalidates the Filter diagnostic when the block is
 # caused by a dependency the Filter itself requires. Signal-only failures must
 # not make a healthy filter look stale.
@@ -26,7 +28,34 @@ def _is_filter_dependency_failure(reason):
     return bool(reason) and any(marker in reason for marker in FILTER_DEPENDENCY_MARKERS)
 
 
-def attach_collection_status(snapshot, runtime):
+# A recovery row only describes CURRENT recovery health while its heartbeat is
+# fresh. An expired row is not authoritative evidence of a current recovery
+# failure, so it must not become a current attention reason. Reuse the existing
+# configured data-staleness threshold; never invent a second timeout.
+NON_AUTHORITATIVE_COLLECTION_STATES = {"UNKNOWN", "UNAVAILABLE"}
+
+
+def _collection_telemetry_expired(collection, now, stale_after_seconds):
+    """True when the recovery row's heartbeat predates the existing threshold."""
+    observed = collection.get("updated_at") if isinstance(collection, dict) else None
+    if not observed or now is None or stale_after_seconds is None:
+        return False
+    try:
+        observed_at = (
+            observed.astimezone(timezone.utc)
+            if isinstance(observed, datetime)
+            else datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+        )
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return False
+    return (
+        now.astimezone(timezone.utc) - observed_at.astimezone(timezone.utc)
+    ).total_seconds() > stale_after_seconds
+
+
+def attach_collection_status(snapshot, runtime, *, now=None, stale_after_seconds=None):
     if runtime is None:
         return snapshot
     details = runtime.status().get("collection_instruments", {})
@@ -47,7 +76,23 @@ def attach_collection_status(snapshot, runtime):
         evaluation_freshness = detail.get("evaluation_freshness", "STALE")
         attention = list(getattr(row, "attention_reasons", []) or [])
         collection_state = str(collection.get("state") or "UNKNOWN")
-        if collection_state not in {"STREAMING", "COLLECTING", "RECOVERING"}:
+        # A fresh BLOCKED row keeps surfacing; only an expired heartbeat is
+        # downgraded. Feed/filter/signal readiness are never touched here.
+        telemetry_expired = _collection_telemetry_expired(
+            collection, now, stale_after_seconds
+        )
+        if telemetry_expired and collection_state not in {
+            "STREAMING",
+            "COLLECTING",
+            "RECOVERING",
+        }:
+            # Expired telemetry is not authoritative evidence of a CURRENT
+            # recovery failure: present the collection state as unavailable
+            # rather than BLOCKED, and contribute no recovery attention reason.
+            collection_state = "UNKNOWN"
+        if collection_state in NON_AUTHORITATIVE_COLLECTION_STATES:
+            pass
+        elif collection_state not in {"STREAMING", "COLLECTING", "RECOVERING"}:
             attention.append(
                 "RECOVERY_"
                 + str(collection.get("failure_reason") or collection_state)
