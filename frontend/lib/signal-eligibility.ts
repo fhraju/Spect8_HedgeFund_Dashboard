@@ -1,10 +1,13 @@
 import type {
+  ConfirmedSignal,
   CurrentSignals,
   EvaluationCandidate,
   FilterMode,
   FormingSignal,
   ScannerInstrument,
 } from "./api-types";
+
+const isDirection = (value: string) => value === "BUY" || value === "SELL";
 
 /**
  * One shared predicate for directional Filter candidacy.
@@ -61,6 +64,30 @@ export function hasCurrentEvaluation(
     return row.evaluation_freshness === "CURRENT";
   }
   return true;
+}
+
+/**
+ * One shared confirmation-validity rule for cards and headline totals.
+ *
+ * A confirmation is current only when its timestamp is finite and not in the
+ * future, its visibility window has not elapsed, its source bar identity is
+ * known and its direction is directional. Invalid/future confirmations are
+ * never current, exactly as the headline total already enforced.
+ */
+export function currentConfirmation(
+  signal: ConfirmedSignal,
+  now: number,
+): boolean {
+  const confirmedAt = Date.parse(signal.confirmed_at);
+  const visibleUntil = Date.parse(signal.visible_until);
+  return (
+    isDirection(signal.direction) &&
+    Number.isFinite(confirmedAt) &&
+    confirmedAt <= now &&
+    Number.isFinite(visibleUntil) &&
+    visibleUntil > now &&
+    Number.isFinite(Date.parse(signal.source_bar_start))
+  );
 }
 
 export function hasAttention(row: ScannerInstrument): boolean {
@@ -123,8 +150,8 @@ export function resolveSignalCell({
       signal.mode === mode &&
       signal.timeframe === timeframe,
   );
-  const confirmed = confirmedSignals.find(
-    (signal) => Date.parse(signal.visible_until) > now,
+  const confirmed = confirmedSignals.find((signal) =>
+    currentConfirmation(signal, now),
   );
   if (confirmed) {
     if (!evaluationCurrent) {

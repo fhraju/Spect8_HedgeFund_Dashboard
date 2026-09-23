@@ -15,6 +15,7 @@ from datetime import timedelta, timezone
 import pytest
 
 from backend.app.dashboard_api import scanner_snapshot
+from backend.app.domain import FilterMode
 from backend.app.market_data.share_catalog import platform_instruments
 from backend.tests.test_share_integration import NOW, runtime
 
@@ -78,6 +79,63 @@ def test_share_filter_diagnostic_reports_incomplete_dependency(tmp_path, symbol)
     value.run_once(available_as_of=NOW)
     history = value._current_histories[instrument_id]
     # Remove a required H1 inside the filter's dependency window.
+    value._current_histories[instrument_id] = replace(
+        history, h1=history.h1[:-2] + history.h1[-1:]
+    )
+    instrument = _instrument(instrument_id)
+    snapshot = scanner_snapshot(
+        repo,
+        (instrument,),
+        NOW + timedelta(minutes=1),
+        dependency_view=value.dependency_filter_view,
+    )
+    row = snapshot.instruments[0]
+    assert row.current_filter.filter_freshness == "STALE"
+    assert (
+        row.current_filter.stale_reason
+        == "SHARE_FILTER_REQUIRED_H1_MISSING_OR_INVALID"
+    )
+    assert row.filter_readiness == "STALE"
+
+
+@pytest.mark.parametrize("symbol", ["MSFT", "AAPL"])
+def test_share_macro_filter_diagnostic_matches_evaluator_history(tmp_path, symbol):
+    """Macro parity probe: AAPL/MSFT Macro filter is CURRENT on valid history."""
+    instrument_id = "SHARE_" + symbol
+    value, repo, _contract, _batch = runtime(tmp_path, symbol=symbol)
+    value.run_once(available_as_of=NOW)
+    assert (
+        value.status()["collection_instruments"][instrument_id][
+            "evaluation_modes"
+        ]["MACRO"]["evaluation_freshness"]
+        == "CURRENT"
+    )
+    repo.set_active_filter_mode(FilterMode.MACRO, updated_at=NOW)
+    instrument = _instrument(instrument_id)
+
+    with_authority = scanner_snapshot(
+        repo,
+        (instrument,),
+        NOW + timedelta(minutes=1),
+        dependency_view=value.dependency_filter_view,
+    )
+    row = with_authority.instruments[0]
+    assert row.current_filter.filter_freshness == "CURRENT"
+    assert row.current_filter.stale_reason is None
+    assert row.filter_readiness == "CURRENT"
+
+
+@pytest.mark.parametrize("symbol", ["MSFT", "AAPL"])
+def test_share_macro_filter_diagnostic_fails_closed_on_required_dependency(
+    tmp_path, symbol
+):
+    """Removing a genuinely required dependency fails closed, not CURRENT."""
+    instrument_id = "SHARE_" + symbol
+    value, repo, _contract, _batch = runtime(tmp_path, symbol=symbol)
+    value.run_once(available_as_of=NOW)
+    repo.set_active_filter_mode(FilterMode.MACRO, updated_at=NOW)
+    history = value._current_histories[instrument_id]
+    # Remove a required H1 inside the current weekly dependency window.
     value._current_histories[instrument_id] = replace(
         history, h1=history.h1[:-2] + history.h1[-1:]
     )

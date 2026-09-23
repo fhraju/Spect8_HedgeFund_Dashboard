@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ConfirmedSignal, CurrentSignals, FormingSignal } from "@/lib/api-types";
 import {
+  currentConfirmation,
   currentFilterReadiness,
   feedHealthy,
   hasAttention,
@@ -118,6 +119,26 @@ describe("signal cell states", () => {
       }),
     });
     expect(stale).toEqual({ kind: "stale", reason: "Partial expired" });
+  });
+});
+
+describe("shared confirmation validity", () => {
+  it("rejects invalid, future, expired and non-directional confirmations", () => {
+    expect(currentConfirmation(confirmed(), now)).toBe(true);
+    expect(currentConfirmation(confirmed({ confirmed_at: "invalid" }), now)).toBe(false);
+    expect(
+      currentConfirmation(confirmed({ confirmed_at: "2026-09-10T04:45:00Z" }), now),
+    ).toBe(false);
+    expect(
+      currentConfirmation(
+        confirmed({ visible_until: "2026-09-10T04:35:00Z" }),
+        now,
+      ),
+    ).toBe(false);
+    expect(currentConfirmation(confirmed({ source_bar_start: "invalid" }), now)).toBe(
+      false,
+    );
+    expect(currentConfirmation(confirmed({ direction: "NONE" }), now)).toBe(false);
   });
 });
 

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { signalTotals } from "@/lib/signal-totals";
+import { hasCurrentEvaluation, resolveSignalCell } from "@/lib/signal-eligibility";
 import { SignalSummary } from "@/components/signal-summary";
 import type { ConfirmedSignal, CurrentSignals, FormingSignal } from "@/lib/api-types";
 const now = Date.parse("2026-09-10T04:40:00Z");
@@ -57,6 +58,59 @@ it("requires the matching current evaluation for confirmed totals",()=>{
  expect(signalTotals(d,"MICRO",[row("STALE")],now).confirmed).toBe(0);
  expect(signalTotals(d,"MICRO",[row("BLOCKED")],now).confirmed).toBe(0);
  expect(signalTotals(d,"MICRO",[row("CURRENT")],now).confirmed).toBe(1);
+});
+const scannerRow=(candidates:{mode:string;timeframe:string;state:string}[])=>({instrument_id:"EUR_USD",data_status:"HEALTHY",stale:false,current_filter:{status:"NONE",filter_freshness:"CURRENT"},evaluation_candidates:candidates} as never);
+const cardIsLive=(d:CurrentSignals,row:unknown,timeframe="M30")=>resolveSignalCell({data:d,failed:false,now,instrumentId:"EUR_USD",mode:"MICRO",timeframe,evaluationCurrent:hasCurrentEvaluation(row as never,"MICRO",timeframe)}).kind==="live";
+it("counts forming only when its matching evaluation is CURRENT",()=>{
+ // A. matching evaluation CURRENT -> counted
+ expect(signalTotals(data([],[forming()]),"MICRO",[scannerRow([{mode:"MICRO",timeframe:"M30",state:"CURRENT"}])],now).forming).toBe(1);
+ // B. matching evaluation STALE -> not current
+ expect(signalTotals(data([],[forming()]),"MICRO",[scannerRow([{mode:"MICRO",timeframe:"M30",state:"STALE"}])],now).forming).toBe(0);
+ // C. matching evaluation BLOCKED -> not current
+ expect(signalTotals(data([],[forming()]),"MICRO",[scannerRow([{mode:"MICRO",timeframe:"M30",state:"BLOCKED"}])],now).forming).toBe(0);
+});
+it("keeps forming eligible when an unrelated timeframe is blocked",()=>{
+ // D. only the matching timeframe matters
+ const row=scannerRow([{mode:"MICRO",timeframe:"M30",state:"CURRENT"},{mode:"MICRO",timeframe:"H1",state:"BLOCKED"}]);
+ expect(signalTotals(data([],[forming()]),"MICRO",[row],now).forming).toBe(1);
+});
+it("excludes expired or superseded forming evidence with rows present",()=>{
+ // E. expired bar and stale source evidence are never counted
+ const row=scannerRow([{mode:"MICRO",timeframe:"M30",state:"CURRENT"}]);
+ expect(signalTotals(data([],[forming({source_bar_end:new Date(now).toISOString()})]),"MICRO",[row],now).forming).toBe(0);
+ expect(signalTotals(data([],[forming({source_as_of:"2026-09-10T04:25:00Z"})]),"MICRO",[row],now).forming).toBe(0);
+});
+it("forming cards and totals agree on matching evaluation eligibility",()=>{
+ const stale=scannerRow([{mode:"MICRO",timeframe:"M30",state:"STALE"}]);
+ const d=data([],[forming()]);
+ expect(cardIsLive(d,stale)).toBe(false);
+ expect(signalTotals(d,"MICRO",[stale],now).forming).toBe(0);
+ const current=scannerRow([{mode:"MICRO",timeframe:"M30",state:"CURRENT"}]);
+ expect(cardIsLive(d,current)).toBe(true);
+ expect(signalTotals(d,"MICRO",[current],now).forming).toBe(1);
+});
+it("cards and totals agree on confirmation eligibility",()=>{
+ const cases:Array<[ConfirmedSignal,string,boolean]>=[
+  [confirmed(),"CURRENT",true],
+  [confirmed({confirmed_at:"invalid"}),"CURRENT",false],
+  [confirmed({confirmed_at:"2026-09-10T04:45:00Z"}),"CURRENT",false],
+  [confirmed({visible_until:new Date(now).toISOString()}),"CURRENT",false],
+  [confirmed({source_bar_start:"invalid"}),"CURRENT",false],
+  [confirmed({direction:"NONE"}),"CURRENT",false],
+  [confirmed(),"STALE",false],
+  [confirmed(),"BLOCKED",false],
+ ];
+ for(const [signal,state,eligible] of cases){
+  const row=scannerRow([{mode:"MICRO",timeframe:"M30",state}]);
+  const d=data([signal]);
+  expect({eligible,total:signalTotals(d,"MICRO",[row],now).confirmed,live:cardIsLive(d,row)}).toEqual({eligible,total:eligible?1:0,live:eligible});
+ }
+});
+it("cards and totals agree when an unrelated timeframe is blocked",()=>{
+ const row=scannerRow([{mode:"MICRO",timeframe:"M30",state:"CURRENT"},{mode:"MICRO",timeframe:"H1",state:"BLOCKED"}]);
+ const d=data([confirmed()]);
+ expect(signalTotals(d,"MICRO",[row],now).confirmed).toBe(1);
+ expect(cardIsLive(d,row)).toBe(true);
 });
 it("renders existing card classes and separate mode totals",()=>{
  vi.useFakeTimers();vi.setSystemTime(now);const d=data([confirmed(),confirmed({mode:"MACRO",timeframe:"H1"}),confirmed({mode:"MACRO",timeframe:"H4"})],[forming()]);

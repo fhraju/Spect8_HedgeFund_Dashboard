@@ -1,5 +1,5 @@
 import type { CurrentSignals, FilterMode, ScannerInstrument } from "./api-types";
-import { hasCurrentEvaluation } from "./signal-eligibility";
+import { currentConfirmation, hasCurrentEvaluation } from "./signal-eligibility";
 
 const isDirection = (value: string) => value === "BUY" || value === "SELL";
 
@@ -35,16 +35,16 @@ export function signalTotals(
   const timeframes = new Set(mode === "MICRO" ? ["M30", "H1"] : ["H1", "H4"]);
   const eligible = (instrument: string, signalMode: string, timeframe: string) =>
     monitored.has(instrument) && signalMode === mode && timeframes.has(timeframe);
-  // One eligibility rule for signal cards and the headline total: a confirmed
-  // signal also needs its matching evaluation (dependencies) still current.
+  // One eligibility rule for signal cards and the headline total: the shared
+  // confirmation-validity predicate plus the matching evaluation
+  // (dependencies) still current.
   const evaluationCurrent = (instrument: string, timeframe: string) => {
     const row = rows.get(instrument);
     return row ? hasCurrentEvaluation(row, mode, timeframe) : true;
   };
   const confirmed = new Set(data.confirmed.filter(s =>
-    eligible(s.instrument_id, s.mode, s.timeframe) && isDirection(s.direction) &&
-    Date.parse(s.confirmed_at) <= now && Date.parse(s.visible_until) > now &&
-    Number.isFinite(Date.parse(s.source_bar_start)) &&
+    eligible(s.instrument_id, s.mode, s.timeframe) &&
+    currentConfirmation(s, now) &&
     evaluationCurrent(s.instrument_id, s.timeframe),
   ).map(s => JSON.stringify([s.source_provider, s.instrument_id, s.mode, s.timeframe, s.source_bar_start, s.direction]))).size;
 
@@ -54,9 +54,13 @@ export function signalTotals(
   const forming = new Set(data.forming.filter(s => {
     const instrument = s.instrument_id ?? s.instrument;
     const sourceTime = Date.parse(s.source_as_of ?? s.formed_at);
+    // The card and the headline share the same rule: a forming signal is only
+    // current when its matching mode/timeframe evaluation is CURRENT. An
+    // unrelated timeframe being blocked does not affect this exact match.
     return eligible(instrument, s.mode, s.timeframe) && isDirection(s.direction) &&
       Date.parse(s.source_bar_start) <= now && Date.parse(s.source_bar_end) > now &&
       sourceTime <= now &&
+      evaluationCurrent(instrument, s.timeframe) &&
       ready.some(c => c.instrument_id === instrument && c.timeframe === s.timeframe &&
         now - sourceTime <= (c.max_age_seconds ?? 600) * 1000 &&
         (!s.authority || c.authority === s.authority));
