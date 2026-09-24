@@ -70,11 +70,26 @@ class ExposureCategory(StrEnum):
 
 
 class SessionProfileKind(StrEnum):
+    """Legacy evaluation/polling metadata, never a market-calendar authority.
+
+    Market availability for platform instruments comes from the approved
+    Platform session calendars (read-only). This enum only selects the legacy
+    non-platform polling/validation profile:
+    ``US_EQUITY_REGULAR`` uses the ETF exchange calendar, every other value
+    uses the conservative whole-hour expectation. It is not part of strategy
+    math and is not included in strategy instrument metadata.
+    """
+
     IG_SHARE_24H = "IG_SHARE_24H"
     FOREX_WEEKDAY = "FOREX_WEEKDAY"
     CRYPTO_FROZEN_WEEKEND = "CRYPTO_FROZEN_WEEKEND"
     US_EQUITY_REGULAR = "US_EQUITY_REGULAR"
     DIRECT_MARKET = "DIRECT_MARKET"
+    # Approved platform family instruments: continuous crypto and the platform
+    # weekday family session class. Neither encodes breaks/boundaries; the
+    # Platform calendars remain authoritative for market availability.
+    CRYPTO_24_7 = "CRYPTO_24_7"
+    PLATFORM_FAMILY_WEEKDAY = "PLATFORM_FAMILY_WEEKDAY"
 
 
 class MarketDataProviderError(RuntimeError):

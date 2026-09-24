@@ -1,6 +1,7 @@
 export type CollectionHealth = {
   state: string;
   pending_gaps?: number;
+  terminal_gaps?: number;
   failure_reason?: string | null;
   retry_at?: number | null;
   account_type?: string;
@@ -20,7 +21,7 @@ export function CollectionStatus({ value, freshness }: { value?: CollectionHealt
     <summary>Collection: {(value.state ?? "UNKNOWN").replaceAll("_", " ")}</summary>
     <small>Evaluations: {freshness ?? "UNKNOWN"}</small>
     <small>Pending gaps: {value.pending_gaps ?? "Unknown"}</small>
-    <small>Historical points remaining: {value.allowance?.remaining ?? "Unknown"}</small>
+    {value.allowance && <small>Historical points remaining: {value.allowance.remaining ?? "Unknown"}</small>}
     {value.account_type === "SPREADBET" && <small>Spread-betting share prices · Updates every 30 minutes</small>}
     {value.latest_completed_close && <small>Source completed: {value.latest_completed_close}</small>}
     {value.next_collection_at && <small>Next collection: {value.next_collection_at}</small>}

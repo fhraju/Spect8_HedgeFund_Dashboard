@@ -72,6 +72,35 @@ PLATFORM_FAMILY_ACTIVE_STATES = {
     "OTHER_BLOCKER": "BLOCKED",
 }
 
+# The platform's own required-history targets (already mirrored by Spect8's
+# platform bootstrap limits). Family payloads publish authoritative per-series
+# ``coverage`` counts; the outstanding required-history deficit is derived from
+# that published coverage and is only reported when every series count is
+# actually present. Absence of telemetry is never converted into 0.
+PLATFORM_FAMILY_COVERAGE_TARGETS = {
+    "M30": 40,
+    "H1": 128,
+    "H4": 30,
+    "D1": 10,
+    "W1": 10,
+}
+
+
+def _family_pending_gaps(collection):
+    """Outstanding required-history bars from authoritative coverage counts."""
+    coverage = collection.get("coverage")
+    if not isinstance(coverage, dict) or not coverage:
+        return None
+    if not set(PLATFORM_FAMILY_COVERAGE_TARGETS).issubset(coverage):
+        return None
+    deficit = 0
+    for timeframe, target in PLATFORM_FAMILY_COVERAGE_TARGETS.items():
+        value = coverage.get(timeframe)
+        if type(value) is not int or value < 0:
+            return None
+        deficit += max(0, target - value)
+    return deficit
+
 
 def _normalized_collection(collection):
     """Return the collection observation with an explicit ``state``.
@@ -88,6 +117,12 @@ def _normalized_collection(collection):
     normalized = {**collection, "state": state}
     if state == "BLOCKED" and not normalized.get("failure_reason"):
         normalized["failure_reason"] = status
+    pending_gaps = _family_pending_gaps(collection)
+    if pending_gaps is not None:
+        normalized["pending_gaps"] = pending_gaps
+    terminal_holes = collection.get("terminal_holes")
+    if isinstance(terminal_holes, list):
+        normalized["terminal_gaps"] = len(terminal_holes)
     return normalized
 
 

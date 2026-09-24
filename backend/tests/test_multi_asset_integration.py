@@ -101,11 +101,11 @@ def test_multi_asset_metadata_is_declared_and_semantic():
     crypto = values["CRYPTO_BTC_USD"]
     assert crypto.instrument_kind is InstrumentKind.CRYPTO
     assert crypto.exposure_category is ExposureCategory.CRYPTO
-    assert crypto.session_profile is SessionProfileKind.CRYPTO_FROZEN_WEEKEND
+    assert crypto.session_profile is SessionProfileKind.CRYPTO_24_7
     gold = values["METAL_XAU_USD"]
     assert gold.instrument_kind is InstrumentKind.SPOT_METAL
     assert gold.exposure_category is ExposureCategory.PRECIOUS_METAL
-    assert gold.session_profile is SessionProfileKind.FOREX_WEEKDAY
+    assert gold.session_profile is SessionProfileKind.PLATFORM_FAMILY_WEEKDAY
     us500 = values["INDEX_US500"]
     assert us500.instrument_kind is InstrumentKind.INDEX
     assert us500.exposure_category is ExposureCategory.US_LARGE_CAP_EQUITY
@@ -376,3 +376,73 @@ def test_platform_family_collection_status_is_normalized():
     # Authoritative FX states are never rewritten.
     assert _normalized_collection({"state": "RECOVERING"}) == {"state": "RECOVERING"}
     assert _normalized_collection(None) is None
+
+
+def test_family_pending_gaps_come_from_authoritative_coverage():
+    from backend.app.market_data.collection_view import _normalized_collection
+
+    ready = _normalized_collection(
+        {
+            "status": "READY_FOR_SPECT8",
+            "subscription_state": "SUBSCRIBED",
+            "reasons": [],
+            "terminal_holes": [],
+            "coverage": {"M30": 46, "H1": 140, "H4": 30, "D1": 10, "W1": 10},
+        }
+    )
+    assert ready["pending_gaps"] == 0
+    assert ready["terminal_gaps"] == 0
+
+    deficit = _normalized_collection(
+        {
+            "status": "HISTORY_INSUFFICIENT",
+            "reasons": ["M30_INSUFFICIENT:33/40", "H4_INSUFFICIENT:27/30"],
+            "terminal_holes": ["2026-09-24T07:30:00+00:00"],
+            "coverage": {"M30": 33, "H1": 140, "H4": 27, "D1": 10, "W1": 10},
+        }
+    )
+    assert deficit["state"] == "COLLECTING"
+    assert deficit["pending_gaps"] == 7 + 3
+    assert deficit["terminal_gaps"] == 1
+
+    # Missing or partial telemetry is never converted into a fabricated zero.
+    absent = _normalized_collection({"status": "READY_FOR_SPECT8"})
+    assert "pending_gaps" not in absent
+    partial = _normalized_collection(
+        {"status": "READY_FOR_SPECT8", "coverage": {"M30": 46}}
+    )
+    assert "pending_gaps" not in partial
+    malformed = _normalized_collection(
+        {
+            "status": "READY_FOR_SPECT8",
+            "coverage": {"M30": None, "H1": 140, "H4": 30, "D1": 10, "W1": 10},
+        }
+    )
+    assert "pending_gaps" not in malformed
+
+
+def test_session_profile_is_legacy_metadata_only():
+    from backend.app.market_data.models import InstrumentMetadata
+    from backend.app.market_data.polling_policy import expected_latest_h1_close
+
+    instruments = {i.instrument_id: i for i in platform_instruments(MULTI_ASSET_IDS)}
+    assert all(
+        item.session_profile
+        in {SessionProfileKind.CRYPTO_24_7, SessionProfileKind.PLATFORM_FAMILY_WEEKDAY}
+        for item in instruments.values()
+    )
+    # The strategy instrument metadata contract never carries session_profile.
+    assert "session_profile" not in InstrumentMetadata.__dataclass_fields__
+
+    # Legacy non-platform profiles are untouched.
+    legacy = {i.instrument_id: i for i in platform_instruments(("EUR_USD",))}
+    assert legacy["EUR_USD"].session_profile is SessionProfileKind.FOREX_WEEKDAY
+
+    # The only session-profile branch in polling is US_EQUITY_REGULAR; the new
+    # values keep the same whole-hour expectation as FOREX_WEEKDAY.
+    now = datetime(2026, 9, 24, 10, 17, tzinfo=UTC)
+    whole_hour = now.replace(minute=0, second=0, microsecond=0)
+    for instrument_id in ("CRYPTO_BTC_USD", "METAL_XAU_USD", "INDEX_US500"):
+        assert (
+            expected_latest_h1_close(instruments[instrument_id], now) == whole_hour
+        )

@@ -40,3 +40,45 @@ it("renders an explicit unknown state instead of crashing", () => {
   );
   expect(html).toContain("Collection: UNKNOWN");
 });
+
+it("shows authoritative family pending gaps and omits non-applicable allowance telemetry", () => {
+  const html = renderToStaticMarkup(
+    <CollectionStatus
+      value={{
+        state: "STREAMING",
+        pending_gaps: 0,
+        terminal_gaps: 0,
+      }}
+      freshness="CURRENT"
+    />,
+  );
+  expect(html).toContain("Collection: STREAMING");
+  expect(html).toContain("Pending gaps: 0");
+  expect(html).not.toContain("Historical points remaining");
+  expect(html).not.toContain("Pending gaps: Unknown");
+});
+
+it("keeps authoritative FX allowance telemetry unchanged", () => {
+  const html = renderToStaticMarkup(
+    <CollectionStatus
+      value={{
+        state: "RECOVERING",
+        pending_gaps: 2,
+        allowance: { remaining: 2606, reset_at: 1790256688 },
+      }}
+      freshness="CURRENT"
+    />,
+  );
+  expect(html).toContain("Pending gaps: 2");
+  expect(html).toContain("Historical points remaining: 2606");
+});
+
+it("retains a truthful unknown only when allowance authority is present but unobserved", () => {
+  const html = renderToStaticMarkup(
+    <CollectionStatus
+      value={{ state: "STREAMING", pending_gaps: 0, allowance: { remaining: null } }}
+      freshness="CURRENT"
+    />,
+  );
+  expect(html).toContain("Historical points remaining: Unknown");
+});
