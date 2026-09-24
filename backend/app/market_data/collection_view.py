@@ -55,6 +55,42 @@ def _collection_telemetry_expired(collection, now, stale_after_seconds):
     ).total_seconds() > stale_after_seconds
 
 
+# Platform family/streaming collectors publish ``status``/``subscription_state``
+# instead of the FX ``state`` vocabulary. Normalize truthfully into the existing
+# read-model vocabulary so the frontend contract stays intact; blocked states
+# keep their real status as the failure reason.
+PLATFORM_FAMILY_ACTIVE_STATES = {
+    "READY_FOR_SPECT8": "STREAMING",
+    "STREAMING": "STREAMING",
+    "BOOTSTRAPPING": "COLLECTING",
+    "HISTORY_INSUFFICIENT": "COLLECTING",
+    "STREAMING_FAILURE": "BLOCKED",
+    "ALLOWANCE_BLOCKED": "BLOCKED",
+    "CALENDAR_CONTRADICTION": "BLOCKED",
+    "NORMALIZATION_FAILURE": "BLOCKED",
+    "PROVIDER_HISTORY_HOLE": "RECOVERING",
+    "OTHER_BLOCKER": "BLOCKED",
+}
+
+
+def _normalized_collection(collection):
+    """Return the collection observation with an explicit ``state``.
+
+    Never rewrites an authoritative FX state; only fills the platform family
+    shape, which is the only shape that can legitimately omit ``state``.
+    """
+    if not isinstance(collection, dict) or collection.get("state"):
+        return collection
+    status = str(collection.get("status") or "").upper()
+    if not status:
+        return {**collection, "state": "UNKNOWN"}
+    state = PLATFORM_FAMILY_ACTIVE_STATES.get(status, "UNKNOWN")
+    normalized = {**collection, "state": state}
+    if state == "BLOCKED" and not normalized.get("failure_reason"):
+        normalized["failure_reason"] = status
+    return normalized
+
+
 def attach_collection_status(snapshot, runtime, *, now=None, stale_after_seconds=None):
     if runtime is None:
         return snapshot
@@ -69,10 +105,10 @@ def attach_collection_status(snapshot, runtime, *, now=None, stale_after_seconds
         if mode is not None:
             detail = {**detail, **mode}
         failure_reason = detail.get("failure_reason")
-        collection = detail.get(
+        collection = _normalized_collection(detail.get(
             "collection",
             {"state": "BLOCKED", "failure_reason": failure_reason},
-        )
+        ))
         evaluation_freshness = detail.get("evaluation_freshness", "STALE")
         attention = list(getattr(row, "attention_reasons", []) or [])
         collection_state = str(collection.get("state") or "UNKNOWN")

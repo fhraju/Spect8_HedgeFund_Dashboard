@@ -33,3 +33,10 @@ it("shows calendar-rule conflicts inside the existing collection field", () => {
   expect(html).toContain("2026-11-27: CALENDAR_RULE_CONFLICT");
   expect(html).toContain('class="collection-status"');
 });
+
+it("renders an explicit unknown state instead of crashing", () => {
+  const html = renderToStaticMarkup(
+    <CollectionStatus value={{ state: undefined as unknown as string }} />,
+  );
+  expect(html).toContain("Collection: UNKNOWN");
+});

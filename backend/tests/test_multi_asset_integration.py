@@ -358,3 +358,21 @@ def test_existing_fx_mappings_are_unchanged():
     assert INSTRUMENT_AUTHORITY_MAP["USD_JPY"] == "IG_LIVE"
     assert INSTRUMENT_AUTHORITY_MAP["EUR_USD"] == "IG_DEMO"
     assert is_multi_asset("EUR_USD") is False
+
+
+def test_platform_family_collection_status_is_normalized():
+    from backend.app.market_data.collection_view import _normalized_collection
+
+    streaming = _normalized_collection(
+        {"status": "READY_FOR_SPECT8", "subscription_state": "SUBSCRIBED"}
+    )
+    assert streaming["state"] == "STREAMING"
+    blocked = _normalized_collection({"status": "STREAMING_FAILURE"})
+    assert blocked["state"] == "BLOCKED"
+    assert blocked["failure_reason"] == "STREAMING_FAILURE"
+    assert _normalized_collection({"status": "PROVIDER_HISTORY_HOLE"})["state"] == (
+        "RECOVERING"
+    )
+    # Authoritative FX states are never rewritten.
+    assert _normalized_collection({"state": "RECOVERING"}) == {"state": "RECOVERING"}
+    assert _normalized_collection(None) is None

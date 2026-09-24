@@ -17,7 +17,7 @@ export type CollectionHealth = {
 export function CollectionStatus({ value, freshness }: { value?: CollectionHealth | null; freshness?: string | null }) {
   if (!value) return null;
   return <details className="collection-status">
-    <summary>Collection: {value.state.replaceAll("_", " ")}</summary>
+    <summary>Collection: {(value.state ?? "UNKNOWN").replaceAll("_", " ")}</summary>
     <small>Evaluations: {freshness ?? "UNKNOWN"}</small>
     <small>Pending gaps: {value.pending_gaps ?? "Unknown"}</small>
     <small>Historical points remaining: {value.allowance?.remaining ?? "Unknown"}</small>
