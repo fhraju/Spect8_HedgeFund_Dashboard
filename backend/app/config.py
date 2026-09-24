@@ -5,11 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .domain import Timeframe
+from .market_data.multi_asset_catalog import MULTI_ASSET_IDS
 from .market_data.share_catalog import SHARE_AUTHORITIES
 
 
 INSTRUMENT_AUTHORITY_MAP: dict[str, str] = {
     **SHARE_AUTHORITIES,
+    **{instrument_id: "IG_DEMO" for instrument_id in MULTI_ASSET_IDS},
     "AUD_USD": "IG_DEMO",
     "EUR_USD": "IG_DEMO",
     "GBP_USD": "IG_DEMO",
@@ -219,6 +221,7 @@ class Settings:
                 "NZD_CAD",
             }
             approved.update(SHARE_AUTHORITIES)
+            approved.update(MULTI_ASSET_IDS)
             configured = set(self.enabled_instrument_ids or ())
             if not configured:
                 raise ValueError(

@@ -140,6 +140,20 @@ function matchesCurrentFilter(row: ScannerInstrument, direction: string) {
         row.current_filter.status.split("_AND_").includes(direction);
 }
 
+/**
+ * Presentation grouping only. Favorites selects the approved instrument IDs
+ * from the very same scanner rows; it never fetches, evaluates or subscribes
+ * anything on its own and cannot create duplicate market state.
+ */
+export function favoritesRows(
+  rows: ScannerInstrument[],
+  favorites: string[] | undefined,
+) {
+  if (!favorites || favorites.length === 0) return [];
+  const approved = new Set(favorites);
+  return rows.filter((row) => approved.has(row.instrument_id));
+}
+
 export function filterScannerRows(
   rows: ScannerInstrument[],
   filters: ScannerFilters,
@@ -177,6 +191,8 @@ export function filterScannerRows(
 export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
   const activeFilterMode = snapshot.data.active_filter_mode ?? "MICRO";
   const filterTimeframe = snapshot.data.filter_timeframe ?? "D1";
+  const favorites = snapshot.data.favorites ?? [];
+  const [view, setView] = useState<"ALL" | "FAVORITES">("ALL");
   const [asset, setAsset] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [exposure, setExposure] = useState("ALL");
@@ -226,7 +242,7 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
 
   const timeframes = activeFilterMode === "MICRO" ? (["M30", "H1"] as const) : (["H1", "H4"] as const);
 
-  const rows = useMemo(
+  const filteredRows = useMemo(
     () => filterScannerRows(snapshot.data.instruments, {
       asset,
       kind,
@@ -237,6 +253,10 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
       health,
     }),
     [asset, confirmed, exposure, health, kind, match, proxy, snapshot.data.instruments],
+  );
+  const rows = useMemo(
+    () => (view === "FAVORITES" ? favoritesRows(filteredRows, favorites) : filteredRows),
+    [favorites, filteredRows, view],
   );
 
   function getSignalCell(row: ScannerInstrument, timeframe: string) {
@@ -325,6 +345,9 @@ export function MarketScanner({ snapshot }: { snapshot: ScannerSnapshot }) {
         </section>
 
         <section className="scanner-filters" aria-label="Scanner filters">
+          {favorites.length > 0 && (
+            <label>View<select aria-label="Favorites or all markets" value={view} onChange={(event) => setView(event.target.value as "ALL" | "FAVORITES")}><option value="ALL">All markets</option><option value="FAVORITES">Favorites</option></select></label>
+          )}
           <label>Asset class<select aria-label="Asset class" value={asset} onChange={(event) => setAsset(event.target.value)}><option value="ALL">All</option>{assetClasses.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
           <label>Instrument type<select aria-label="Instrument type" value={kind} onChange={(event) => setKind(event.target.value)}><option value="ALL">All</option>{instrumentKinds.map((value) => <option key={value} value={value}>{value?.replaceAll("_", " ")}</option>)}</select></label>
           <label>Exposure<select aria-label="Exposure category" value={exposure} onChange={(event) => setExposure(event.target.value)}><option value="ALL">All</option>{exposureCategories.map((value) => <option key={value} value={value}>{value?.replaceAll("_", " ")}</option>)}</select></label>

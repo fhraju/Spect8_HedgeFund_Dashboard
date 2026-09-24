@@ -52,6 +52,18 @@ SPECT8_PLATFORM_REPLAY_LIMITS: Mapping[str, int] = MappingProxyType(
 PLATFORM_TO_SPECT8_INSTRUMENT: Mapping[str, str] = MappingProxyType(
     {
         **SHARE_PLATFORM_IDS,
+        # Approved multi-asset platform instruments keep their exact canonical
+        # platform identity in Spect8 (no ticker/EPIC inference).
+        "CRYPTO_BTC_USD": "CRYPTO_BTC_USD",
+        "CRYPTO_ETH_USD": "CRYPTO_ETH_USD",
+        "METAL_XAU_USD": "METAL_XAU_USD",
+        "METAL_XAG_USD": "METAL_XAG_USD",
+        "INDEX_US500": "INDEX_US500",
+        "INDEX_US100": "INDEX_US100",
+        "INDEX_GERMANY_40": "INDEX_GERMANY_40",
+        "COMMODITY_WTI_USD": "COMMODITY_WTI_USD",
+        "COMMODITY_HEATING_OIL_USD": "COMMODITY_HEATING_OIL_USD",
+        "INDEX_US_DOLLAR_DXY": "INDEX_US_DOLLAR_DXY",
         "FX_AUD_USD": "AUD_USD",
         "FX_EUR_USD": "EUR_USD",
         "FX_GBP_USD": "GBP_USD",
@@ -605,6 +617,11 @@ def build_platform_history(
     if share_contract is not None:
         from .share_profile import share_history
         return share_history(batch, spect8_id, share_contract)
+    from .multi_asset_catalog import is_multi_asset
+
+    if is_multi_asset(spect8_id):
+        from .multi_asset_profile import multi_asset_history
+        return multi_asset_history(batch, spect8_id)
     platform_id = platform_instrument_id(spect8_id)
     selected = tuple(
         bar

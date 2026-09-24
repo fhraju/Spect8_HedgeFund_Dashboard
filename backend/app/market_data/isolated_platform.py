@@ -28,6 +28,8 @@ from .platform_authority import (
     _live_streaming_readiness,
 )
 from .recovery_projection import RecoveryProjectionMixin
+from .multi_asset_catalog import is_multi_asset
+from .multi_asset_profile import MULTI_ASSET_LIMITS
 from .share_catalog import is_share
 from .share_profile import SHARE_LIMITS, contract_from_status, share_readiness
 
@@ -321,7 +323,15 @@ class IsolatedPlatformAuthorityRuntime(
                                         display_name=share_contract.name + " · " + share_contract.provider_id.replace("_", " ") + " spread betting",
                                         validation_status="PLATFORM_CONTRACT_VALIDATED") if item.instrument_id == inst else item
                                 for item in owner.registry.all()))
-                    limits = SHARE_LIMITS if share_contract else SPECT8_PLATFORM_REPLAY_LIMITS
+                    limits = (
+                        SHARE_LIMITS
+                        if share_contract
+                        else (
+                            MULTI_ASSET_LIMITS
+                            if is_multi_asset(inst)
+                            else SPECT8_PLATFORM_REPLAY_LIMITS
+                        )
+                    )
                     state = projection.platform_integration_state()
                     history_batch = gateway.read(
                         (platform_instrument_id(inst),),
@@ -564,20 +574,36 @@ class IsolatedPlatformAuthorityRuntime(
             self._startup_replay_report["complete"] = all(
                 c._startup_replay_complete for c in self._children.values()
             )
+            # Approved multi-asset instruments have no forming/partial
+            # authority in the platform read model yet, so partial readiness is
+            # only required for instruments that actually support it. Their
+            # completed-evaluation freshness is still required below.
+            partial_supported = {
+                inst: detail
+                for inst, detail in live.items()
+                if not is_multi_asset(inst)
+            }
             self._live_readiness = {
                 "live_instruments": dict(self._instrument_status),
                 "streaming_state": "READY"
                 if all(d.get("state") == "READY" for d in live.values())
                 else "NOT_READY",
                 "partial_data_state": "READY"
-                if all(d.get("partial_state") == "READY" for d in live.values())
+                if partial_supported
+                and all(
+                    d.get("partial_state") == "READY"
+                    for d in partial_supported.values()
+                )
                 else "NOT_READY",
                 "overall_live_readiness": "LIVE_READY"
                 if results
                 and all(
                     d.get("evaluation_freshness") == "CURRENT"
-                    and d.get("partial_state") == "READY"
                     for d in self._instrument_status.values()
+                )
+                and all(
+                    d.get("partial_state") == "READY"
+                    for d in partial_supported.values()
                 )
                 else "DEGRADED",
             }

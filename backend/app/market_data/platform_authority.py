@@ -36,6 +36,7 @@ from .platform_adapter import (
     to_spect8_native_bootstrap_bar,
 )
 from .profiles.ic_markets_ny_close_forex_v1 import PROFILE_ID
+from .multi_asset_catalog import MULTI_ASSET_IDS, is_multi_asset
 from .registry import CanonicalInstrumentRegistry
 from .share_catalog import SHARE_AUTHORITIES, platform_instruments
 from .session_boundaries import NEW_YORK, NEW_YORK_CLOSE_TIME
@@ -43,6 +44,7 @@ from .signal_lifecycle import SignalLifecycleService, SignalSnapshot
 
 APPROVED_PLATFORM_AUTHORITY_INSTRUMENTS = (
     *SHARE_AUTHORITIES,
+    *MULTI_ASSET_IDS,
     "AUD_USD",
     "EUR_USD",
     "GBP_USD",
@@ -794,6 +796,11 @@ class PlatformAuthorityRuntime:
         if getattr(self, "_share_contract", None) is not None:
             from .share_profile import prepare_share_history
             return prepare_share_history(self, batch, histories[self._instrument_ids[0]])
+        if len(self._instrument_ids) == 1 and is_multi_asset(self._instrument_ids[0]):
+            from .multi_asset_profile import prepare_multi_asset_history
+            return prepare_multi_asset_history(
+                self, batch, histories[self._instrument_ids[0]]
+            )
         new_h1_closes: dict[str, set[datetime]] = {
             item: set() for item in self._instrument_ids
         }
@@ -1025,6 +1032,11 @@ class PlatformAuthorityRuntime:
         weekly_snapshot = None
         filter_close = h1[-1].close_time
         try:
+            # Approved platform multi-asset calendars include daily breaks and
+            # are not the FX broker calendar, so their actual H1 series is
+            # sparse by authority (exactly like the existing ETF sparse rule).
+            # No bar is fabricated and no expected closure is inferred.
+            sparse_actual_h1 = is_multi_asset(instrument_id)
             if mode is FilterMode.MICRO:
                 daily_snapshot = build_daily_filter_snapshot(
                     provider=PLATFORM_PROVIDER_ID,
@@ -1032,6 +1044,7 @@ class PlatformAuthorityRuntime:
                     as_of_h1_close=filter_close,
                     h1_bars=h1,
                     completed_d1_bars=filter_daily,
+                    sparse_actual_h1=sparse_actual_h1,
                     share_contract=getattr(self, "_share_contract", None),
                 )
                 self._repository.persist_daily_filter_snapshot(daily_snapshot)
@@ -1042,6 +1055,7 @@ class PlatformAuthorityRuntime:
                     as_of_h1_close=filter_close,
                     h1_bars=h1,
                     completed_w1_bars=weekly,
+                    sparse_actual_h1=sparse_actual_h1,
                     share_contract=getattr(self, "_share_contract", None),
                 )
                 self._repository.persist_w1_filter_snapshot(weekly_snapshot)

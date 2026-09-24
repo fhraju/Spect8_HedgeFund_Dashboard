@@ -47,10 +47,13 @@ class InstrumentKind(StrEnum):
     CRYPTO = "CRYPTO"
     ETF = "ETF"
     DIRECT_MARKET = "DIRECT_MARKET"
+    INDEX = "INDEX"
+    COMMODITY = "COMMODITY"
 
 
 class ExposureCategory(StrEnum):
     CURRENCY = "CURRENCY"
+    CRYPTO = "CRYPTO"
     PRECIOUS_METAL = "PRECIOUS_METAL"
     US_LARGE_CAP_EQUITY = "US_LARGE_CAP_EQUITY"
     US_TECH_EQUITY = "US_TECH_EQUITY"

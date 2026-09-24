@@ -6,6 +6,7 @@ import {
   FilterBadge,
   MarketScanner,
   SignalBadge,
+  favoritesRows,
   filterScannerRows,
 } from "../components/market-scanner";
 import type { ScannerInstrument, ScannerSnapshot } from "../lib/api-types";
@@ -441,5 +442,71 @@ describe("multi-instrument market scanner", () => {
     );
     expect(badge).toContain("missing 2 H1 intervals");
     expect(badge).toContain("2026-09-13T21:00:00Z");
+  });
+});
+
+describe("favorites presentation grouping", () => {
+  const favoriteIds = [
+    "EUR_USD",
+    "CRYPTO_BTC_USD",
+    "CRYPTO_ETH_USD",
+    "METAL_XAU_USD",
+    "METAL_XAG_USD",
+    "INDEX_US500",
+    "INDEX_US100",
+    "INDEX_GERMANY_40",
+    "COMMODITY_WTI_USD",
+    "COMMODITY_HEATING_OIL_USD",
+    "INDEX_US_DOLLAR_DXY",
+  ];
+  const favoriteRows = favoriteIds.map((id, index) => ({
+    ...row(id, index),
+    instrument_id: id,
+    display_symbol: id,
+    display_name: id,
+  }));
+  const otherRows = [row("GBP_USD", 40), row("SHARE_MSFT", 41)];
+  const favoritesSnapshot: ScannerSnapshot = {
+    ...snapshot,
+    data: {
+      ...snapshot.data,
+      instruments: [...favoriteRows, ...otherRows],
+      favorites: favoriteIds,
+    },
+  };
+
+  it("contains exactly the approved eleven favorites", () => {
+    const selected = favoritesRows(favoritesSnapshot.data.instruments, favoriteIds);
+    expect(selected).toHaveLength(11);
+    expect(selected.map((item) => item.instrument_id)).toEqual(favoriteIds);
+  });
+
+  it("selects the same row objects without duplicating evaluation state", () => {
+    const selected = favoritesRows(favoritesSnapshot.data.instruments, favoriteIds);
+    for (const item of selected) {
+      expect(favoritesSnapshot.data.instruments).toContain(item);
+    }
+    // No extra copies: identity is preserved for every favorite.
+    expect(new Set(selected).size).toBe(11);
+    expect(selected.every((item, index) =>
+      item === favoritesSnapshot.data.instruments[index])).toBe(true);
+  });
+
+  it("renders the favorites view selector and keeps all markets visible by default", () => {
+    const html = renderToStaticMarkup(
+      <MarketScanner snapshot={favoritesSnapshot} />,
+    );
+    expect(html).toContain('aria-label="Favorites or all markets"');
+    expect(html).toContain(">Favorites<");
+    expect(html).toContain("All markets");
+    for (const id of [...favoriteIds, "GBP_USD", "SHARE_MSFT"]) {
+      expect(html).toContain(`/instruments/${id}`);
+    }
+    expect(html).toContain('<b>13</b><small>Markets Monitored</small>');
+  });
+
+  it("hides the selector when the backend publishes no favorites", () => {
+    const html = renderToStaticMarkup(<MarketScanner snapshot={snapshot} />);
+    expect(html).not.toContain('aria-label="Favorites or all markets"');
   });
 });

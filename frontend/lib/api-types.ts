@@ -416,6 +416,9 @@ export type ScannerSnapshot = {
     active_filter_mode?: FilterMode;
     filter_timeframe?: "D1" | "W1";
     instruments: ScannerInstrument[];
+    // Presentation grouping only: the same instrument rows are selectable
+    // through one additional Favorites view. Never a second data authority.
+    favorites?: string[];
     credit_budget?: {
       state: string;
       window: string;

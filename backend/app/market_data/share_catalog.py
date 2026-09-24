@@ -52,13 +52,21 @@ def platform_instruments(instrument_ids):
 
     from ..domain import Timeframe
     from .models import ExposureCategory, InstrumentKind, SessionProfileKind
+    from .multi_asset_catalog import (
+        MULTI_ASSET_AUTHORITY,
+        MULTI_ASSET_BY_ID,
+        MULTI_ASSET_SPECS,
+    )
     from .registry import twelve_data_instruments
-    regular = tuple(i for i in instrument_ids if not is_share(i))
+    requested = tuple(instrument_ids)
+    regular = tuple(
+        i for i in requested if not is_share(i) and i not in MULTI_ASSET_BY_ID
+    )
     existing = twelve_data_instruments(regular or ("EUR_USD",))
     result = [i for i in existing if i.instrument_id in regular]
     template = next(i for i in existing if i.instrument_id == "EUR_USD")
     for index, inst in enumerate(SHARE_AUTHORITIES, start=100):
-        if inst not in instrument_ids:
+        if inst not in requested:
             continue
         symbol = SHARE_SYMBOLS[inst]
         result.append(replace(template, instrument_id=inst, display_symbol=symbol,
@@ -71,5 +79,20 @@ def platform_instruments(instrument_ids):
             session_profile=SessionProfileKind.IG_SHARE_24H,
             session_timezone="Europe/London",
             candle_boundary_convention="IG share calendar; completed M30 REST",
+            available_timeframes=(Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1)))
+    for index, spec in enumerate(MULTI_ASSET_SPECS, start=200):
+        if spec.instrument_id not in requested:
+            continue
+        result.append(replace(template, instrument_id=spec.instrument_id,
+            display_symbol=spec.display_symbol, display_name=spec.display_name,
+            provider_id="MARKET_DATA_PLATFORM",
+            provider_symbol=MULTI_ASSET_AUTHORITY + ":" + spec.epic,
+            asset_class=spec.asset_class, point_size=Decimal(spec.point_size),
+            price_precision=spec.price_precision, quote_currency=spec.quote_currency,
+            profit_currency=spec.quote_currency, enabled=True, polling_enabled=True,
+            registry_order=index, validation_status="PLATFORM_CONTRACT_VALIDATED",
+            instrument_kind=spec.instrument_kind, exposure_category=spec.exposure_category,
+            session_profile=spec.session_profile, session_timezone="Europe/London",
+            candle_boundary_convention="IG platform calendar; canonical M30/H1 + native D1/W1",
             available_timeframes=(Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1)))
     return tuple(result)

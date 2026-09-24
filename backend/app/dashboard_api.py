@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from .market_data.models import CanonicalInstrument, HealthState
+from .market_data.multi_asset_catalog import FAVORITES
 from .repository import SQLiteProjectionRepository
 from .domain import FilterMode
 from .engine.models import CURRENT_D1_FILTER_V2, CURRENT_W1_FILTER_V1
@@ -442,6 +443,10 @@ class ScannerData(BaseModel):
     filter_timeframe: Literal["D1", "W1"] = "D1"
     instruments: list[ScannerInstrumentView]
     credit_budget: dict[str, Any] | None = None
+    # Presentation grouping only. Favorites never create separate evaluations,
+    # subscriptions, database rows or market state: the same instrument rows are
+    # rendered through one additional client-side view.
+    favorites: list[str] = []
 
 
 class ScannerEnvelope(BaseModel):
@@ -700,6 +705,7 @@ def scanner_snapshot(
         filter_timeframe=("W1" if active_mode is FilterMode.MACRO else "D1"),
         instruments=rows,
         credit_budget=credit_budget,
+        favorites=list(FAVORITES),
     )
 
 

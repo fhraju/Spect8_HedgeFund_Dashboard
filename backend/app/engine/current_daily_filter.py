@@ -132,9 +132,13 @@ class CurrentDailyCandleBuilder:
             raise DailyFilterUnavailableError("CURRENT_D1_UNEXPECTED_H1_GAP")
         if calendar_coverage is None and not sparse_actual_h1 and candidates[0].open_time != session_open:
             raise DailyFilterUnavailableError("CURRENT_D1_MISSING_INITIAL_H1")
-        if calendar_coverage is None and any(
-            current.open_time != previous.close_time
-            for previous, current in zip(candidates, candidates[1:])
+        if (
+            calendar_coverage is None
+            and not sparse_actual_h1
+            and any(
+                current.open_time != previous.close_time
+                for previous, current in zip(candidates, candidates[1:])
+            )
         ):
             raise DailyFilterUnavailableError("CURRENT_D1_UNEXPECTED_H1_GAP")
         if candidates[-1].close_time != as_of_h1_close:
